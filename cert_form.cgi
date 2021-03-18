@@ -64,6 +64,7 @@ if (&domain_has_ssl_cert($d)) {
 
 	$info = &cert_info($d);
 	$chain = &get_website_ssl_file($d, 'ca');
+	
 	foreach $i (@cert_attributes) {
 		next if ($i eq 'modulus' || $i eq 'exponent');
 		$v = $info->{$i};
@@ -74,20 +75,20 @@ if (&domain_has_ssl_cert($d)) {
 		elsif ($v) {
 			print &ui_table_row($text{'cert_'.$i}, $v);
 			}
-		}
 
-	# Warn if the CA is wrong
-	if ($chain) {
-		my $cainfo = &cert_file_info($chain, $d);
-		if ($cainfo &&
-		    ($cainfo->{'o'} ne $info->{'issuer_o'} ||
-		     $cainfo->{'cn'} ne $info->{'issuer_cn'})) {
-			print &ui_table_row(undef,
-			    &ui_text_color(
-			      &text('validate_esslcamatch',
-			     	    $cainfo->{'o'}, $cainfo->{'cn'},
-				    $info->{'issuer_o'}, $info->{'issuer_cn'}),
-			      "danger"), 4);
+		# Warn if the CA is wrong
+		if ($i eq 'type' && $chain) {
+			my $cainfo = &cert_file_info($chain, $d);
+			if ($cainfo &&
+			    ($cainfo->{'o'} ne $info->{'issuer_o'} ||
+			     $cainfo->{'cn'} ne $info->{'issuer_cn'})) {
+				print &ui_table_row('',
+				    &ui_text_color(
+				      "&nbsp;* ".&text('validate_esslcamatch',
+					    $cainfo->{'o'}, $cainfo->{'cn'},
+					    $info->{'issuer_o'}, $info->{'issuer_cn'}),
+				      "danger"), 3);
+				}
 			}
 		}
 
@@ -428,9 +429,9 @@ if (&can_edit_letsencrypt() && &domain_has_website($d)) {
 		print &ui_form_end([ [ undef, $text{'cert_letsok'} ],
 				     [ 'only', $text{'cert_letsonly'} ] ]);
 		}
+	print &ui_tabs_end_tab();
 	}
 
-print &ui_tabs_end_tab();
 
 if (&can_webmin_cert()) {
 	# Per-IP or per-domain server usage
