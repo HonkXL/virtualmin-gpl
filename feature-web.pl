@@ -99,7 +99,8 @@ else {
 		local $url = "http://$urlhost$port/";
 		if ($apache::httpd_modules{'mod_proxy'} &&
 		    $tmpl->{'web_alias'} == 2) {
-			push(@dirs, "ProxyPass / $url",
+			push(@dirs, "ProxyPass /.well-known/acme-challenge/ !",
+				    "ProxyPass / $url",
 				    "ProxyPassReverse / $url");
 			$proxying = 1;
 			}
@@ -480,12 +481,11 @@ if (!$virt) {
 if (defined(&create_php_wrappers)) {
 	&create_php_wrappers($d);
 	}
+
+# Force FPM port re-allocation and re-setup of PHP mode
 my $mode = &get_domain_php_mode($oldd);
-if ($mode eq "fpm") {
-	# Force port re-allocation
-	delete($d->{'php_fpm_port'});
-	&save_domain_php_mode($d, $mode);
-	}
+delete($d->{'php_fpm_port'});
+&save_domain_php_mode($d, $mode);
 
 # Update session dir and upload path in php.ini files
 local @fixes = (
@@ -964,6 +964,14 @@ else {
 				return &text('validate_ewebphpconfig',
 					     $ver->[0], $errs);
 				}
+			}
+		}
+
+	# Validate the FPM port
+	if ($mode eq "fpm") {
+		my ($ok, $port) = &get_domain_php_fpm_port($d);
+		if ($ok == 0) {
+			return &text('validate_ewebphpfpmport', $port);
 			}
 		}
 
@@ -1675,7 +1683,7 @@ if ($virt) {
 	if (!$d->{'alias'}) {
 		&$first_print($text{'restore_checkmode'});
 		$mode = &get_domain_php_mode($d);
-		local @supp = &supported_php_modes($d);
+		local @supp = &supported_php_modes();
 		if ($mode && &indexof($mode, @supp) < 0 && @supp) {
 			# Need to fix
 			local $fix = pop(@supp);
@@ -1693,24 +1701,9 @@ if ($virt) {
 			}
 		}
 
-	# If the restored config contains php_value entires but this system
+	# If the restored config contains php_value entries but this system
 	# doesn't support mod_php, remove them
-	my @modes = &supported_php_modes($d);
-	if (&indexof("mod_php", @modes) < 0) {
-		my @ports = ( $d->{'web_port'},
-			      $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
-		foreach my $p (@ports) {
-			my ($virt, $vconf, $conf) = &get_apache_virtual(
-							$d->{'dom'}, $p);
-			next if (!$virt);
-			&apache::save_directive(
-				"php_value", [ ], $vconf, $conf);
-			&apache::save_directive(
-				"php_admin_value", [ ], $vconf, $conf);
-			&flush_file_lines($virt->{'file'}, undef, 1);
-			}
-		&register_post_action(\&restart_apache);
-		}
+	&fix_mod_php_directives($d, $d->{'web_port'});
 
 	# Correct system-specific entries in PHP config files
 	if (!$d->{'alias'} && $oldd) {
@@ -1917,46 +1910,60 @@ else {
 	}
 }
 
-# set_public_html_dir(&domain, sub-dir)
+# set_public_html_dir(&domain, sub-dir, rename-dir?)
 # Sets the HTML directory for a virtual server, by updating the DocumentRoot
 # and <Directory> block. Returns undef on success or an error message on
 # failure.
 sub set_public_html_dir
 {
-local ($d, $subdir) = @_;
+local ($d, $subdir, $rename) = @_;
 local $p = &domain_has_website($d);
 local $path = $d->{'home'}."/".$subdir;
 local $oldpath = $d->{'public_html_path'};
+if ($rename && (&is_under_directory($oldpath, $path) ||
+		&is_under_directory($path, $oldpath))) {
+	return "The old and new HTML directories cannot be sub-directories of ".
+	       "each other";
+	}
 if (-f $path) {
 	return "The HTML directory cannot be a file";
 	}
 if ($p ne "web") {
+	# Call other webserver plugin's API
 	my $err = &plugin_call($p, "feature_set_web_public_html_dir",
 			       $d, $subdir);
 	return $err if ($err);
-	$d->{'public_html_dir'} = $subdir;
-	$d->{'public_html_path'} = $path;
-	return undef;
 	}
-local @ports = ( $d->{'web_port'},
-		 $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
-foreach my $p (@ports) {
-	local ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $p);
-	next if (!$virt);
-	&apache::save_directive("DocumentRoot", [ $path ], $vconf, $conf);
-	local @dirs = &apache::find_directive_struct("Directory", $vconf);
-	local ($dir) = grep { $_->{'words'}->[0] eq $oldpath ||
-			      $_->{'words'}->[0] eq $oldpath."/" } @dirs;
-	$dir ||= $dirs[0];
-	$dir || return "No existing Directory block found!";
-	local $olddir = { %$dir };
-	$dir->{'value'} = $path;
-	&apache::save_directive_struct($olddir, $dir, $vconf, $conf, 1);
-	&flush_file_lines($virt->{'file'});
+else {
+	# Do it for Apache
+	local @ports = ( $d->{'web_port'},
+			 $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
+	foreach my $p (@ports) {
+		local ($virt, $vconf, $conf) =
+			&get_apache_virtual($d->{'dom'}, $p);
+		next if (!$virt);
+		&apache::save_directive(
+			"DocumentRoot", [ $path ], $vconf, $conf);
+		local @dirs = &apache::find_directive_struct(
+			"Directory", $vconf);
+		local ($dir) = grep { $_->{'words'}->[0] eq $oldpath ||
+				      $_->{'words'}->[0] eq $oldpath."/"} @dirs;
+		$dir ||= $dirs[0];
+		$dir || return "No existing Directory block found!";
+		local $olddir = { %$dir };
+		$dir->{'value'} = $path;
+		&apache::save_directive_struct($olddir, $dir, $vconf, $conf, 1);
+		&flush_file_lines($virt->{'file'});
+		}
 	}
 $d->{'public_html_dir'} = $subdir;
 $d->{'public_html_path'} = $path;
 &register_post_action(\&restart_apache);
+if ($rename) {
+	# Also rename the directory
+	my $ok = &rename_as_domain_user($d, $oldpath, $path);
+	return "Failed to rename $oldpath to $path" if (!$ok);
+	}
 return undef;
 }
 
@@ -2970,6 +2977,14 @@ if (&indexof("fpm", &supported_php_modes()) >= 0) {
 		&ui_textarea("php_fpm",
 			$tmpl->{'php_fpm'} eq 'none' ? '' :
 			join("\n", split(/\t/, $tmpl->{'php_fpm'})), 5, 80));
+
+	# Use socket file or TCP port?
+	print &ui_table_row(
+		&hlink($text{'tmpl_php_sock'}, "template_php_sock"),
+		&ui_radio("php_sock", $tmpl->{'php_sock'},
+		  [ $tmpl->{'default'} ? ( ) : ( [ "", $text{'default'} ] ),
+		    [ 0, $text{'tmpl_php_sock0'} ],
+		    [ 1, $text{'tmpl_php_sock1'} ] ]));
 	}
 }
 
@@ -3038,18 +3053,25 @@ if (&indexof("fpm", &supported_php_modes()) >= 0) {
 	else {
 		$tmpl->{'php_fpm'} = 'none';
 		}
+	$tmpl->{'php_sock'} = $in{'php_sock'};
 	}
 }
 
-# list_php_wrapper_templates()
+# list_php_wrapper_templates([only-installed])
 # Returns the list of template names for PHP wrappers, based on the installed
 # PHP versions
 sub list_php_wrapper_templates
 {
-my @vers = &list_available_php_versions();
+my ($only) = @_;
+my @vers;
+if ($only) {
+	@vers = map { $_->[0] } &list_available_php_versions();
+	}
+push(@vers, @all_possible_php_versions);
+@vers = &unique(@vers);
 my @rv;
-push(@rv, map { "php".$_->[0]."cgi" } @vers);
-push(@rv, map { "php".$_->[0]."fcgi" } @vers);
+push(@rv, map { "php".$_."cgi" } @vers);
+push(@rv, map { "php".$_."fcgi" } @vers);
 return @rv;
 }
 
@@ -3058,7 +3080,7 @@ return @rv;
 sub show_template_phpwrappers
 {
 local ($tmpl) = @_;
-foreach my $w (&unique(&list_php_wrapper_templates())) {
+foreach my $w (&unique(&list_php_wrapper_templates(1))) {
 	local $ndi = &none_def_input($w, $tmpl->{$w},
 				     $text{'tmpl_wrapperbelow'}, 0, 0,
 				     $text{'tmpl_wrappernone'}, [ $w ]);
@@ -3077,7 +3099,7 @@ foreach my $w (&unique(&list_php_wrapper_templates())) {
 sub parse_template_phpwrappers
 {
 local ($tmpl) = @_;
-foreach my $w (&unique(&list_php_wrapper_templates())) {
+foreach my $w (&unique(&list_php_wrapper_templates(1))) {
 	$w =~ /^php([0-9\.]+)(cgi|fcgi)/ || next;
 	local ($v, $t) = ($1, $2);
 	if ($in{$w."_mode"} == 0) {
@@ -3125,7 +3147,8 @@ local ($d, $tmpl, $port) = @_;
 my $err;
 
 &require_apache();
-my $mode = &template_to_php_mode($tmpl);
+my $mode = $d->{'default_php_mode'} || &template_to_php_mode($tmpl);
+delete($d->{'default_php_mode'});
 my @supp = &supported_php_modes();
 if (&indexof($mode, @supp) < 0) {
 	$err = &text('setup_ewebphpmode', $mode);
@@ -4610,9 +4633,29 @@ foreach my $dir (&apache::find_directive_struct("Directory", $vconf)) {
 return $changed;
 }
 
+# fix_mod_php_directives(&domain, port)
+# Remove php_value directives if not supported by this system
+sub fix_mod_php_directives
+{
+my ($d, $port) = @_;
+my @modes = &supported_php_modes($d);
+if (&indexof("mod_php", @modes) < 0) {
+	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $port);
+	if ($virt) {
+		&apache::save_directive(
+			"php_value", [ ], $vconf, $conf);
+		&apache::save_directive(
+			"php_admin_value", [ ], $vconf, $conf);
+		&flush_file_lines($virt->{'file'}, undef, 1);
+		&register_post_action(\&restart_apache);
+		}
+	}
+
+}
+
 # fix_options_template(&tmpl, [ignore-version]))
-# If some template has Options lines for the web setting that are a mix of + and non+,
-# fix them up
+# If some template has Options lines for the web setting that are a mix of +
+# and non+, fix them up
 sub fix_options_template
 {
 my ($tmpl, $ignore) = @_;

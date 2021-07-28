@@ -351,9 +351,11 @@ else {
 sub wizard_parse_mysql
 {
 local ($in) = @_;
-local $pass = $in->{'mypass'};
-local $user = $mysql::mysql_login || 'root';
 &require_mysql();
+local $pass = $in->{'mypass_def'} ? $mysql::mysql_pass : $in->{'mypass'};
+local $user = $mysql::mysql_login || 'root';
+$mysql::mysql_pass = $pass;
+$mysql::authstr = &mysql::make_authstr();
 if (&mysql::is_mysql_running() == -1) {
 	# Forcibly change the mysql password
 	if ($in->{'forcepass'}) {
@@ -412,6 +414,7 @@ print &ui_table_row(undef, $text{'wizard_mysize'}, 2);
 
 &require_mysql();
 if (-r $mysql::config{'my_cnf'}) {
+	# Show options to change MySQL limits based on RAM
 	local $mem = &get_real_memory_size();
 	local $mysize = $config{'mysql_size'} || "";
 	local $recsize;
@@ -469,7 +472,7 @@ if ($in->{'mysize'} && -r $mysql::config{'my_cnf'}) {
 		&mysql::stop_mysql();
 		}
 
-	# Adjust my.cnf
+	# Copy my.cnf in preparation for fixing it
 	my $temp = &transname();
 	my $conf = &mysql::get_mysql_config();
 	my @files = &unique(map { $_->{'file'} } @$conf);
@@ -479,6 +482,7 @@ if ($in->{'mysize'} && -r $mysql::config{'my_cnf'}) {
 		&copy_source_dest($file, $temp."_".$bf);
 		&lock_file($file);
 		}
+
 	foreach my $s (&list_mysql_size_settings($in->{'mysize'}, $myver, $variant)) {
 		my $sname = $s->[2] || "mysqld";
 		my ($sect) = grep { $_->{'name'} eq $sname &&
@@ -488,11 +492,26 @@ if ($in->{'mysize'} && -r $mysql::config{'my_cnf'}) {
 					       $s->[1] ? [ $s->[1] ] : [ ]);
 			}
 		}
+	$config{'mysql_size'} = $in->{'mysize'};
+
+	# Adjust max packet size if default is too small
+	my ($sect) = grep { $_->{'name'} eq "mysqld" &&
+			    $_->{'members'} } @$conf;
+	if ($sect) {
+		my $pack = &mysql::find_value(
+			"max_allowed_packet", $sect->{'members'});
+		$pack ||= "64M";
+		if (&php_value_diff($pack, "1G") < 0) {
+			&mysql::save_directive(
+				$conf, $sect, "max_allowed_packet", [ "1G" ]);
+			}
+		}
+
+	# Write out the config files
 	foreach my $file (@files) {
 		&flush_file_lines($file, undef, 1);
 		&unlock_file($file);
 		}
-	$config{'mysql_size'} = $in->{'mysize'};
 
 	# Start it up again
 	if ($running) {
@@ -680,7 +699,7 @@ else {
 				 &ui_textbox("defhost", $def, 20) ] ]));
 
 	print &ui_table_row($text{'wizard_defdom_ssl'},
-		&ui_radio("defssl", 2,
+		&ui_radio("defssl", 1,
 			  [ [ 0, $text{'wizard_defssl0'} ],
 			    [ 1, $text{'wizard_defssl1'} ],
 			    [ 2, $text{'wizard_defssl2'} ] ]));
@@ -756,6 +775,7 @@ $dom{'dns'} = 1;
 my $webf = &domain_has_website();
 my $sslf = &domain_has_ssl();
 $dom{$webf} = 1;
+$dom{'no_default_service_certs'} = 1 if ($in->{'defssl'} != 2);
 if ($in->{'defssl'}) {
 	$dom{$sslf} = 1;
 	if ($in->{'defssl'} == 2) {

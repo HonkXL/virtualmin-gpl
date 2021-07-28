@@ -87,6 +87,7 @@ if (@doms > $config{'display_max'} && $config{'display_max'}) {
 		       'name' => 'dname',
 		       'icon' => '/'.$module_name.'/images/ok.png',
 		       'value' => $d ? $d->{'dom'} : '',
+		       'domid' => $d ? $d->{'id'} : '',
 		       'size' => 15 };
 	push(@rv, $dfield);
 	}
@@ -146,6 +147,7 @@ if ($d) {
 	my @cats = &unique(map { $_->{'cat'} } @buts);
 	foreach my $c (@cats) {
                 next if ($c eq 'objects' || $c eq 'create');
+                next if ($c eq 'webmin' && $d->{'webmin_nocat_modules'});
                 my @incat = grep { $_->{'cat'} eq $c } @buts;
 		my $cmenu = { 'type' => 'cat',
 			      'id' => 'cat_'.$c,

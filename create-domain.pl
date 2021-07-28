@@ -61,6 +61,11 @@ If you have configured additional remote (or local) MySQL servers, you can
 select which one this domain will use with the C<--mysql-server> flag followed
 by a hostname, hostname:port or socket file.
 
+By default, the Cloud DNS provider chosen in the specified template will be
+used. However, you can override this with the C<--cloud-dns> flag followed by
+either C<local> to host locally, C<services> to use Cloudmin services, or
+the ID of one of the supported providers like C<route53> or C<google>.
+
 =cut
 
 package virtual_server;
@@ -351,6 +356,9 @@ while(@ARGV > 0) {
 	elsif ($a eq "--mysql-server") {
 		$myserver = shift(@ARGV);
 		}
+	elsif ($a eq "--cloud-dns") {
+		$clouddns = shift(@ARGV);
+		}
 	elsif ($a eq "--break-ssl-cert") {
 		$linkcert = 0;
 		}
@@ -359,6 +367,20 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--generate-ssl-cert") {
 		$always_ssl = 1;
+		}
+	elsif ($a eq "--generate-ssh-key") {
+		$sshmode = 1;
+		}
+	elsif ($a eq "--use-ssh-key") {
+		$sshmode = 2;
+		$sshkey = shift(@ARGV);
+		if ($sshkey =~ /^\//) {
+			$sshkey = &read_file_contents($sshkey);
+			}
+		$sshkey =~ /\S/ || &usage("--use-ssh-key must be followed by a key file or data");
+		}
+	elsif ($a eq "--mode") {
+		$phpmode = shift(@ARGV);
 		}
 	elsif ($a eq "--multiline") {
 		$multiline = 1;
@@ -711,6 +733,27 @@ if ($myserver) {
 	$mysql_module = $mm->{'minfo'}->{'dir'};
 	}
 
+# Validate the Cloud DNS provider
+if ($clouddns) {
+	if ($clouddns eq "services") {
+		$config{'provision_dns'} ||
+			&usage("Cloudmin Services for DNS is not enabled");
+		}
+	elsif ($clouddns ne "local") {
+		my @cnames = map { $_->{'name'} } &list_dns_clouds();
+		&indexof($clouddns, @cnames) >= 0 ||
+			&usage("Valid Cloud DNS providers are : ".
+			       join(" ", @cnames));
+		}
+	}
+
+# Validate PHP mode
+if ($phpmode) {
+	my @supp = &supported_php_modes();
+	&indexof($phpmode, @supp) >= 0 ||
+		&usage("The selected PHP exection mode cannot be used");
+	}
+
 # Work out prefix if needed, and check it
 $prefix ||= &compute_prefix($domain, $group, $parent, 1);
 $prefix =~ /^[a-z0-9\.\-]+$/i || &usage($text{'setup_eprefix'});
@@ -775,6 +818,8 @@ $pclash && &usage(&text('setup_eprefix3', $prefix, $pclash->{'dom'}));
 	 'auto_letsencrypt', $letsencrypt,
 	 'jail', $jail,
 	 'mysql_module', $mysql_module,
+	 'default_php_mode', $phpmode,
+	 'dns_cloud', $clouddns,
         );
 $dom{'nolink_certs'} = 1 if ($linkcert eq '0');
 $dom{'link_certs'} = 1 if ($linkcert eq '1');
@@ -867,6 +912,33 @@ if ($fwdto) {
 	&$second_print($text{'setup_done'});
 	}
 
+if ($sshmode == 1) {
+	# Generate and use a key
+	&$first_print($text{'setup_sshkey1'});
+	($sshkey, $err) = &create_domain_ssh_key(\%dom);
+	if (!$err) {
+		$err = &save_domain_ssh_pubkey(\%dom, $sshkey);
+		}
+	if ($err) {
+		&$second_print(&text('setup_esshkey', $err));
+		}
+	else {
+		&$second_print($text{'setup_done'});
+		}
+	}
+elsif ($sshmode == 2) {
+	# Just use an existing key
+	&$first_print($text{'setup_sshkey2'});
+	$sshkey =~ s/\r|\n/ /g;
+	$err = &save_domain_ssh_pubkey(\%dom, $sshkey);
+	if ($err) {
+		&$second_print(&text('setup_esshkey', $err));
+		}
+	else {
+		&$second_print($text{'setup_done'});
+		}
+	}
+
 &virtualmin_api_log(\@OLDARGV, \%dom, $dom{'hashpass'} ? [ "pass" ] : [ ]);
 &run_post_actions_silently();
 &unlock_domain_name($domain);
@@ -952,8 +1024,10 @@ print "                        [--letsencrypt]\n";
 print "                        [--field-name value]*\n";
 print "                        [--enable-jail | --disable-jail]\n";
 print "                        [--mysql-server hostname]\n";
+print "                        [--cloud-dns provider|\"services\"|\"local\"]\n";
 print "                        [--break-ssl-cert | --link-ssl-cert]\n";
 print "                        [--generate-ssl-cert]\n";
+print "                        [--generate-ssh-key | --use-ssh-key file|data]\n";
 exit(1);
 }
 

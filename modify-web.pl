@@ -9,7 +9,13 @@ virtual servers. Like other scripts, the servers to change are selecting
 using the C<--domain> or C<--all-domains> parameters.
 
 To change the method Virtualmin uses to run CGI scripts, use the C<--mode>
-parameter followed by one of C<mod_php>, C<cgi>, C<fcgid> or C<fpm>.
+parameter followed by one of C<none>, C<mod_php>, C<cgi>, C<fcgid> or C<fpm>.
+Or you can use C<--default-mode> to switch to the default defined in the 
+domain's template.
+
+When using FPM mode, you can configure Apache to use a socket file
+for communication with the FPM server with the C<--php-fpm-socket> flag.
+Or switch back to using a TCP port with the C<--php-fpm-port> flag.
 
 The C<--proxy> parameter can be used to have the website proxy all requests
 to another URL, which must follow C<--proxy>. To disable this, the
@@ -65,9 +71,9 @@ referencing this domain with the C<--url-port> flag. For SSL websites, you can
 also use the C<--ssl-url-port> flag.
 
 If the domain's SSL certificate was requested from Let's Encrypt, you can
-turn on automatic renewal with the C<--letsencrypt-renew> flag followed by
-a number of months. Alternately, renewal can be disabled with the 
-C<--no-letsencrypt-renew> parameter.
+turn on automatic renewal when close to expiry with the C<--letsencrypt-renew>
+flag. Alternately, renewal can be disabled with the C<--no-letsencrypt-renew>
+parameter.
 
 If the domain is sharing an SSL certificate with another domain (because it's
 CN matches both of them), you can use the C<--break-ssl-cert> flag to stop
@@ -78,7 +84,9 @@ to enable sharing.
 To change the domain's HTML directory, use the C<--document-dir> flag followed
 by a path relative to the domain's home. Alternately, if the Apache config has
 been modified outside of Virtualmin and you just want to detect the new path,
-use the C<--fix-document-dir> flag.
+use the C<--fix-document-dir> flag. If you want the directory to be renames
+as well as updated in the webserver configuration, use the
+C<--move-document-dir> flag.
 
 To force re-generated of TLSA DNS records after the SSL cert is manually
 modified, use the C<--sync-tlsa> flag.
@@ -115,6 +123,9 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--mode") {
 		$mode = shift(@ARGV);
+		}
+	elsif ($a eq "--default-mode") {
+		$defmode = 1;
 		}
 	elsif ($a eq "--ruby-mode" && $supports_ruby) {
 		$rubymode = shift(@ARGV);
@@ -190,6 +201,10 @@ while(@ARGV > 0) {
 	elsif ($a eq "--document-dir") {
 		$htmldir = shift(@ARGV);
 		}
+	elsif ($a eq "--move-document-dir") {
+		$htmldir = shift(@ARGV);
+		$htmldirmove = 1;
+		}
 	elsif ($a eq "--fix-document-dir") {
 		$fixhtmldir = 1;
 		}
@@ -220,12 +235,15 @@ while(@ARGV > 0) {
 		$multiline = 1;
 		}
 	elsif ($a eq "--letsencrypt-renew") {
-		$renew = shift(@ARGV);
-		$renew =~ /^\d+(\.\d+)?$/ && $renew > 0 ||
-		    &usage("--letsencrypt-renew must be followed by a number of months");
+		if ($ARGV[0] =~ /^\d+(\.\d+)?$/) {
+			# Followed by a number of months, which is no longer
+			# needed
+			shift(@ARGV);
+			}
+		$renew = 1;
 		}
 	elsif ($a eq "--no-letsencrypt-renew") {
-		$renew = "";
+		$renew = 0;
 		}
 	elsif ($a eq "--break-ssl-cert") {
 		$breakcert = 1;
@@ -235,6 +253,12 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--sync-tlsa") {
 		$tlsa = 1;
+		}
+	elsif ($a eq "--php-fpm-port") {
+		$fpmport = 1;
+		}
+	elsif ($a eq "--php-fpm-socket") {
+		$fpmsock = 1;
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -246,8 +270,8 @@ $mode || $rubymode || defined($proxy) || defined($framefwd) || $tlsa ||
   $version || defined($webmail) || defined($matchall) || defined($timeout) ||
   $defwebsite || $accesslog || $errorlog || $htmldir || $port || $sslport ||
   $urlport || $sslurlport || defined($includes) || defined($fixoptions) ||
-  defined($renew) || $fixhtmldir || $breakcert || $linkcert ||
-	&usage("Nothing to do");
+  defined($renew) || $fixhtmldir || $breakcert || $linkcert || $fpmport ||
+  $fpmsock || $defmode || &usage("Nothing to do");
 $proxy && $framefwd && &usage("Both proxying and frame forwarding cannot be enabled at once");
 
 # Validate fastCGI options
@@ -354,6 +378,12 @@ foreach $d (@doms) {
 	&$first_print("Updating server $d->{'dom'} ..");
 	&$indent_print();
 
+	# Use the default mode for this domain
+	if ($defmode) {
+		$tmpl = &get_template($d->{'template'});
+		$mode = &template_to_php_mode($tmpl);
+		}
+
 	# Update PHP mode
 	if ($mode && !$d->{'alias'}) {
 		&$first_print("Changing PHP execution mode to $mode ..");
@@ -388,6 +418,27 @@ foreach $d (@doms) {
 			&clear_links_cache($d);
 			}
 		&$second_print($err ? ".. failed : $err" : ".. done");
+		}
+
+	# Update FPM socket
+	if (($fpmport || $fpmsock) && !$d->{'alias'}) {
+		my $ps;
+		if ($fpmport) {
+			$ps = &get_php_fpm_socket_port($d);
+			}
+		else {
+			$ps = &get_php_fpm_socket_file($d);
+			}
+		&$first_print("Changing FPM ".($fpmport ? "port" : "socket").
+			      " to ".$ps." ..");
+		my $currmode = $mode || &get_domain_php_mode($d);
+		if ($currmode ne "fpm") {
+			&$second_print(".. not in FPM mode");
+			}
+		else {
+			my $err = &save_domain_php_fpm_port($d, $ps);
+			&$second_print($err ? " .. failed : $err" : ".. done");
+			}
 		}
 
 	# Update Ruby mode
@@ -540,7 +591,7 @@ foreach $d (@doms) {
 	if ($htmldir && !$d->{'alias'} && $d->{'public_html_dir'} !~ /\.\./) {
 		# Change HTML directory
 		&$first_print("Changing documents directory to $htmldir ..");
-		$err = &set_public_html_dir($d, $htmldir);
+		$err = &set_public_html_dir($d, $htmldir, $htmldirmove);
 		&$second_print($err ? ".. failed : $err" : ".. done");
 		}
 
@@ -607,14 +658,9 @@ foreach $d (@doms) {
 			}
 		}
 
-	if (defined($renew) && $d->{'letsencrypt_last'}) {
+	if (defined($renew)) {
 		# Change let's encrypt renewal period
-		if ($renew) {
-			$d->{'letsencrypt_renew'} = $renew;
-			}
-		else {
-			delete($d->{'letsencrypt_renew'});
-			}
+		$d->{'letsencrypt_renew'} = $renew;
 		}
 
 	if (&domain_has_ssl_cert($d) && $breakcert) {
@@ -642,12 +688,18 @@ foreach $d (@doms) {
 				       &show_domain_name($same));
 			}
 		else {
-			my $same = &find_matching_certificate_domain($d);
+			# Find a cert to link with, ideally a parent with the same owner
+			my @sames = &find_matching_certificate_domain($d);
+			my ($same) = grep { $_->{'user'} eq $d->{'user'} &&
+					    !$_->{'parent'} } @sames;
 			if (!$same) {
+				($same) = grep { $_->{'user'} eq $d->{'user'} } @sames;
+				}
+			if (!@sames) {
 				&$second_print(".. no domain to link with found");
 				}
-			elsif ($same->{'user'} ne $d->{'user'}) {
-				&$second_print(".. domain $same->{'dom'} to link with has a different owner");
+			elsif (!$same) {
+				&$second_print(".. no domain with the same owner to link with found");
 				}
 			else {
 				&link_matching_certificate($d, $same, 1);
@@ -693,10 +745,11 @@ print "$_[0]\n\n" if ($_[0]);
 print "Changes web server settings for one or more domains.\n";
 print "\n";
 print "virtualmin modify-web --domain name | --all-domains\n";
-print "                     [--mode mod_php|cgi|fcgid|fpm]\n";
+print "                     [--mode mod_php|cgi|fcgid|fpm | --default-mode]\n";
 print "                     [--php-children number | --no-php-children]\n";
 print "                     [--php-version num]\n";
 print "                     [--php-timeout seconds | --no-php-timeout]\n";
+print "                     [--php-fpm-port | --php-fpm-socket]\n";
 if ($supports_ruby) {
 	print "                     [--ruby-mode none|mod_ruby|cgi|fcgid]\n";
 	}
@@ -714,11 +767,13 @@ print "                     [--includes extension | --no-includes]\n";
 print "                     [--default-website]\n";
 print "                     [--access-log log-path]\n";
 print "                     [--error-log log-path]\n";
-print "                     [--document-dir subdirectory | --fix-document-dir]\n";
+print "                     [--document-dir subdirectory |\n";
+print "                      --move-document-dir subdirectory |\n";
+print "                      --fix-document-dir]\n";
 print "                     [--port number] [--ssl-port number]\n";
 print "                     [--url-port number] [--ssl-url-port number]\n";
 print "                     [--fix-options]\n";
-print "                     [--letsencrypt-renew months | --no-letsencrypt-renew]\n";
+print "                     [--letsencrypt-renew | --no-letsencrypt-renew]\n";
 print "                     [--break-ssl-cert | --link-ssl-cert]\n";
 print "                     [--sync-tlsa]\n";
 exit(1);

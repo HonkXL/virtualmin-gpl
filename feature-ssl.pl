@@ -110,7 +110,7 @@ local $web_sslport = $d->{'web_sslport'} || $tmpl->{'web_sslport'} || 443;
 &require_apache();
 &obtain_lock_web($d);
 local $conf = &apache::get_config();
-$d->{'letsencrypt_renew'} = 2;		# Default let's encrypt renewal
+$d->{'letsencrypt_renew'} = 1;		# Default let's encrypt renewal
 
 # Find out if this domain will share a cert with another
 &find_matching_certificate($d);
@@ -219,7 +219,7 @@ else {
 # the first time
 if (!$d->{'creating'} && $generated && $d->{'auto_letsencrypt'} &&
     !$d->{'disabled'}) {
-	&create_initial_letsencrypt_cert($d);
+	&create_initial_letsencrypt_cert($d, 1);
 	}
 
 return 1;
@@ -660,7 +660,7 @@ if ($info && $info->{'notafter'}) {
 
 # Make sure the CA matches the cert
 my $cafile = &get_website_ssl_file($d, "ca");
-if ($cafile) {
+if ($cafile && !&self_signed_cert($d)) {
 	my $cainfo = &cert_file_info($cafile, $d);
 	if (!$cainfo || !$cainfo->{'cn'}) {
 		return &text('validate_esslcainfo', "<tt>$cafile</tt>");
@@ -809,6 +809,9 @@ if ($virt) {
 		&copy_write_as_domain_user($d, $key, $file."_key");
 		}
 	local $ca = &apache::find_directive("SSLCACertificateFile", $vconf,1);
+	if (!$ca) {
+		$ca = &apache::find_directive("SSLCertificateChainFile", $vconf,1);
+		}
 	if ($ca) {
 		&copy_write_as_domain_user($d, $ca, $file."_ca");
 		}
@@ -887,6 +890,9 @@ if ($virt) {
 		&unlock_file($key);
 		}
 	local $ca = &apache::find_directive("SSLCACertificateFile", $vconf, 1);
+	if (!$ca) {
+		$ca = &apache::find_directive("SSLCertificateChainFile", $vconf, 1);
+		}
 	if ($ca && -r $file."_ca") {
 		&lock_file($ca);
 		&set_ownership_permissions(
@@ -903,6 +909,10 @@ if ($virt) {
 
 	# Add Require all granted directive if this system is Apache 2.4
 	&add_require_all_granted_directives($d, $d->{'web_sslport'});
+
+	# If the restored config contains php_value entires but this system
+	# doesn't support mod_php, remove them
+	&fix_mod_php_directives($d, $d->{'web_sslport'});
 
 	# Fix Options lines
 	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'},
@@ -1195,9 +1205,11 @@ else {
 		}
 	&unlink_file($pass_script);
 	}
-&lock_file(@pps_str ? $pps_str[0]->{'file'} : $conf->[0]->{'file'});
+my $pps_file = @pps_str ? $pps_str[0]->{'file'} : $conf->[0]->{'file'};
+&lock_file($pps_file);
 &apache::save_directive("SSLPassPhraseDialog", \@pps, $conf, $conf);
 &flush_file_lines();
+&unlock_file($pps_file);
 &register_post_action(\&restart_apache, &ssl_needs_apache_restart());
 }
 
@@ -1251,6 +1263,7 @@ local %headers = ( 'key' => '(RSA |EC )?PRIVATE KEY',
 		   'newkey' => '(RSA |EC )?PRIVATE KEY' );
 local $h = $headers{$type};
 $h || return "Unknown SSL file type $type";
+($data) = &extract_cert_parameters($data);
 local @lines = grep { /\S/ } split(/\r?\n/, $data);
 local $begin = quotemeta("-----BEGIN ").$h.quotemeta("-----");
 local $end = quotemeta("-----END ").$h.quotemeta("-----");
@@ -1266,6 +1279,26 @@ for(my $i=1; $i<$#lines; $i++) {
 	}
 @lines > 4 || return "Data only has ".scalar(@lines)." lines";
 return undef;
+}
+
+# extract_cert_parameters(cert-text)
+# Given a cert text that might contain a -----BEGIN EC PARAMETERS----- block,
+# return the rest of the file and that block if it exists
+sub extract_cert_parameters
+{
+my ($data) = @_;
+local @lines = grep { /\S/ } split(/\r?\n/, $data);
+my $l = 0;
+my $p = "";
+if ($lines[0] =~ /-----BEGIN\s+(\S+)\s+PARAMETERS-----/) {
+	$p .= $lines[0]."\n";
+	while($lines[++$l] !~ /--END\s+(\S+)\s+PARAMETERS-----/) {
+		$p .= $lines[$l]."\n";
+		}
+	$p .= $lines[$l]."\n";
+	$l++;
+	}
+return (join("\n", @lines[$l..$#lines])."\n", $p);
 }
 
 # cert_pem_data(&domain)
@@ -1388,6 +1421,22 @@ if (@ipkeys != @newipkeys) {
 return $text{'delete_esslnoips'};
 }
 
+# apache_combined_cert()
+# Returns 1 if Apache should be pointed to the combined SSL cert file
+sub apache_combined_cert
+{
+&require_apache();
+if ($config{'combined_cert'} == 2) {
+	return 1;
+	}
+elsif ($config{'combined_cert'} == 1) {
+	return 0;
+	}
+else {
+	return &compare_versions($apache::httpd_modules{'core'}, "2.4.8") >= 0;
+	}
+}
+
 # apache_ssl_directives(&domain, template)
 # Returns extra Apache directives needed for SSL
 sub apache_ssl_directives
@@ -1396,7 +1445,12 @@ local ($d, $tmpl) = @_;
 &require_apache();
 local @dirs;
 push(@dirs, "SSLEngine on");
-push(@dirs, "SSLCertificateFile $d->{'ssl_cert'}");
+if (&apache_combined_cert()) {
+	push(@dirs, "SSLCertificateFile $d->{'ssl_combined'}");
+	}
+else {
+	push(@dirs, "SSLCertificateFile $d->{'ssl_cert'}");
+	}
 push(@dirs, "SSLCertificateKeyFile $d->{'ssl_key'}");
 if ($d->{'ssl_chain'}) {
 	push(@dirs, "SSLCACertificateFile $d->{'ssl_chain'}");
@@ -1686,20 +1740,21 @@ $main::got_lock_ssl-- if ($main::got_lock_ssl);
 
 # find_matching_certificate_domain(&domain)
 # Check if another domain on the same IP already has a matching cert, and if so
-# return it.
+# return it (or a list of matches)
 sub find_matching_certificate_domain
 {
 local ($d) = @_;
 local @sslclashes = grep { $_->{'ip'} eq $d->{'ip'} &&
-			   $_->{'ssl'} &&
+			   &domain_has_ssl($_) &&
 			   $_->{'id'} ne $d->{'id'} &&
 			   !$_->{'ssl_same'} } &list_domains();
+local @rv;
 foreach my $sslclash (@sslclashes) {
 	if (&check_domain_certificate($d->{'dom'}, $sslclash)) {
-		return $sslclash;
+		push(@rv, $sslclash);
 		}
 	}
-return undef;
+return wantarray ? @rv : $rv[0];
 }
 
 # find_matching_certificate(&domain)
@@ -1713,10 +1768,15 @@ local $lnk = $d->{'link_certs'} ? 1 :
 	     $d->{'nolink_certs'} ? 0 :
 	     $config{'nolink_certs'} ? 0 : 1;
 if ($lnk) {
-	local $sslclash = &find_matching_certificate_domain($d);
-	if ($sslclash && $sslclash->{'user'} eq $d->{'user'}) {
-		# Found a match, so add a link to it
-		&link_matching_certificate($d, $sslclash, 0);
+	local @sames = grep { $_->{'user'} eq $d->{'user'} }
+			    &find_matching_certificate_domain($d);
+	if (@sames) {
+		my ($same) = grep { !$_->{'parent'} } @sames;
+		$same ||= $sames[0];
+		if ($same) {
+			# Found a match, so add a link to it
+			&link_matching_certificate($d, $same, 0);
+			}
 		}
 	}
 }
@@ -1813,8 +1873,14 @@ if ($d->{'web'}) {
 	local ($ovirt, $ovconf, $conf) = &get_apache_virtual(
 		$d->{'dom'}, $d->{'web_sslport'});
 	if ($ovirt) {
-		&apache::save_directive("SSLCertificateFile",
-			[ $d->{'ssl_cert'} ], $ovconf, $conf);
+		if (&apache_combined_cert()) {
+			&apache::save_directive("SSLCertificateFile",
+				[ $d->{'ssl_combined'} ], $ovconf, $conf);
+			}
+		else {
+			&apache::save_directive("SSLCertificateFile",
+				[ $d->{'ssl_cert'} ], $ovconf, $conf);
+			}
 		&apache::save_directive("SSLCertificateKeyFile",
 			$d->{'ssl_key'} ? [ $d->{'ssl_key'} ] : [ ],
 			$ovconf, $conf);
@@ -2578,11 +2644,11 @@ foreach my $d (&list_domains()) {
 
 	# Is it time? Either the user-chosen number of months has passed, or
 	# the cert is within 21 days of expiry
+	my $before = $config{'renew_letsencrypt'} || 21;
 	my $day = 24 * 60 * 60;
 	my $age = time() - $ltime;
 	my $rf = rand() * 3600;
-	my $renew = $age >= $d->{'letsencrypt_renew'} * 30 * $day + $rf ||
-		    $expiry && $expiry - time() < 21 * $day + $rf;
+	my $renew = $expiry && $expiry - time() < $before * $day + $rf;
 	next if (!$renew);
 
 	# Don't even attempt now if the lock is being held
@@ -3021,7 +3087,7 @@ foreach my $t ('key', 'cert', 'chain', 'combined', 'everything') {
 	}
 my @rv;
 foreach my $p (&unique(@paths)) {
-	$p =~ s/^\Q$d->{'home'}\E\///;
+	$p =~ s/^\Q$d->{'home'}\E\/// || next;
 	if ($p =~ /^(.*)\//) {
 		push(@rv, $1);
 		}

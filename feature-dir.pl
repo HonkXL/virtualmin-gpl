@@ -393,6 +393,8 @@ else {
 sub validate_dir
 {
 local ($d) = @_;
+
+# Make sure home dir exists and has the correct owner
 if (!-d $d->{'home'}) {
 	return &text('validate_edir', "<tt>$d->{'home'}</tt>");
 	}
@@ -410,10 +412,13 @@ if ($d->{'gid'} && $st[5] != $d->{'gid'} && $st[5] != $d->{'ugid'} &&
 	return &text('validate_edirgroup', "<tt>$d->{'home'}</tt>",
 		     $owner, $d->{'group'})
 	}
+
 if (!$d->{'alias'}) {
+	# Make sure common sub-directories exist
 	foreach my $sd (&virtual_server_directories($d)) {
 		next if ($sd->[0] eq 'virtualmin-backup' ||   # Not all domains
 			 $sd->[0] eq $home_virtualmin_backup);
+		next if ($sd->[2] eq 'ssl' && !&domain_has_ssl_cert($d));
 		if (!-d "$d->{'home'}/$sd->[0]") {
 			# Dir is missing
 			return &text('validate_esubdir',
@@ -437,6 +442,19 @@ if (!$d->{'alias'}) {
 			}
 		}
 	}
+
+# Make sure cert files are valid
+if (!$d->{'ssl_same'} && &domain_has_ssl_cert($d)) {
+	foreach my $t ('key', 'cert', 'ca') {
+		my $file = &get_website_ssl_file($d, $t);
+		next if (!$file);
+		my $err = &validate_cert_format($file, $t);
+		if ($err) {
+			return &text('validate_esslfile', $t, $err);
+			}
+		}
+	}
+
 return undef;
 }
 
@@ -962,15 +980,15 @@ my $tmpl = &get_template($d->{'template'});
 my $perms = $tmpl->{'web_html_perms'};
 my @rv;
 if (!$d->{'subdom'} && !$d->{'alias'}) {
-	push(@rv, [ &public_html_dir($d, 1), $perms ]);
-	push(@rv, [ &cgi_bin_dir($d, 1), $perms ]);
+	push(@rv, [ &public_html_dir($d, 1), $perms, 'html' ]);
+	push(@rv, [ &cgi_bin_dir($d, 1), $perms, 'cgi' ]);
 	}
-push(@rv, [ 'logs', '750' ]);
-push(@rv, [ $config{'homes_dir'}, '755' ]);
+push(@rv, [ 'logs', '750', 'logs' ]);
+push(@rv, [ $config{'homes_dir'}, '755', 'homes' ]);
 if (!$d->{'parent'}) {
-	push(@rv, [ $home_virtualmin_backup, '700' ]);
+	push(@rv, [ $home_virtualmin_backup, '700', 'backup' ]);
 	}
-push(@rv, map { [ $_, '700' ] } &ssl_certificate_directories($d));
+push(@rv, map { [ $_, '700', 'ssl' ] } &ssl_certificate_directories($d));
 return @rv;
 }
 

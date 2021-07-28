@@ -22,7 +22,7 @@ foreach my $lib ("scripts", "resellers", "admins", "simple", "s3",
 		 "postgrey", "wizard", "security", "json", "redirects", "ftp",
 		 "dkim", "provision", "stats", "bkeys", "rs", "cron",
 		 "ratelimit", "cloud", "google", "gcs", "dropbox", "copycert",
-		 "jailkit", "ports", "bb", "dnscloud") {
+		 "jailkit", "ports", "bb", "dnscloud", "dnscloudpro") {
 	my $libfile = "$virtual_server_root/pro/$lib-lib.pl";
 	if (!-r $libfile) {
 		$libfile = "$virtual_server_root/$lib-lib.pl";
@@ -88,7 +88,7 @@ else {
 	$main::list_domains_cache_time = $st[9];
 	}
 foreach $d (@files) {
-	if ($d !~ /^\./ && $d !~ /\.(lock|bak|back|backup|rpmsave|sav|swp|webmintmp|~)$/i) {
+	if ($d !~ /^\./ && $d !~ /\.(lock|bak|back|backup|rpmsave|sav|swp|~)$/i && $d !~ /\.webmintmp\.\d+/i) {
 		push(@rv, &get_domain($d));
 		}
 	}
@@ -3552,7 +3552,7 @@ foreach my $d (&sort_indent_domains($doms)) {
 		elsif ($c eq "plan") {
 			# Account plan
 			my $p;
-			if ($d->{'plan'} && defined(&get_plan) &&
+			if ($d->{'plan'} ne '' && defined(&get_plan) &&
 			    ($p = &get_plan($d->{'plan'}))) {
 				push(@cols, $p->{'name'});
 				}
@@ -4199,8 +4199,10 @@ for(my $i=1; $i<=10; $i++) {
 
 # Add secondary mail servers
 local %ids = map { $_, 1 } split(/\s+/, $d->{'mx_servers'});
-local @servers = grep { $ids{$_->{'id'}} } &list_mx_servers();
-$hash{'mx_slaves'} = join(" ", map { $_->{'host'} } @servers);
+if (%ids) {
+	local @servers = grep { $ids{$_->{'id'}} } &list_mx_servers();
+	$hash{'mx_slaves'} = join(" ", map { $_->{'host'} } @servers);
+	}
 
 # Add secondary nameservers
 if ($config{'dns'}) {
@@ -4262,7 +4264,8 @@ if ($config{'new'.$tmode.'_to_reseller'} && $d->{'reseller'} &&
 	foreach my $r (split(/\s+/, $d->{'reseller'})) {
 		local $resel = &get_reseller($r);
 		if ($resel && $resel->{'acl'}->{'email'}) {
-			push(@ccs, $resel->{'acl'}->{'email'});
+			push(@ccs, &extract_address_parts(
+				$resel->{'acl'}->{'email'}));
 			}
 		}
 	}
@@ -4528,13 +4531,19 @@ if ($d && $d->{'reseller'} && defined(&get_reseller) && $config{'from_reseller'}
 	local $resel = &get_reseller($r[0]);
 	if ($resel && $resel->{'acl'}->{'email'}) {
 		# Reseller has an email .... but is it valid for this system?
-		my $rs = $resel->{'acl'}->{'email'};
-		my ($rsmbox, $rsdom) = split(/\@/, $rs);
-		my $rsd = &get_domain_by("dom", $rsdom);
-		if ($rsd || $rsdom eq &get_system_hostname() ||
-		    $config{'from_reseller'} == 2) {
-			# Yes - safe to use
-			$rv = $rs;
+		if ($resel->{'acl'}->{'from'}) {
+			# Custom from address set
+			$rv = $resel->{'acl'}->{'from'};
+			}
+		else {
+			my ($rs) = &extract_address_parts($resel->{'acl'}->{'email'});
+			my ($rsmbox, $rsdom) = split(/\@/, $rs);
+			my $rsd = &get_domain_by("dom", $rsdom);
+			if ($rsd || $rsdom eq &get_system_hostname() ||
+			    $config{'from_reseller'} == 2) {
+				# Yes - safe to use
+				$rv = $rs;
+				}
 			}
 		}
 	}
@@ -7803,7 +7812,8 @@ if (@scripts && !$dom->{'alias'} && !$noscripts &&
 		# Check PHP version
 		local $phpver;
 		if (&indexof("php", @{$script->{'uses'}}) >= 0) {
-			$phpver = &setup_php_version($dom, [5],$opts->{'path'});
+			$phpver = &setup_php_version($dom, $script, $ver,
+						     $opts->{'path'});
 			if (!$phpver) {
 				&$second_print($text{'scripts_ephpvers2'});
 				next;
@@ -7954,13 +7964,14 @@ if ($dom->{'auto_letsencrypt'} && &domain_has_website($dom) &&
     !$dom->{'disabled'} && !$dom->{'alias'} && !$dom->{'ssl_same'}) {
 	my $info = &cert_info($dom);
 	if ($info->{'self'}) {
-		&create_initial_letsencrypt_cert($dom);
+		&create_initial_letsencrypt_cert($dom, 1);
 		$generated++;
 		}
 	}
 
-# Update service certs and DANE DNS records if a new cert was generated
-if ($generated) {
+# Update service certs and DANE DNS records if a new Let's Encrypt cert was
+# generated
+if ($generated && !$dom->{'no_default_service_certs'}) {
 	&enable_domain_service_ssl_certs($dom);
 	&sync_domain_tlsa_records($dom);
 	}
@@ -8024,16 +8035,28 @@ local $merr = &made_changes();
 return undef;
 }
 
-# create_initial_letsencrypt_cert(&domain)
+# create_initial_letsencrypt_cert(&domain, [validate-first])
 # Create the initial default let's encrypt cert for a domain which has just
 # had SSL enabled. May print stuff.
 sub create_initial_letsencrypt_cert
 {
-local ($d) = @_;
+local ($d, $valid) = @_;
 &foreign_require("webmin");
 my @dnames = &get_hostnames_for_ssl($d);
 &$first_print(&text('letsencrypt_doing2',
 		    join(", ", map { "<tt>$_</tt>" } @dnames)));
+if ($valid) {
+	my @errs = &validate_letsencrypt_config($d);
+	if (@errs) {
+		&$second_print($text{'letsencrypt_evalid'});
+		return 0;
+		}
+	@errs = &check_domain_connectivity($d, { 'mail' => 1, 'ssl' => 1 });
+	if (@errs) {
+		&$second_print($text{'letsencrypt_econnect'});
+		return 0;
+		}
+	}
 my $phd = &public_html_dir($d);
 my $before = &before_letsencrypt_website($d);
 my @beforecerts = &get_all_domain_service_ssl_certs($d);
@@ -8051,14 +8074,14 @@ else {
 	$d->{'letsencrypt_dname'} = '';
 	$d->{'letsencrypt_dwild'} = 0;
 	$d->{'letsencrypt_last'} = time();
-	$d->{'letsencrypt_renew'} ||= 2;
+	$d->{'letsencrypt_renew'} = 1 if ($d->{'letsencrypt_renew'} eq '');
 
 	# Inject initial SSL expiry to avoid wrong "until expiry"
 	my $cert_info = &cert_info($d);
 	if ($cert_info) {
 		$d->{'ssl_cert_expiry'} = 
 			&parse_notafter_date($cert_info->{'notafter'});
-	}
+		}
 	&save_domain($d);
 
 	# Update other services using the cert
@@ -8829,6 +8852,7 @@ push(@rv, { 'id' => 0,
 	    'web_admindom' => $config{'web_admindom'},
 	    'php_vars' => $config{'php_vars'} || "none",
 	    'php_fpm' => $config{'php_fpm'} || "none",
+	    'php_sock' => $config{'php_sock'} || 0,
 	    'web_php_suexec' => int($config{'php_suexec'}),
 	    'web_ruby_suexec' => $config{'ruby_suexec'} eq '' ? -1 :
 					int($config{'ruby_suexec'}),
@@ -9123,6 +9147,7 @@ if ($tmpl->{'id'} == 0) {
 				$tmpl->{'php_vars'};
 	$config{'php_fpm'} = $tmpl->{'php_fpm'} eq "none" ? "" :
 				$tmpl->{'php_fpm'};
+	$config{'php_sock'} = $tmpl->{'php_sock'};
 	$config{'php_suexec'} = $tmpl->{'web_php_suexec'};
 	$config{'ruby_suexec'} = $tmpl->{'web_ruby_suexec'};
 	$config{'phpver'} = $tmpl->{'web_phpver'};
@@ -9403,7 +9428,7 @@ if (!$tmpl->{'default'}) {
 		    "mailgroup", "ftpgroup", "dbgroup",
 		    "othergroups", "defmquota", "quotatype", "append_style",
 		    "domalias", "logrotate_files", "logrotate_shared",
-		    "logrotate", "disabled_web", "disabled_url",
+		    "logrotate", "disabled_web", "disabled_url", "php_sock",
 		    "php_fpm", "php", "status", "extra_prefix", "capabilities",
 		    "webmin_group", "spamclear", "spamtrap", "namedconf",
 		    "nodbname", "norename", "forceunder", "safeunder",
@@ -9420,7 +9445,7 @@ if (!$tmpl->{'default'}) {
 			local $k;
 			foreach $k (keys %$def) {
 				next if ($p eq "dns" && $k =~ /^dns_spf/);
-				next if ($p eq "php" && $k =~ /^php_fpm/);
+				next if ($p eq "php" && $k =~ /^php_(fpm|sock)/);
 				next if ($p eq "web" && $k =~ /^web_(webmail|admin)/);
 				if (!$done{$k} &&
 				    ($k =~ /^\Q$p\E_/ || $k eq $p)) {
@@ -11759,6 +11784,60 @@ elsif ($fmt == 5) {
 return undef;
 }
 
+# features_sort(\@features_values, \@features_order)
+# Sorts features based on given pre-sorted list,
+# and fills unlisted based on initial sorting
+sub features_sort
+{
+my ($features_values, $features_order) = @_;
+my @order_manual =
+   ('unix', 'dir',
+    'dns', 'virtualmin-slavedns', 'virtualmin-powerdns',
+    'web', 'ssl',
+    'virtualmin-nginx', 'virtualmin-nginx-ssl',
+    'mysql', 'postgres', 'virtualmin-sqlite', 'virtualmin-oracle',
+    'mail', 'spam', 'virus',
+    'virtualmin-mailrelay', 'virtualmin-mailman', 'virtualmin-signup',
+    'logrotate',
+    'status', 'webalizer',
+    'webmin',
+    'virtualmin-awstats',
+    'virtualmin-notes', 'virtualmin-google-analytics',
+    'virtualmin-init',
+    'virtualmin-dav', 'virtualmin-registrar',
+    'virtualmin-disable',
+    'virtualmin-git', 'virtualmin-svn',
+    'virtualmin-messageoftheday',
+    'virtualmin-htpasswd',
+    'ftp', 'virtualmin-vsftpd',
+    'virtualmin-support',
+    );
+my @order_initial = @{$features_order};
+my %ordered_;
+my @ordered;
+my @unordered;
+for my $i (0 .. $#order_initial) {
+
+	# Store all features
+	$ordered_{$order_initial[$i]} = $features_values->[$i];
+
+	# Unordered keys
+	if (! grep( /^$order_initial[$i]$/, @order_manual ) ) {
+		push(@unordered, $features_values->[$i]);
+		}
+	}
+
+# Sort ordered based on manual sorting
+for my $i (0 .. $#order_manual) {
+	my $__ = $ordered_{$order_manual[$i]};
+	push(@ordered, $__) if ($__);
+}
+
+# Combine both and modify original
+my @ordered_combined = (@ordered, @unordered);
+@$features_values = @ordered_combined;
+}
+
 # feature_links(&domain)
 # Returns a list of links for editing specific features within a domain, such
 # as the DNS zone, apache config and so on. Includes plugins.
@@ -12123,18 +12202,22 @@ if (($d->{'spam'} && $config{'spam'} ||
 		  });
 	}
 
-if (&domain_has_website($d) && &can_edit_phpmode()) {
+if (&domain_has_website($d)) {
 	# Website / PHP options buttons
-	push(@rv, { 'page' => 'edit_website.cgi',
-		    'title' => $text{'edit_website'},
-		    'desc' => $text{'edit_websitedesc'},
-		    'cat' => 'server',
-		  });
-	push(@rv, { 'page' => 'edit_phpmode.cgi',
-		    'title' => $text{'edit_php'},
-		    'desc' => $text{'edit_phpdesc'},
-		    'cat' => 'server',
-		  });
+	if (&can_edit_phpmode()) {
+		push(@rv, { 'page' => 'edit_website.cgi',
+			    'title' => $text{'edit_website'},
+			    'desc' => $text{'edit_websitedesc'},
+			    'cat' => 'server',
+			  });
+		}
+	if (&can_edit_phpmode() || &can_edit_phpver()) {
+		push(@rv, { 'page' => 'edit_phpmode.cgi',
+			    'title' => $text{'edit_php'},
+			    'desc' => $text{'edit_phpdesc'},
+			    'cat' => 'server',
+			  });
+		}
 	}
 
 if ($d->{'dns'} && !$d->{'dns_submode'} && $config{'dns'} &&
@@ -12313,6 +12396,10 @@ if (&domain_has_website($d) && $d->{'dir'} && !$d->{'alias'} &&
 	my %faccess = &get_module_acl(undef, 'filemin');
 	my @ap = split(/\s+/, $faccess{'allowed_paths'});
 	if (@ap == 1) {
+		if ($ap[0] eq '$HOME' &&
+		    $base_remote_user eq $d->{'user'}) {
+			$ap[0] = $d->{'home'};
+			}
 		$phd =~ s/^\Q$ap[0]\E//;
 		}
 	push(@rv, { 'page' => 'index.cgi?path='.&urlize($phd),
@@ -12866,7 +12953,7 @@ return $d->{'alias'} && $d->{'aliasmail'} ? @aliasmail_features :
 # Returns the objects for servers used as secondary MXs
 sub list_mx_servers
 {
-if (&foreign_check("servers")) {
+if (&foreign_check("servers") && $config{'mx_servers'}) {
 	&foreign_require("servers");
 	local %servers = map { $_->{'id'}, $_ } &servers::list_servers();
 	local @rv;
@@ -13106,6 +13193,11 @@ if (!$oldd->{'parent'}) {
 for(my $i=0; $i<@doms; $i++) {
 	delete($doms[$i]->{'email'});
         }
+
+# Set plan based on new parent
+for(my $i=0; $i<@doms; $i++) {
+	&set_plan_on_children($doms[$i]);
+	}
 
 # Save the domain objects
 &$first_print($text{'save_domain'});
@@ -13586,16 +13678,6 @@ if ($dom) {
 	$clash && return $text{'rename_eclash'};
 	}
 
-# If this domain has any DNS sub-domains, disallow the rename
-if ($d->{'dns'}) {
-	my @dnssub = grep { $_->{'dns'} }
-			  &get_domain_by("dns_subof", $d->{'id'});
-	if (@dnssub) {
-		return &text('rename_ednssub',
-			join(" ", map { &show_domain_name($_) } @dnssub));
-		}
-	}
-
 # Validate username, home directory and prefix
 if ($d->{'parent'}) {
 	# Sub-servers don't have a separate user
@@ -13623,6 +13705,21 @@ elsif ($prefix) {
 my $group;
 if ($prefix) {
 	$group = $user || $d->{'user'};
+	}
+
+# If the domain name is being changed and there are any DNS sub-domains
+# which share the same zone file, split them out into their own files
+if ($dom && $d->{'dns'} && !$d->{'dns_submode'}) {
+	my @dnssub = grep { $_->{'dns'} }
+			  &get_domain_by("dns_subof", $d->{'id'});
+	if (@dnssub) {
+		&$first_print($text{'rename_dnssub'});
+		&$indent_print();
+		foreach my $sd (@dnssub) {
+			&save_dns_submode($sd, 0);
+			}
+		&$outdent_print();
+		}
 	}
 
 # Update the domain object with the new domain name and username
@@ -13656,7 +13753,7 @@ if ($group) {
 	$d->{'prefix'} = $prefix;
 	}
 
-# Find any sub-domain objects and update them
+# Find any sub-server objects and update them
 if (!$d->{'parent'}) {
 	my @subs = &get_domain_by("parent", $d->{'id'});
 	foreach my $sd (@subs) {
@@ -13681,12 +13778,29 @@ if (!$d->{'parent'}) {
 		}
 	}
 
-# Find any domains aliases to this one, excluding child domains
+# Find any domains aliases to this one, excluding child domains since they
+# were covered above
 my @aliases = &get_domain_by("alias", $d->{'id'});
 my @aliases = grep { $_->{'parent'} != $d->{'id'} } @aliases;
 foreach my $ad (@aliases) {
 	my %oldad = %$ad;
 	push(@oldaliases, \%oldad);
+	if ($user) {
+		$ad->{'email'} =~ s/^\Q$ad->{'user'}\E\@/$user\@/g;
+		$ad->{'emailto'} =~ s/^\Q$ad->{'user'}\E\@/$user\@/g;
+		$ad->{'user'} = $user;
+		}
+	if ($dom) {
+		$ad->{'email'} =~ s/\@$d->{'dom'}$/\@$dom/gi;
+		$ad->{'emailto'} =~ s/\@$d->{'dom'}$/\@$dom/gi;
+		}
+	if ($home) {
+		&change_home_directory($ad,
+				       &server_home_directory($ad, $d));
+		}
+	if ($group) {
+		$ad->{'group'} = $group;
+		}
 	}
 
 # Check for domain name clash, where the domain, user or group have changed
@@ -14304,10 +14418,6 @@ if (&domain_has_website()) {
 		&$second_print("<b>$text{'check_webphpnovers'}</b>");
 		}
 
-	# Report on supported PHP modes
-	my @supp = &supported_php_modes();
-	&$second_print(&text('check_webphpmodes', join(" ", @supp)));
-
 	# Check for PHP-FPM support
 	my @fpms = &list_php_fpm_configs();
 	if (!@fpms) {
@@ -14336,6 +14446,8 @@ if (&domain_has_website()) {
 				foreach my $p (@pools) {
 					my $pd = &get_domain($p);
 					next if ($pd);
+					my ($ok) = &get_domain_php_fpm_port($d);
+					next if (!$ok);	# Don't fix if broken
 					my $t = get_php_fpm_pool_config_value(
 						$conf, $p, "listen");
 					# If returned "$t" is "127.0.0.1:9000", 
@@ -14345,7 +14457,8 @@ if (&domain_has_website()) {
 						}
 					if ($t && $t =~ /^\d+$/ && $used{$t}++) {
 						# Port is wrong!
-						&$second_print(&text('check_webphpfpmport', $conf->{'version'}, $t));
+						&$second_print(&text('check_webphpfpmport',
+							$conf->{'version'}, $t));
 						while($used{$t}) {
 							$t = &increase_fpm_port($t) || 9001;
 							}
@@ -14367,13 +14480,17 @@ if (&domain_has_website()) {
 		@fpms = sort { &compare_versions($a->{'shortversion'}, $b->{'shortversion'}) } @fpms;
 		foreach my $d (grep { &domain_has_website($_) &&
 				      !$_->{'alias'} } &list_domains()) {
+			# Check if an FPM version is stored, but doesn't exist
 			next if (!$d->{'php_fpm_version'});
 			local $mode = &get_domain_php_mode($d);
 			next if ($mode ne "fpm");
 			local ($f) = grep { $_->{'shortversion'} eq $d->{'php_fpm_version'} } @fpms;
 			next if ($f);
+
+			# Find the existing version just above the one that
+			# was stored, or alternately the highest available
 			local ($nf) = grep { &compare_versions($_->{'shortversion'}, $d->{'php_fpm_version'}) > 0 } @fpms;
-			next if (!$nf);
+			$nf ||= $fpms[$#fpms];
 			$d->{'php_fpm_version'} = $nf->{'shortversion'};
 			&save_domain($d);
 			push(@fpmfixed, $d);
@@ -14403,6 +14520,10 @@ if (&domain_has_website()) {
 				&restart_php_fpm_server($conf);
 				}
 			}
+
+		# Report on supported PHP modes
+		my @supp = &supported_php_modes();
+		&$second_print(&text('check_webphpmodes', join(" ", @supp)));
 		}
 
 	# Check for any unsupported mod_php directives
@@ -14446,9 +14567,11 @@ if (&domain_has_website()) {
 				local $main::error_must_die = 1;
 				local $mode = &get_domain_php_mode($d);
 				if ($mode && $mode ne "mod_php" &&
-				    $mode ne "fpm") {
+				    $mode ne "fpm" && $mode ne "none") {
+					&obtain_lock_web($d);
 					&save_domain_php_mode($d, $mode);
 					&clear_links_cache($d);
+					&release_lock_web($d);
 					}
 				};
 			}
@@ -17676,6 +17799,14 @@ if (&domain_has_ssl($d)) {
 	my $dir = $type eq 'cert' ? "SSLCertificateFile" :
 		     $type eq 'key' ? "SSLCertificateKeyFile" :
 		     $type eq 'ca' ? "SSLCACertificateFile" : undef;
+	if ($dir eq "SSLCACertificateFile") {
+		# Check for the alternate directive
+		my ($oldfile) = &apache::find_directive(
+			"SSLCertificateChainFile", $vconf);
+		if ($oldfile) {
+			$dir = "SSLCertificateChainFile";
+			}
+		}
 	if ($dir) {
 		&apache::save_directive($dir, $file ? [ $file ] : [ ],
 					$vconf, $conf);
@@ -17716,6 +17847,11 @@ if (&domain_has_ssl($d)) {
 						       : undef;
 	return undef if (!$dir);
 	my ($file) = &apache::find_directive($dir, $vconf);
+	if (!$file && $dir eq "SSLCACertificateFile") {
+		# Check for the alternate directive
+		$dir = "SSLCertificateChainFile";
+		($file) = &apache::find_directive($dir, $vconf);
+		}
 	return $file;
 	}
 else {
@@ -18168,21 +18304,21 @@ return $loaded;
 # fix GRUB.
 sub needs_xfs_quota_fix
 {
-return 0 if ($gconfig{'os_type'} !~ /-linux$/);             # Some other OS
-return 0 if (!$config{'quotas'});                           # Quotas not even in use
-return 0 if ($config{'quota_commands'});                    # Using external commands
+return 0 if ($gconfig{'os_type'} !~ /-linux$/);     # Some other OS
+return 0 if (!$config{'quotas'});                   # Quotas not even in use
+return 0 if ($config{'quota_commands'});            # Using external commands
 &require_useradmin();
-return 0 if (!$home_base);                                  # Don't know base dir
-return 0 if (&running_in_zone());                           # Zones have no quotas
+return 0 if (!$home_base);                          # Don't know base dir
+return 0 if (&running_in_zone());                   # Zones have no quotas
 my ($home_mtab, $home_fstab) = &mount_point($home_base);
-return 0 if (!$home_mtab || !$home_fstab);                  # No mount found?
-return 0 if ($home_mtab->[2] ne "xfs");                     # Other FS type
-return 0 if ($home_mtab->[0] ne "/");                       # /home is not on the / FS
-return 0 if (!&quota::quota_can($home_mtab,                 # Not enabled in fstab
+return 0 if (!$home_mtab || !$home_fstab);          # No mount found?
+return 0 if ($home_mtab->[2] ne "xfs");             # Other FS type
+return 0 if ($home_mtab->[0] ne "/");               # /home is not on the / FS
+return 0 if (!&quota::quota_can($home_mtab,         # Not enabled in fstab
 				$home_fstab));
 my $now = &quota::quota_now($home_mtab, $home_fstab);
-$now -= 4 if ($now >= 4);                                   # Ignore XFS always bit
-return 0 if ($now);                                         # Already enabled in mtab
+$now -= 4 if ($now >= 4);                           # Ignore XFS always bit
+return 0 if ($now);                                 # Already enabled in mtab
 
 # At this point, we are definite in a bad state
 my $grubfile = "/etc/default/grub";
@@ -18209,6 +18345,49 @@ return 1 if ($grub{'GRUB_CMDLINE_LINUX'} =~ /rootflags=\S*uquota,gquota/ ||
 
 # Otherwise, flags need adding
 return 2;
+}
+
+# create_domain_ssh_key(&domain)
+# Creates an SSH public and private key for a domain, and returns the public 
+# key and an error message.
+sub create_domain_ssh_key
+{
+my ($d) = @_;
+return (undef, $text{'setup_esshkeydir'}) if (!$d->{'dir'} || !$d->{'unix'});
+return (undef, $text{'setup_esshsshd'}) if (!&foreign_installed("sshd"));
+my $sshdir = $d->{'home'}."/.ssh";
+my %oldpubs = map { $_, 1 } glob("$sshdir/*.pub");
+&foreign_require("sshd");
+my $cmd = $sshd::config{'keygen_path'}." -P \"\"";
+$cmd = &command_as_user($d->{'user'}, 0, $cmd);
+my $out;
+my $inp = "\n";
+&execute_command($cmd, \$inp, \$out, \$out);
+if ($?) {
+	return (undef, $out);
+	}
+my @newpubs = grep { !$oldpubs{$_} } glob("$sshdir/*.pub");
+return (undef, $text{'setup_esshnopub'}) if (!@newpubs);
+return (&read_file_contents($newpubs[0]), undef);
+}
+
+# save_domain_ssh_pubkey(&domain, pubkey)
+# Adds an SSH public key to the authorized keys file
+sub save_domain_ssh_pubkey
+{
+my ($d, $pubkey) = @_;
+return $text{'setup_esshkeydir'} if (!$d->{'dir'});
+my $sshdir = $d->{'home'}."/.ssh";
+if (!-d $sshdir) {
+	&make_dir_as_domain_user($d, $sshdir, 0700);
+	}
+my $sshfile = $sshdir."/authorized_keys";
+my $ex = -e $sshfile;
+&open_tempfile_as_domain_user($d, SSHFILE, ">>$sshfile");
+&print_tempfile(SSHFILE, $pubkey."\n");
+&close_tempfile_as_domain_user($d, SSHFILE);
+&set_permissions_as_domain_user($d, 0600, $sshfile) if (!$ex);
+return undef;
 }
 
 sub get_module_version_and_type
@@ -18248,17 +18427,21 @@ my $tmpl = &get_template($d->{'template'});
 foreach my $f (&list_provision_features()) {
 	if ($f eq "dns") {
 		# Template has an option to control where DNS is hosted
-		if ($tmpl->{'dns_cloud'} eq 'services') {
+		my $cloud = $d->{'dns_cloud'} || $tmpl->{'dns_cloud'};
+		if ($cloud eq 'services') {
 			$d->{'provision_dns'} = 1;
+			delete($d->{'dns_cloud'});
 			}
-		elsif ($tmpl->{'dns_cloud'} eq 'local') {
+		elsif ($cloud eq 'local') {
 			$d->{'provision_dns'} = 0;
+			delete($d->{'dns_cloud'});
 			}
-		elsif ($tmpl->{'dns_cloud'} eq '') {
+		elsif ($cloud eq '') {
 			$d->{'provision_dns'} = 1 if ($config{'provision_dns'});
+			delete($d->{'dns_cloud'});
 			}
 		else {
-			$d->{'dns_cloud'} = $tmpl->{'dns_cloud'};
+			$d->{'dns_cloud'} = $cloud;
 			}
 		}
 	elsif ($config{'provision_'.$f}) {

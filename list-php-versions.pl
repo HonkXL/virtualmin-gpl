@@ -6,7 +6,13 @@ Lists the available PHP versions on this system.
 
 This command simply outputs a table of the installed PHP versions on your
 system. Use the C<--name-only> flag to limit the output to version numbers only,
-or C<--multiline> to show more details.
+or C<--multiline> to show more details. By default only the base version numbers
+are shown, but you can switch to showing the complete version with the 
+C<--full-version> flag.
+
+By default all versions available on the system will be shown, but you can
+limit the list to those available for one virtual server with the C<--domain>
+flag.
 
 =cut
 
@@ -33,20 +39,32 @@ while(@ARGV > 0) {
 	if ($a eq "--name-only") {
 		$nameonly = 1;
 		}
+	elsif ($a eq "--domain") {
+		$dname = shift(@ARGV);
+		}
 	elsif ($a eq "--multiline") {
 		$multiline = 1;
+		}
+	elsif ($a eq "--full-version") {
+		$fullver = 1;
 		}
 	else {
 		&usage("Unknown parameter $a");
 		}
 	}
 
-@vers = &list_available_php_versions();
+if ($dname) {
+	$d = &get_domain_by("dom", $dname);
+	$d || &usage("Virtual server $dname does not exist");
+	}
+
+@vers = &list_available_php_versions($d);
 $fmt = "%-15.15s %-60.60s\n";
 if ($nameonly) {
 	# Just show version numbers
 	foreach $s (@vers) {
-		print $s->[0],"\n";
+		my $v = $fullver ? &get_php_version($s->[0]) : $s->[0];
+		print $v,"\n";
 		}
 	}
 elsif ($multiline) {
@@ -70,7 +88,8 @@ else {
 	printf $fmt, "Version", "Path";
 	printf $fmt, ("-" x 15), ("-" x 60);
 	foreach $s (@vers) {
-		printf $fmt, $s->[0], $s->[1];
+		my $v = $fullver ? &get_php_version($s->[0]) : $s->[0];
+		printf $fmt, $v, $s->[1];
 		}
 	}
 
@@ -80,6 +99,8 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists the available PHP versions on this system.\n";
 print "\n";
 print "virtualmin list-php-versions [--name-only | --multiline]\n";
+print "                             [--domain name]\n";
+print "                             [--full-version]\n";
 exit(1);
 }
 

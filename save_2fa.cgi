@@ -21,6 +21,20 @@ if ($user->{'twofactor_provider'}) {
         $user->{'twofactor_apikey'} = undef;
         &acl::modify_user($user->{'name'}, $user);
         &reload_miniserv();
+
+	# Also cancel in Usermin, if setup
+	if (&foreign_installed("usermin")) {
+		&foreign_require("usermin");
+		&foreign_require("webmin");
+		if (defined(&webmin::save_user_twofactor)) {
+			my %miniserv;
+			&usermin::get_usermin_miniserv_config(\%miniserv);
+			&webmin::save_user_twofactor(
+				$user->{'name'}, \%miniserv);
+			&usermin::reload_usermin_miniserv();
+			}
+		}
+
 	&redirect("");
 	}
 else {
@@ -61,6 +75,24 @@ else {
                 $user->{'twofactor_provider'} = $miniserv{'twofactor_provider'};
                 &acl::modify_user($user->{'name'}, $user);
                 &reload_miniserv();
+
+		# Also setup in Usermin, if supported
+		if (&foreign_installed("usermin")) {
+			&foreign_require("usermin");
+			&foreign_require("webmin");
+			if (defined(&webmin::save_user_twofactor)) {
+				my %miniserv;
+				&usermin::get_usermin_miniserv_config(
+					\%miniserv);
+				&webmin::save_user_twofactor(
+					$user->{'name'},
+					\%miniserv,
+					$user->{'twofactor_provider'},
+					$user->{'twofactor_id'},
+					$user->{'twofactor_apikey'});
+				&usermin::reload_usermin_miniserv();
+				}
+			}
                 }
 
 	&ui_print_footer("", $text{'index_return'});

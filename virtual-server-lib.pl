@@ -259,6 +259,9 @@ $resolve_check_page = "/cgi-bin/resolve.cgi";
 
 $virtualmin_license_file = "/etc/virtualmin-license";
 $virtualmin_yum_repo = "/etc/yum.repos.d/virtualmin.repo";
+$virtualmin_apt_repo = -r "/etc/apt/sources.list.d/virtualmin.list" ?
+                          "/etc/apt/sources.list.d/virtualmin.list" :
+                          "/etc/apt/sources.list";
 
 $collected_info_file = &cache_file_path("collected");
 $historic_info_dir = &cache_file_path("history");
@@ -329,6 +332,10 @@ $old_gids_file = &cache_file_path("old-gids");
 $recommended_theme = 'authentic-theme';
 
 $home_virtualmin_backup = $config{'home_backup'} || "virtualmin-backup";
+
+$public_dns_suffix_file = "$module_root_directory/public_suffix_list.dat";
+$public_dns_suffix_cache = "$module_var_directory/public_suffix_list.dat";
+$public_dns_suffix_url = "https://publicsuffix.org/list/public_suffix_list.dat";
 
 # generate_plugins_list([list])
 # Creates the confplugins, plugins and other arrays based on the module config
