@@ -2624,6 +2624,7 @@ if ($config{'web'} && $config{'webalizer'}) {
 	# Webalizer stats sub-directory input
 	local $smode = $tmpl->{'web_stats_hdir'} ? 2 :
 		       $tmpl->{'web_stats_dir'} ? 1 : 0;
+	local ($hdir) = ($tmpl->{'web_html_dir'} || 'public_html');
 	print &ui_table_row(&hlink($text{'newweb_statsdir'}, "template_stats_dir"),
 		&ui_radio("stats_mode", $smode,
 			  [ [ 0, "$text{'default'} (<tt>$hdir/stats</tt>)<br>" ],
@@ -3151,10 +3152,17 @@ my $mode = $d->{'default_php_mode'} || &template_to_php_mode($tmpl);
 delete($d->{'default_php_mode'});
 my @supp = &supported_php_modes();
 if (&indexof($mode, @supp) < 0) {
-	$err = &text('setup_ewebphpmode', $mode);
-	$mode = $supp[0];
+	if (@supp) {
+		$mode = $supp[0];
+		}
+	else {
+		$err = &text('setup_ewebphpmode', $mode);
+		$mode = undef;
+		}
 	}
-&save_domain_php_mode($d, $mode, $port, 1);
+if ($mode) {
+	&save_domain_php_mode($d, $mode, $port, 1);
+	}
 
 if (defined(&save_domain_ruby_mode)) {
 	if ($tmpl->{'web_ruby_suexec'} >= 0) {

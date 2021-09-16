@@ -117,7 +117,9 @@ $d->{'letsencrypt_renew'} = 1;		# Default let's encrypt renewal
 
 # Create a self-signed cert and key, if needed
 my $generated = &generate_default_certificate($d);
+&refresh_ssl_cert_expiry($d);
 local $chained = $d->{'ssl_chain'};
+&sync_combined_ssl_cert($d);
 
 # Add NameVirtualHost if needed, and if there is more than one SSL site on
 # this IP address
@@ -1834,6 +1836,7 @@ if (!-r $d->{'ssl_cert'} && !-r $d->{'ssl_key'}) {
 	&unlock_file($d->{'ssl_cert'});
 	&unlock_file($d->{'ssl_key'});
 	delete($d->{'ssl_chain'});	# No longer valid
+	&sync_combined_ssl_cert($d);
 	return 1;
 	}
 return 0;
@@ -3105,6 +3108,20 @@ my ($d) = @_;
 foreach my $dir (&ssl_certificate_directories($d)) {
 	my $path = "$d->{'home'}/$dir";
 	&create_standard_directory_for_domain($d, $path, '700');
+	}
+}
+
+# refresh_ssl_cert_expiry(&domain)
+# Update the ssl_cert_expiry field from the actual cert
+sub refresh_ssl_cert_expiry
+{
+my ($d) = @_;
+my $cert_info = &cert_info($d);
+if ($cert_info) {
+	my $expiry = &parse_notafter_date($cert_info->{'notafter'});
+	if ($expiry) {
+		$d->{'ssl_cert_expiry'} = $expiry;
+		}
 	}
 }
 

@@ -4517,7 +4517,7 @@ foreach my $r (@$recips) {
 	}
 }
 
-# get_global_from_address(&domain)
+# get_global_from_address([&domain])
 # Returns the from address to use when sending email to some domain. This may
 # be the reseller's email (if set), or the system-wide default
 sub get_global_from_address
@@ -6733,17 +6733,28 @@ local $cmd = "scp -r ".($port ? "-P $port " : "").$config{'ssh_args'}." ".
 # Returns the output, and sets the error variable ref if failed.
 sub run_ssh_command
 {
-local ($cmd, $pass, $err, $asuser) = @_;
+my ($cmd, $pass, $err, $asuser) = @_;
+if ($pass =~ /^\// && -r $pass) {
+	# Using a key file
+	my ($bin, $args) = split(/\s+/, $cmd, 2);
+	$cmd = $bin." -i ".quotemeta($pass)." ".$args;
+	$pass = undef;
+	}
 &foreign_require("proc");
 if ($asuser) {
 	$cmd = &command_as_user($asuser, 0, $cmd);
 	}
-local ($fh, $fpid) = &proc::pty_process_exec($cmd);
-local $out;
+my ($fh, $fpid) = &proc::pty_process_exec($cmd);
+my $out;
+my $nopass = 0;
 while(1) {
-	local $rv = &wait_for($fh, "password:", "yes\\/no", ".*\n");
+	my $rv = &wait_for($fh, "password:", "yes\\/no", ".*\n");
 	$out .= $wait_for_input;
 	if ($rv == 0) {
+		if (!defined($pass) || $pass eq "") {
+			$nopass = 1;
+			last;
+			}
 		syswrite($fh, "$pass\n");
 		}
 	elsif ($rv == 1) {
@@ -6754,8 +6765,11 @@ while(1) {
 		}
 	}
 close($fh);
-local $got = waitpid($fpid, 0);
-if ($? || $out =~ /permission\s+denied/i || $out =~ /connection\s+refused/i) {
+my $got = waitpid($fpid, 0);
+if ($nopass) {
+	$$err = "Password required but not supplied";
+	}
+elsif ($? || $out =~ /permission\s+denied/i || $out =~ /connection\s+refused/i) {
 	$$err = $out;
 	}
 return $out;
@@ -7949,9 +7963,9 @@ if ($dom->{'reseller'} && defined(&update_reseller_unix_groups)) {
 # If an SSL cert wasn't generated because SSL wasn't enabled, do one now
 my $always_ssl = defined($dom->{'always_ssl'}) ? $dom->{'always_ssl'}
 					       : $config{'always_ssl'};
-my $generated;
+my $generated = 0;
 if (!&domain_has_ssl($dom) && $always_ssl) {
-	$generated = &generate_default_certificate($dom);
+	$generated = &generate_default_certificate($dom) ? 1 : 0;
 	}
 
 # Attempt to request a let's encrypt cert. This has to be done after the
@@ -7965,13 +7979,13 @@ if ($dom->{'auto_letsencrypt'} && &domain_has_website($dom) &&
 	my $info = &cert_info($dom);
 	if ($info->{'self'}) {
 		&create_initial_letsencrypt_cert($dom, 1);
-		$generated++;
+		$generated = 2;
 		}
 	}
 
 # Update service certs and DANE DNS records if a new Let's Encrypt cert was
 # generated
-if ($generated && !$dom->{'no_default_service_certs'}) {
+if ($generated == 2 && !$dom->{'no_default_service_certs'}) {
 	&enable_domain_service_ssl_certs($dom);
 	&sync_domain_tlsa_records($dom);
 	}
@@ -8051,10 +8065,13 @@ if ($valid) {
 		&$second_print($text{'letsencrypt_evalid'});
 		return 0;
 		}
-	@errs = &check_domain_connectivity($d, { 'mail' => 1, 'ssl' => 1 });
-	if (@errs) {
-		&$second_print($text{'letsencrypt_econnect'});
-		return 0;
+	if (defined(&check_domain_connectivity)) {
+		@errs = &check_domain_connectivity(
+			$d, { 'mail' => 1, 'ssl' => 1 });
+		if (@errs) {
+			&$second_print($text{'letsencrypt_econnect'});
+			return 0;
+			}
 		}
 	}
 my $phd = &public_html_dir($d);
@@ -8077,11 +8094,7 @@ else {
 	$d->{'letsencrypt_renew'} = 1 if ($d->{'letsencrypt_renew'} eq '');
 
 	# Inject initial SSL expiry to avoid wrong "until expiry"
-	my $cert_info = &cert_info($d);
-	if ($cert_info) {
-		$d->{'ssl_cert_expiry'} = 
-			&parse_notafter_date($cert_info->{'notafter'});
-		}
+	&refresh_ssl_cert_expiry($d);
 	&save_domain($d);
 
 	# Update other services using the cert
@@ -10873,7 +10886,7 @@ if ($status != 0) {
 	$alert_text .= $err."\n";
 	$alert_text .= &text('licence_renew', $virtualmin_renewal_url),"\n";
 	if (&can_recheck_licence()) {
-		$alert_text .= &ui_form_start("$gconfig{'webprefix'}/$module_name/licence.cgi");
+		$alert_text .= &ui_form_start("../$module_name/licence.cgi");
 		$alert_text .= &ui_submit($text{'licence_recheck'});
 		$alert_text .= &ui_form_end();
 		}
@@ -10891,7 +10904,7 @@ elsif ($expirytime && $expirytime - time() < 7*24*60*60 && !$autorenew) {
 		}
 	$alert_text .= &text('licence_renew', $virtualmin_renewal_url),"\n";
 	if (&can_recheck_licence()) {
-		$alert_text .= &ui_form_start("$gconfig{'webprefix'}/$module_name/licence.cgi");
+		$alert_text .= &ui_form_start("../$module_name/licence.cgi");
 		$alert_text .= &ui_submit($text{'licence_recheck'});
 		$alert_text .= &ui_form_end();
 		}
@@ -10905,7 +10918,7 @@ if ($config{'old_defip'} && $defip && $config{'old_defip'} ne $defip) {
 	$alert_text .= "<b>".&text('licence_ipchanged',
 			   "<tt>$config{'old_defip'}</tt>",
 			   "<tt>$defip</tt>")."</b><p>\n";
-	$alert_text .= &ui_form_start("$gconfig{'webprefix'}/$module_name/edit_newips.cgi");
+	$alert_text .= &ui_form_start("../$module_name/edit_newips.cgi");
 	$alert_text .= &ui_hidden("old", $config{'old_defip'});
 	$alert_text .= &ui_hidden("new", $defip);
 	$alert_text .= &ui_hidden("setold", 1);
@@ -10940,7 +10953,7 @@ if ($small) {
 			   $small->{'c'} || $small->{'o'},
 			   $small->{'issuer_c'} || $small->{'issuer_o'},
 			   )."</b><p>\n";
-	$alert_text .= &ui_form_start("$gconfig{'webprefix'}/webmin/edit_ssl.cgi");
+	$alert_text .= &ui_form_start("../webmin/edit_ssl.cgi");
 	$alert_text .= &ui_hidden("mode", $msg eq 'licence_smallself' ?
 					'create' : 'csr');
 	$alert_text .= &ui_submit($msg eq 'licence_smallself' ?
@@ -10960,7 +10973,7 @@ if ($config{'allow_symlinks'} eq '') {
 		$alert_text .= "<b>".&text('licence_fixlinks', scalar(@fixdoms))."<p>".
 		             $text{'licence_fixlinks2'}."</b><p>\n";
 		$alert_text .= &ui_form_start(
-			"$gconfig{'webprefix'}/$module_name/fix_symlinks.cgi");
+			"../$module_name/fix_symlinks.cgi");
 		$alert_text .= &ui_submit($text{'licence_fixlinksok'}, undef);
 		$alert_text .= &ui_submit($text{'licence_fixlinksignore'}, 'ignore');
 		$alert_text .= &ui_form_end();
@@ -10982,7 +10995,7 @@ if ($theme && $current_theme !~ /$recommended_theme/ &&
 	$switch_text .= "<b>".&text('index_themeswitch',
 				    $theme->{'desc'})."</b><p>\n";
 	$switch_text .= &ui_form_start(
-		"$gconfig{'webprefix'}/$module_name/switch_theme.cgi");
+		"../$module_name/switch_theme.cgi");
 	$switch_text .= &ui_submit($text{'index_themeswitchok'});
 	$switch_text .= &ui_submit($text{'index_themeswitchnot'}, "cancel");
 	$switch_text .= &ui_form_end();
@@ -11077,7 +11090,7 @@ return @rv;
 sub domain_ssl_page_links
 {
 my ($doms) = @_;
-return join(" ", map { &ui_link("/$module_name/cert_form.cgi?dom=$_->{'id'}",
+return join(" ", map { &ui_link("../$module_name/cert_form.cgi?dom=$_->{'id'}",
 				&show_domain_name($_)) } @$doms);
 }
 
@@ -11745,6 +11758,7 @@ return $? ? &text('addstyle_ecmdfailed',
 sub get_compressed_file_size
 {
 local ($file, $key) = @_;
+return undef if ($key);	# Too expensive to decrypt and check
 my $fmt = &compression_format($file, $key);
 my @st = stat($file);
 if ($fmt == 0) {
@@ -14050,7 +14064,7 @@ if ($config{'dns'}) {
 	else {
 		# BIND server must be installed and usable
 		&foreign_installed("bind8", 1) == 2 ||
-			return &text('index_ebind', "/bind8/", $clink);
+			return &text('index_ebind', "../bind8/", $clink);
 
 		# Validate BIND config
 		&require_bind();
@@ -14097,12 +14111,11 @@ if ($config{'dns'}) {
 				my @dhcp = grep { $_->{'dhcp'} ||
 						  $_->{'bootp'} }
 						&net::boot_interfaces();
-				return &text('check_eresolv2',
-					&ui_link("$gconfig{'webprefix'}/net/list_dns.cgi",
-						 $text{'check_eresolvlist'}),
-					&ui_link($clink,
-						 $text{'newfeatures_title'})).
-				     (@dhcp ? " ".$text{'check_eresolv3'} : "");
+				&$second_print(
+				   &text('check_eresolv4',
+					&ui_link("../net/list_dns.cgi",
+						 $text{'check_eresolvlist'})).
+				   (@dhcp ? " ".$text{'check_eresolv3'} : ""));
 				}
 			else {
 				&$second_print($text{'check_dnsok'}." ".
@@ -14388,14 +14401,7 @@ if ($config{'web'}) {
 		&flush_file_lines();
 		}
 
-	# Make sure suexec is installed, if enabled. Also check home path.
-	local $err = &check_suexec_install($tmpl);
-	if ($err) {
-		&$second_print(&text('check_webnosuexec', $err));
-		}
-	else {
-		&$second_print($text{'check_webok'});
-		}
+	&$second_print($text{'check_webok'});
 	}
 
 if (&domain_has_website()) {
@@ -15076,7 +15082,7 @@ elsif ($config{'quotas'}) {
 		if (&needs_xfs_quota_fix() == 1) {
 			my $reboot_msg = "\n<b>$text{'licence_xfsreboot'}</b>&nbsp;";
 			if (&foreign_available("init")) {
-				$reboot_msg .= ui_link("$gconfig{'webprefix'}/init/reboot.cgi", $text{'licence_xfsrebootok'});
+				$reboot_msg .= ui_link("../init/reboot.cgi", $text{'licence_xfsrebootok'});
 				$reboot_msg .= ".";
 				}
 			&$second_print($reboot_msg);
