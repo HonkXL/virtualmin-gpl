@@ -49,13 +49,18 @@ for this domain. Alternately you can revert to the default key with the
 C<--default-dkim-key> flag, or generate a new random key with the
 C<--generate-dkim-key> flag.
 
-To use a cloud mail filter, specify the C<--cloud-mail> flag followed by
+To use a cloud mail filter, specify the C<--cloud-mail-filter> flag followed by
 the name of a provider like MailShark. This will update the MX records for the
 domain to point to that provider's filtering servers (which you typically must
 sign up for in advance). For some providers Virtualmin also needs to know
-a customer ID (used in the MX records), which is set with the C<--cloud-mail-id>
-flag. To revert to using only the local mail server, set the
-C<--no-cloud-mail> flag.
+a customer ID (used in the MX records), which is set with the
+C<--cloud-mail-filter-id> flag. To revert to using only the local mail server,
+set the C<--no-cloud-mail-filter> flag.
+
+In Virtualmin Pro, to use a cloud SMTP provider, specify the C<--cloud-smtp>
+flag followed by a provider name like C<ses>. The selected provider must have
+already been configured in the Virtualmin UI. To revert to direct email 
+delivery, use the C<--no-cloud-smtp> flag.
 
 =cut
 
@@ -138,17 +143,26 @@ while(@ARGV > 0) {
 		($ok, $key) = &generate_dkim_key();
 		$ok || &usage("Failed to generate key : $key");
 		}
-	elsif ($a eq "--cloud-mail") {
+	elsif ($a eq "--cloud-mail" || $a eq "--cloud-mail-filter") {
 		$cloud = shift(@ARGV);
 		}
-	elsif ($a eq "--no-cloud-mail") {
+	elsif ($a eq "--no-cloud-mail" || $a eq "--no-cloud-mail-filter") {
 		$cloud = "";
 		}
-	elsif ($a eq "--cloud-mail-id") {
+	elsif ($a eq "--cloud-mail-id" || $a eq "--cloud-mail-filter-id") {
 		$cloudid = shift(@ARGV);
+		}
+	elsif ($a eq "--cloud-smtp") {
+		$cloudsmtp = shift(@ARGV);
+		}
+	elsif ($a eq "--no-cloud-smtp") {
+		$cloudsmtp = "";
 		}
 	elsif ($a eq "--multiline") {
 		$multiline = 1;
+		}
+	elsif ($a eq "--help") {
+		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -157,7 +171,7 @@ while(@ARGV > 0) {
 @dnames || $all_doms || @users || usage("No domains or users specified");
 defined($bcc) || defined($rbcc) || defined($aliascopy) || defined($dependent) ||
     defined($autoconfig) || defined($key) || defined($cloud) ||
-    &usage("Nothing to do");
+    defined($cloudsmtp) || &usage("Nothing to do");
 
 # Get domains to update
 if ($all_doms == 1) {
@@ -189,8 +203,20 @@ if ($cloud) {
 			join(" ", map { $_->{'name'} } @provs));
 	if ($prov->{'id'} && !$cloudid) {
 		&usage("The cloud mail filter ".$cloud." requires a customer ".
-		       "ID to be set with the --cloud-mail-id flag");
+		       "ID to be set with the --cloud-mail-filter-id flag");
 		}
+	}
+
+# Cloud cloud SMTP provider
+if ($cloudsmtp) {
+	defined(&list_smtp_clouds) ||
+	    &usage("Cloud SMTP providers are not supported on this system");
+	($smtp) = grep { $_->{'name'} eq $cloudsmtp } &list_smtp_clouds();
+	$smtp || &usage("Cloud SMTP provider $cloudsmtp does not exist");
+	$gfunc = "smtpcloud_".$cloudsmtp."_get_state";
+	$st = &$gfunc();
+	$st->{'ok'} ||
+	    &usage("Cloud SMTP provider $cloudsmtp is not configured");
 	}
 
 # Do it for all domains
@@ -296,7 +322,7 @@ foreach $d (@doms) {
 		&save_domain_dkim_key($d, $key);
 		}
 
-	# Enable or disable cloud mail provider
+	# Enable or disable cloud mail filter
 	if (defined($cloud)) {
 		local $err;
 		local $oldprov = &get_domain_cloud_mail_provider($d);
@@ -328,6 +354,50 @@ foreach $d (@doms) {
 		&$second_print($err ? ".. failed : $err" : ".. done");
 		}
 
+	# Change cloud SMTP provider
+	$oldsmtp = $d->{'smtp_cloud'};
+	if (defined($cloudsmtp) && $oldsmtp ne $cloudsmtp) {
+		my $oldfailed = 0;
+		if ($oldsmtp) {
+			# Turn off the old provider
+			&$first_print(
+				"Removing cloud SMTP provider $oldsmtp ..");
+			my $sfunc = "smtpcloud_".$oldsmtp."_delete_domain";
+			my $info = { 'domain' => $d->{'dom'},
+				     'id' => $d->{'smtp_cloud_id'},
+				     'location' => $d->{'smtp_cloud_location'}};
+			my ($ok, $err) = &$sfunc($d, $info);
+			if ($err) {
+				&$second_print(".. failed : $err");
+				$oldfailed = 1;
+				}
+			else {
+				delete($d->{'smtp_cloud'});
+				delete($d->{'smtp_cloud_id'});
+				&update_smtpcloud_spf($d, $oldsmtp);
+				&$second_print(".. done");
+				}
+			}
+		if ($cloudsmtp && !$oldfailed) {
+			# Setup the new provider
+			&$first_print(
+			    "Configuring cloud SMTP provider $cloudsmtp ..");
+			my $sfunc = "smtpcloud_".$cloudsmtp."_create_domain";
+			my $info = { 'domain' => $d->{'dom'} };
+			my ($ok, $id, $location) = &$sfunc($d, $info);
+			if ($ok) { 
+				$d->{'smtp_cloud'} = $cloudsmtp;
+				$d->{'smtp_cloud_id'} = $id;
+				$d->{'smtp_cloud_location'} = $location;
+				&update_smtpcloud_spf($d, undef);
+				&$second_print(".. done");
+				}
+			else {
+				&$second_print(".. failed : $id");
+				}
+			}
+		}
+
 	&save_domain($d);
 
 	&$outdent_print();
@@ -352,8 +422,10 @@ print "                      [--outgoing-ip | --no-outgoing-ip]\n";
 print "                      [--autoconfig | --no-autoconfig]\n";
 print "                      [--dkim-key file | --default-dkim-key |\n";
 print "                       --generate-dkim-key]\n";
-print "                      [--cloud-mail name | --no-cloud-mail]\n";
-print "                      [--cloud-mail-id number]\n";
+print "                      [--cloud-mail-filter name |\n";
+print "                       --no-cloud-mail-filter]\n";
+print "                      [--cloud-mail-filter-id number]\n";
+print "                      [--cloud-smtp name | --no-cloud-smtp]\n";
 exit(1);
 }
 

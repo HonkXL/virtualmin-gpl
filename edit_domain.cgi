@@ -134,7 +134,7 @@ print &ui_hidden_table_end("basic");
 
 # Configuration settings section
 print &ui_hidden_table_start($text{'edit_headerc'}, "width=100%", 2,
-			     "config", 0, \@tds);
+			     "config", 1, \@tds);
 
 # Show username prefix, with option to change
 if (!$aliasdom && $tmpl->{'append_style'} != 6) {
@@ -205,7 +205,8 @@ if (!$parentdom) {
 
 # Show description
 print &ui_table_row($text{'edit_owner'},
-		    &ui_textbox("owner", $d->{'owner'}, 50));
+		    &ui_textbox("owner", $d->{'owner'}, 50, 0, undef,
+			  "autocomplete='off'"));
 
 if (!$parentdom) {
 	# Show owner's email address and password

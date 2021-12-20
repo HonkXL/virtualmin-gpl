@@ -170,6 +170,9 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--disabled") { $disabled = 1; }
 	elsif ($a eq "--enabled") { $disabled = 0; }
+	elsif ($a eq "--help") {
+		&usage();
+		}
 	else {
 		&usage("Unknown parameter $a");
 		}
@@ -543,6 +546,9 @@ if ($multi) {
 			$s = &get_domain_suexec($d);
 			print "    SuExec for CGIs: ",
 			      ($s ? "enabled" : "disabled"),"\n";
+			if ($d->{'fcgiwrap_port'}) {
+				print "    Fcgiwrap port for CGIs: ",$d->{'fcgiwrap_port'},"\n";
+				}
 			if ($p eq "fpm") {
 				($ok, $port) = &get_domain_php_fpm_port($d);
 				if ($ok >= 0) {
@@ -602,7 +608,19 @@ if ($multi) {
 			      ($star ? "Yes" : "No"),"\n";
 			}
 
-		# Shiw SSI setting
+		# Show HTTP protocols
+		if (&domain_has_website($d) && !$d->{'alias'} && $multi == 1) {
+			$canprots = &get_domain_supported_http_protocols($d);
+			$prots = &get_domain_http_protocols($d);
+			if (@$canprots) {
+				print "    Supported HTTP protocols: ",
+					join(" ", @$canprots),"\n";
+				print "    Enabled HTTP protocols: ",
+					join(" ", @$prots),"\n";
+				}
+			}
+
+		# Show SSI setting
 		if (&domain_has_website($d) && !$d->{'alias'} && $multi == 1) {
 			($ssi, $suffix) = &get_domain_web_ssi($d);
 			print "    Server-side includes: ",

@@ -60,6 +60,33 @@ if (defined($in{'writelogs'}) && $can == 2) {
 		}
 	}
 
+# Save HTTP2 support
+if (defined($in{'http2'})) {
+	my $canprots = &get_domain_supported_http_protocols($d);
+	my $prots = &get_domain_http_protocols($d);
+	if ($in{'http2'} == 1) {
+		&$first_print($text{'phpmode_http2on'});
+		my @h2 = grep { /^h2/ } @$canprots;
+		$prots = [ &unique(@$prots, @h2) ];
+		}
+	elsif ($in{'http2'} == 2) {
+		&$first_print($text{'phpmode_http2def'});
+		$prots = [ ];
+		}
+	else {
+		&$first_print($text{'phpmode_http2off'});
+		$prots = [ grep { !/^h2/ } @$prots ];
+		}
+	$err = &save_domain_http_protocols($d, $prots);
+	if ($err) {
+		&$second_print(&text('phpmode_ssierr', $err));
+		}
+	else {
+		&$second_print($text{'setup_done'});
+		}
+	$anything++;
+	}
+
 # Save match-all mode
 $oldmatchall = &get_domain_web_star($d);
 if (defined($in{'matchall'}) && $in{'matchall'} != $oldmatchall) {

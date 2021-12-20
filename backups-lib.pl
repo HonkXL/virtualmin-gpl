@@ -721,25 +721,6 @@ DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
         &resync_all_databases($d, \@alldbs);
 	my $dstart = time();
 
-	# If domain has a reseller set who doesn't exist, clear it now
-	# to prevent errors on restore
-	if ($d->{'reseller'} && defined(&get_reseller)) {
-		my @existing;
-		my $rmissing;
-		foreach my $rname (split(/\s+/, $d->{'reseller'})) {
-			if (&get_reseller($rname)) {
-				push(@existing, $rname);
-				}
-			else {
-				$rmissing++;
-				}
-			}
-		if ($rmissing) {
-			$d->{'reseller'} = join(" ", @existing);
-			&save_domain($d);
-			}
-		}
-
 	# Begin doing this domain
 	&$cbfunc($d, 0, $backupdir) if ($cbfunc);
 	&$first_print(&text('backup_fordomain', &show_domain_name($d) ||
@@ -4861,9 +4842,10 @@ sub purge_domain_backups
 {
 local ($dest, $days, $start, $asd) = @_;
 local $asuser = $asd ? $asd->{'user'} : undef;
-&$first_print(&text('backup_purging2', $days, &nice_backup_url($dest)));
 local ($mode, $user, $pass, $host, $path, $port) = &parse_backup_url($dest);
 local ($base, $re) = &extract_purge_path($dest);
+&$first_print(&text('backup_purging3', $days, &nice_backup_url($base),
+				       "<tt>".&html_escape($re)."</tt>"));
 if (!$base && !$re) {
 	&$second_print($text{'backup_purgenobase'});
 	return 0;
@@ -5936,8 +5918,7 @@ my @servers = &servers::list_servers();
 my ($already) = grep { $_->{'host'} eq $server &&
 		       $_->{'port'} == $port } @servers;
 if (!$already) {
-	($already) = grep { $_->{'host'} eq $server &&
-			    $_->{'port'} == $port } @servers;
+	($already) = grep { $_->{'host'} eq $server } @servers;
 	}
 
 # Construct a server object using provided and stored info
@@ -5945,6 +5926,8 @@ $user ||= $already->{'user'} if ($already);
 $pass ||= $already->{'pass'} if ($already);
 $port ||= $already->{'port'} if ($already);
 return { 'host' => $server,
+	 'ip' => $already ? $already->{'ip'} : undef,
+	 'ip6_force' => $already ? $already->{'ip6_force'} : undef,
 	 'port' => $port || 10000,
 	 'ssl' => $already ? $already->{'ssl'} : 1,
 	 'fast' => $already ? $already->{'fast'} : 1,

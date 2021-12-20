@@ -22,7 +22,8 @@ foreach my $lib ("scripts", "resellers", "admins", "simple", "s3",
 		 "postgrey", "wizard", "security", "json", "redirects", "ftp",
 		 "dkim", "provision", "stats", "bkeys", "rs", "cron",
 		 "ratelimit", "cloud", "google", "gcs", "dropbox", "copycert",
-		 "jailkit", "ports", "bb", "dnscloud", "dnscloudpro") {
+		 "jailkit", "ports", "bb", "dnscloud", "dnscloudpro",
+		 "smtpcloud", "pro-tip") {
 	my $libfile = "$virtual_server_root/pro/$lib-lib.pl";
 	if (!-r $libfile) {
 		$libfile = "$virtual_server_root/$lib-lib.pl";
@@ -32,6 +33,15 @@ foreach my $lib ("scripts", "resellers", "admins", "simple", "s3",
 		print STDERR "failed to load $lib-lib.pl : $@\n";
 		}
 	}
+
+# Wrapper function to get webprefix safely
+sub get_webprefix_safe
+{
+if (defined(&get_webprefix)) {
+	return &get_webprefix();
+	}
+return $gconfig{'webprefix'};
+}
 
 # require_useradmin([no-quotas])
 sub require_useradmin
@@ -7964,7 +7974,7 @@ if ($dom->{'reseller'} && defined(&update_reseller_unix_groups)) {
 my $always_ssl = defined($dom->{'always_ssl'}) ? $dom->{'always_ssl'}
 					       : $config{'always_ssl'};
 my $generated = 0;
-if (!&domain_has_ssl($dom) && $always_ssl) {
+if (!&domain_has_ssl($dom) && $always_ssl && !$dom->{'alias'}) {
 	$generated = &generate_default_certificate($dom) ? 1 : 0;
 	}
 
@@ -7978,7 +7988,12 @@ if ($dom->{'auto_letsencrypt'} && &domain_has_website($dom) &&
     !$dom->{'disabled'} && !$dom->{'alias'} && !$dom->{'ssl_same'}) {
 	my $info = &cert_info($dom);
 	if ($info->{'self'}) {
-		&create_initial_letsencrypt_cert($dom, 1);
+		if ($nopost) {
+			# Need to run any pending Apache restart
+			&run_post_actions(\&restart_apache);
+			}
+		&create_initial_letsencrypt_cert(
+			$dom, $dom->{'auto_letsencrypt'} == 2 ? 0 : 1);
 		$generated = 2;
 		}
 	}
@@ -8033,8 +8048,16 @@ if ($dom->{'jail'} && !&check_jailkit_support()) {
 if (!$dom->{'alias'} && &domain_has_website($dom) && defined($content)) {
 	# Just create virtualmin default index.html
 	&$first_print($text{'setup_contenting'});
-	&create_index_content($dom, $content, 0);
-	&$second_print($text{'setup_done'});
+	eval {
+		local $main::error_must_die = 1;
+		&create_index_content($dom, $content, 0);
+		};
+	if ($@) {
+		&$second_print(&text('setup_econtenting', "$@"));
+		}
+	else {
+		&$second_print($text{'setup_done'});
+		}
 	}
 
 # Run the after creation command
@@ -8504,17 +8527,20 @@ sub register_post_action
 push(@main::post_actions, [ @_ ]);
 }
 
-# run_post_actions()
+# run_post_actions([&only-action])
 # Run all registered post-modification actions
 sub run_post_actions
 {
+local @only = @_;
+local %only = map { $_, 1 } @only;
 local $a;
 
 # Check if we are restarting Apache, and if so don't reload it
 local $restarting;
 foreach $a (@main::post_actions) {
-	if ($a->[0] eq \&restart_apache && $a->[1] == 1) {
-		$restarting = 1;
+	if ($a->[0] eq \&restart_apache) {
+		$a->[1] ||= 0;
+		$restarting = 1 if ($a->[1] == 1);
 		}
 	}
 if ($restarting) {
@@ -8524,6 +8550,7 @@ if ($restarting) {
 
 # Run unique actions
 local %done;
+local @newpost;
 foreach $a (@main::post_actions) {
 	# Don't run multiple times. For BIND, all restarts are considered equal
 	local $key = $a->[0] eq \&restart_bind ? $a->[0] :
@@ -8531,15 +8558,21 @@ foreach $a (@main::post_actions) {
 	     join(",", @$a);
 	next if ($done{$key}++);
 
-	# Call the restart function
+	# Skip if the caller requested specific actions
 	local ($afunc, @aargs) = @$a;
+	if (@only && !$only{$afunc}) {
+		push(@newpost, $a);
+		next;
+		}
+
+	# Call the restart function
 	local $main::error_must_die = 1;
 	eval { &$afunc(@aargs) };
 	if ($@) {
 		&$second_print(&text('setup_postfailure', "$@"));
 		}
 	}
-@main::post_actions = ( );
+@main::post_actions = @newpost;
 }
 
 # run_post_actions_silently()
@@ -8845,6 +8878,7 @@ push(@rv, { 'id' => 0,
 	    'web_ssl' => $config{'apache_ssl_config'},
 	    'web_writelogs' => $config{'web_writelogs'},
 	    'web_user' => $config{'web_user'},
+	    'web_fcgiwrap' => $config{'fcgiwrap'},
 	    'web_html_dir' => $config{'html_dir'},
 	    'web_html_perms' => $config{'html_perms'} || 750,
 	    'web_stats_dir' => $config{'stats_dir'},
@@ -8876,6 +8910,7 @@ push(@rv, { 'id' => 0,
 	    'web_ssi_suffix' => $config{'web_ssi_suffix'},
 	    'web_dovecot_ssl' => $config{'dovecot_ssl'},
 	    'web_postfix_ssl' => $config{'postfix_ssl'},
+	    'web_http2' => $config{'web_http2'},
 	    'webalizer' => $config{'def_webalizer'} || "none",
 	    'disabled_web' => $config{'disabled_web'} || "none",
 	    'disabled_url' => $config{'disabled_url'} || "none",
@@ -8928,6 +8963,7 @@ push(@rv, { 'id' => 0,
 			      &entities_to_ascii($text{'mail_dsubject'}),
 	    'mail_cc' => $config{'newdom_cc'},
 	    'mail_bcc' => $config{'newdom_bcc'},
+	    'mail_cloud' => $config{'mail_cloud'},
 	    'aliascopy' => $config{'aliascopy'} || 0,
 	    'bccto' => $config{'bccto'} || 'none',
 	    'spamclear' => $config{'spamclear'} || 'none',
@@ -9139,6 +9175,7 @@ if ($tmpl->{'id'} == 0) {
 	$config{'apache_ssl_config'} = $tmpl->{'web_ssl'};
 	$config{'web_writelogs'} = $tmpl->{'web_writelogs'};
 	$config{'web_user'} = $tmpl->{'web_user'};
+	$config{'fcgiwrap'} = $tmpl->{'web_fcgiwrap'};
 	$config{'html_dir'} = $tmpl->{'web_html_dir'};
 	$config{'html_perms'} = $tmpl->{'web_html_perms'};
 	$config{'stats_dir'} = $tmpl->{'web_stats_dir'};
@@ -9156,6 +9193,7 @@ if ($tmpl->{'id'} == 0) {
 	$config{'web_webmaildom'} = $tmpl->{'web_webmaildom'};
 	$config{'web_admin'} = $tmpl->{'web_admin'};
 	$config{'web_admindom'} = $tmpl->{'web_admindom'};
+	$config{'web_http2'} = $tmpl->{'web_http2'};
 	$config{'php_vars'} = $tmpl->{'php_vars'} eq "none" ? "" :
 				$tmpl->{'php_vars'};
 	$config{'php_fpm'} = $tmpl->{'php_fpm'} eq "none" ? "" :
@@ -9251,6 +9289,7 @@ if ($tmpl->{'id'} == 0) {
 	$config{'newdom_subject'} = $tmpl->{'mail_subject'};
 	$config{'newdom_cc'} = $tmpl->{'mail_cc'};
 	$config{'newdom_bcc'} = $tmpl->{'mail_bcc'};
+	$config{'mail_cloud'} = $tmpl->{'mail_cloud'};
 	$config{'aliascopy'} = $tmpl->{'aliascopy'};
 	$config{'bccto'} = $tmpl->{'bccto'};
 	$config{'spamclear'} = $tmpl->{'spamclear'};
@@ -9429,7 +9468,7 @@ if (!$tmpl->{'default'}) {
 	local $p;
 	local %done;
 	foreach $p ("dns_spf", "dns_sub", "dns_master", "dns_mx", "dns_dmarc",
-		    "web_webmail", "web_admin",
+		    "web_webmail", "web_admin", "web_http2",
 		    "web", "dns", "ftp", "frame", "user_aliases",
 		    "ugroup", "sgroup", "quota", "uquota", "ushell", "ujail",
 		    "mailboxlimit", "domslimit",
@@ -9459,7 +9498,7 @@ if (!$tmpl->{'default'}) {
 			foreach $k (keys %$def) {
 				next if ($p eq "dns" && $k =~ /^dns_spf/);
 				next if ($p eq "php" && $k =~ /^php_(fpm|sock)/);
-				next if ($p eq "web" && $k =~ /^web_(webmail|admin)/);
+				next if ($p eq "web" && $k =~ /^web_(webmail|admin|http2)/);
 				if (!$done{$k} &&
 				    ($k =~ /^\Q$p\E_/ || $k eq $p)) {
 					$tmpl->{$k} = $def->{$k};
@@ -10490,6 +10529,17 @@ return &ui_select($name, $ids,
 		  $sz, 1, 0, $dis);
 }
 
+# one_server_input(name, id, &domains, [disabled])
+# Returns HTML for a single-server selection field
+sub one_server_input
+{
+local ($name, $id, $doms, $dis) = @_;
+return &ui_select($name, $id,
+		  [ map { [ $_->{'id'}, &show_domain_name($_) ] }
+			sort { $a->{'dom'} cmp $b->{'dom'} } @$doms ],
+		  1, 0, 0, $dis);
+}
+
 # can_monitor_bandwidth(&domain)
 # Returns 1 if bandwidth monitoring is enabled for some server
 sub can_monitor_bandwidth
@@ -10668,12 +10718,39 @@ else {
 	}
 }
 
+# has_cgi_support([&domain])
+# Returns 1 if the webserver supports CGI scripts, 0 if not
+sub has_cgi_support
+{
+my ($d) = @_;
+my $p = &domain_has_website($d);
+if ($p eq 'web') {
+	# Check if Apache supports suexec or fcgiwrap
+	return 1 &supports_suexec($d);
+	if ($d) {
+		return $d->{'fcgiwrap_port'} ? 1 : 0;
+		}
+	else {
+		return &supports_fcgiwrap();
+		}
+	}
+elsif ($p) {
+	# Call plugin function
+	return &plugin_defined($p, "feature_web_supports_cgi") &&
+	       &plugin_call($p, "feature_web_supports_cgi", $d);
+	}
+else {
+	return 0;
+	}
+}
+
 # require_licence()
 # Reads in the file containing the licence_scheduled function.
 # Returns 1 if OK, 0 if not
 sub require_licence
 {
-return 0 if (!$virtualmin_pro);
+my ($force) = @_;
+return 0 if (!$virtualmin_pro && !$force);
 foreach my $ls ("$module_root_directory/virtualmin-licence.pl",
 		$config{'licence_script'}) {
 	if ($ls && -r $ls) {
@@ -10797,6 +10874,9 @@ sub check_licence_site
 return (0) if (!&require_licence());
 local $id = &get_licence_hostid();
 
+my %serial;
+&read_env_file($virtualmin_license_file, \%serial);
+
 local ($status, $expiry, $err, $doms, $max_servers, $servers, $autorenew) =
 	&licence_scheduled($id, undef, undef, &get_vps_type());
 if ($status == 0 && $doms) {
@@ -10811,7 +10891,8 @@ if ($status == 0 && $max_servers && !$err) {
 	# A servers limit exists .. check if we have exceeded it
 	if ($servers > $max_servers+1) {
 		$status = 1;
-		$err = &text('licence_maxservers', $max_servers, $servers);
+		$err = &text('licence_maxservers2', $max_servers, $servers, "<tt>$serial{'SerialNumber'}</tt>");
+		$err .= " " . &text('licence_maxwarn', "https://virtualmin.com/shop/", "https://virtualmin.com/shop/");
 		}
 	}
 return ($status, $expiry, $err, $doms, $servers, $max_servers, $autorenew);
@@ -10886,7 +10967,7 @@ if ($status != 0) {
 	$alert_text .= $err."\n";
 	$alert_text .= &text('licence_renew', $virtualmin_renewal_url),"\n";
 	if (&can_recheck_licence()) {
-		$alert_text .= &ui_form_start("../$module_name/licence.cgi");
+		$alert_text .= &ui_form_start("@{[&get_webprefix_safe()]}/$module_name/licence.cgi");
 		$alert_text .= &ui_submit($text{'licence_recheck'});
 		$alert_text .= &ui_form_end();
 		}
@@ -10904,7 +10985,7 @@ elsif ($expirytime && $expirytime - time() < 7*24*60*60 && !$autorenew) {
 		}
 	$alert_text .= &text('licence_renew', $virtualmin_renewal_url),"\n";
 	if (&can_recheck_licence()) {
-		$alert_text .= &ui_form_start("../$module_name/licence.cgi");
+		$alert_text .= &ui_form_start("@{[&get_webprefix_safe()]}/$module_name/licence.cgi");
 		$alert_text .= &ui_submit($text{'licence_recheck'});
 		$alert_text .= &ui_form_end();
 		}
@@ -10918,7 +10999,7 @@ if ($config{'old_defip'} && $defip && $config{'old_defip'} ne $defip) {
 	$alert_text .= "<b>".&text('licence_ipchanged',
 			   "<tt>$config{'old_defip'}</tt>",
 			   "<tt>$defip</tt>")."</b><p>\n";
-	$alert_text .= &ui_form_start("../$module_name/edit_newips.cgi");
+	$alert_text .= &ui_form_start("@{[&get_webprefix_safe()]}/$module_name/edit_newips.cgi");
 	$alert_text .= &ui_hidden("old", $config{'old_defip'});
 	$alert_text .= &ui_hidden("new", $defip);
 	$alert_text .= &ui_hidden("setold", 1);
@@ -10953,7 +11034,7 @@ if ($small) {
 			   $small->{'c'} || $small->{'o'},
 			   $small->{'issuer_c'} || $small->{'issuer_o'},
 			   )."</b><p>\n";
-	$alert_text .= &ui_form_start("../webmin/edit_ssl.cgi");
+	$alert_text .= &ui_form_start("@{[&get_webprefix_safe()]}/webmin/edit_ssl.cgi");
 	$alert_text .= &ui_hidden("mode", $msg eq 'licence_smallself' ?
 					'create' : 'csr');
 	$alert_text .= &ui_submit($msg eq 'licence_smallself' ?
@@ -10973,7 +11054,7 @@ if ($config{'allow_symlinks'} eq '') {
 		$alert_text .= "<b>".&text('licence_fixlinks', scalar(@fixdoms))."<p>".
 		             $text{'licence_fixlinks2'}."</b><p>\n";
 		$alert_text .= &ui_form_start(
-			"../$module_name/fix_symlinks.cgi");
+			"@{[&get_webprefix_safe()]}/$module_name/fix_symlinks.cgi");
 		$alert_text .= &ui_submit($text{'licence_fixlinksok'}, undef);
 		$alert_text .= &ui_submit($text{'licence_fixlinksignore'}, 'ignore');
 		$alert_text .= &ui_form_end();
@@ -10995,7 +11076,7 @@ if ($theme && $current_theme !~ /$recommended_theme/ &&
 	$switch_text .= "<b>".&text('index_themeswitch',
 				    $theme->{'desc'})."</b><p>\n";
 	$switch_text .= &ui_form_start(
-		"../$module_name/switch_theme.cgi");
+		"@{[&get_webprefix_safe()]}/$module_name/switch_theme.cgi");
 	$switch_text .= &ui_submit($text{'index_themeswitchok'});
 	$switch_text .= &ui_submit($text{'index_themeswitchnot'}, "cancel");
 	$switch_text .= &ui_form_end();
@@ -11090,7 +11171,7 @@ return @rv;
 sub domain_ssl_page_links
 {
 my ($doms) = @_;
-return join(" ", map { &ui_link("../$module_name/cert_form.cgi?dom=$_->{'id'}",
+return join(" ", map { &ui_link("@{[&get_webprefix_safe()]}/$module_name/cert_form.cgi?dom=$_->{'id'}",
 				&show_domain_name($_)) } @$doms);
 }
 
@@ -11192,6 +11273,39 @@ else {
 				$d, &get_domain_by("parent", $d->{'id'}));
 	}
 return ($home >= $dbq ? $home-$dbq : $home, $mail, $db);
+}
+
+# check_domain_over_quota(&domain)
+# If a virtual server is over quota, return an error message
+sub check_domain_over_quota
+{
+my ($d) = @_;
+if ($d->{'parent'}) {
+	my $parent = &get_domain($d->{'parent'});
+	return &check_domain_over_quota($parent);
+	}
+if (&has_group_quotas()) {
+	# Check server group quota
+	my $bsize = &quota_bsize("home");
+	my ($homequota, $mailquota) = &get_domain_quota($d);
+	if ($d->{'quota'} && $homequota >= $d->{'quota'}) {
+		return &text('setup_overgroupquota',
+			     &nice_size($d->{'quota'}*$bsize),
+			     &show_domain_name($d));
+		}
+	}
+if (&has_home_quotas()) {
+	# Check domain owner user
+	my $bsize = &quota_bsize("home");
+	my ($homequota, $mailquota, $duser, $dbquota, $dbquota_home) =
+		&get_domain_user_quotas($d);
+	if ($d->{'uquota'} && $duser->{'uquota'} >= $d->{'uquota'}) {
+		return &text('setup_overuserquota',
+			     &nice_size($d->{'uquota'}*$bsize),
+			     $duser->{'user'});
+		}
+	}
+return undef;
 }
 
 # compute_prefix(domain-name, group, [&parent], [creating-flag])
@@ -11310,25 +11424,22 @@ else {
 sub new_password_input
 {
 local ($name) = @_;
+my $attrnoauto = "autocomplete='off' autocorrect='off' spellcheck='false'";
 if ($config{'passwd_mode'} == 1) {
 	# Random but editable password
-	return &ui_textbox($name, &random_password(), 21, 0, undef,
-			   "autocomplete=off");
+	return &ui_textbox($name, &random_password(), 21, 0, undef, $attrnoauto);
 	}
 elsif ($config{'passwd_mode'} == 0) {
 	# One hidden password
-	return &ui_password($name, undef, 21, 0, undef,
-			    "autocomplete=off");
+	return &ui_password($name, undef, 21, 0, undef, $attrnoauto);
 	}
 elsif ($config{'passwd_mode'} == 2) {
 	# Two hidden passwords
 	return "<table>\n".
 	       "<tr><td>$text{'form_passf'}</td> ".
-	       "<td>".&ui_password($name, undef, 21, 0, undef,
-				   "autocomplete=off")."</td> </tr>\n".
+	       "<td>".&ui_password($name, undef, 21, 0, undef, $attrnoauto)."</td> </tr>\n".
 	       "<tr><td>$text{'form_passa'}</td> ".
-	       "<td>".&ui_password($name."_again", undef, 21, 0, undef,
-				   "autocomplete=off")."</td> </tr>\n".
+	       "<td>".&ui_password($name."_again", undef, 21, 0, undef, $attrnoauto)."</td> </tr>\n".
 	       "</table>";
 	}
 }
@@ -12424,7 +12535,7 @@ if (&domain_has_website($d) && $d->{'dir'} && !$d->{'alias'} &&
 		    'icon' => 'page_edit',
 		  });
 	}
-
+&menu_link_pro_tips(\@rv, $d) if (!$virtualmin_pro);
 &save_links_cache($ckey, $v, \@rv);
 return @rv;
 }
@@ -12446,7 +12557,7 @@ local @rv;
 
 # Always start with edit/view link
 my $canconfig = &can_config_domain($d);
-local $vm = "$gconfig{'webprefix'}/$module_name";
+local $vm = "/$module_name";
 push(@rv, { 'url' => $canconfig ? "$vm/edit_domain.cgi?dom=$d->{'id'}"
 				: "$vm/view_domain.cgi?dom=$d->{'id'}",
 	    'title' => $canconfig ? $text{'edit_title'} : $text{'view_title'},
@@ -12465,7 +12576,7 @@ if (!$d->{'parent'}) {
 # Add actions and links
 foreach my $l (&get_domain_actions($d), &feature_links($d)) {
 	if ($l->{'mod'}) {
-		$l->{'url'} = "$gconfig{'webprefix'}/$l->{'mod'}/$l->{'page'}";
+		$l->{'url'} = "/$l->{'mod'}/$l->{'page'}";
 		}
 	else {
 		$l->{'url'} = "$vm/$l->{'page'}".
@@ -12481,7 +12592,7 @@ my %catmap = map { $_->{'catname'}, $_->{'cat'} } @rv;
 # Add preview website link, proxied via Webmin
 if (&domain_has_website($d) && &can_use_preview()) {
 	local $pt = $d->{'web_port'} == 80 ? "" : ":$d->{'web_port'}";
-	push(@rv, { 'url' => "$gconfig{'webprefix'}/$module_name/".
+	push(@rv, { 'url' => "/$module_name/".
 		    	     "link.cgi/$d->{'ip'}/http://www.$d->{'dom'}$pt/",
 		    'title' => $text{'links_website'},
 		    'cat' => 'services',
@@ -12565,6 +12676,7 @@ local @tmpls = ( 'features', 'tmpl', 'plan', 'user', 'update',
    'dkim', 'ratelimit', 'provision',
    $config{'mail'} ? ( 'autoconfig' ) : ( ),
    $config{'mail'} && $virtualmin_pro ? ( 'retention' ) : ( ),
+   $config{'mail'} && $virtualmin_pro ? ( 'smtpclouds' ) : ( ),
    $config{'mysql'} ? ( 'mysqls' ) : ( ),
    'dnsclouds',
    );
@@ -12602,6 +12714,7 @@ local %tmplcat = (
 	'provision' => 'setting',
 	'autoconfig' => 'email',
 	'retention' => 'email',
+	'smtpclouds' => 'email',
 	'mysqls' => 'setting',
 	'dnsclouds' => 'ip',
 	);
@@ -12610,10 +12723,12 @@ local %nonew = ( 'history', 1,
 		 'dkim', 1,
 		 'ratelimit', 1,
 		 'provision', 1,
+		 'smtpclouds', 1,
 		 'dnsclouds', 1,
 	       );
 local %pro = ( 'resels', 1,
-	       'reseller', 1 );
+	       'reseller', 1,
+	       'smtpclouds', 1, );
 local @tlinks = map { ($pro{$_} ? "pro/" : "").
 		      ($nonew{$_} ? "${_}.cgi" : "edit_new${_}.cgi") } @tmpls;
 local @ttitles = map { $nonew{$_} ? $text{"${_}_title"}
@@ -12644,7 +12759,7 @@ return (\@tlinks, \@ttitles, \@ticons, \@tcats, \@tmpls);
 sub get_all_global_links
 {
 my @rv;
-my $vm = "$gconfig{'webprefix'}/$module_name";
+my $vm = "/$module_name";
 
 local $v = [ 'plugins' => \@plugins,
 	     'spam' => $config{'spam'},
@@ -12674,7 +12789,7 @@ if (&can_edit_templates()) {
 				}
 			elsif ($tlinks->[$i] =~ /^\//) {
 				# Outside virtualmin module
-				$url = $gconfig{'webprefix'}.$tlinks->[$i];
+				$url = $tlinks->[$i];
 				}
 			else {
 				# Inside virtualmin
@@ -12686,13 +12801,15 @@ if (&can_edit_templates()) {
 				    'icon' => $tcodes->[$i],
 				  });
 			}
+		&global_menu_link_pro_tip(\@rv)
+			if (!$virtualmin_pro);
 		&save_links_cache("global", $v, \@rv);
 		}
 	}
 
 # Add module config page
 if (!$access{'noconfig'}) {
-	push(@rv, { 'url' => "$gconfig{'webprefix'}/config.cgi?$module_name",
+	push(@rv, { 'url' => "/config.cgi?$module_name",
 		    'title' => $text{'index_virtualminconfig'},
 		    'cat' => 'setting',
 		    'icon' => 'config' });
@@ -12949,6 +13066,14 @@ elsif (&indexof($f, &list_feature_plugins()) >= 0) {
 		&try_plugin_call($f, "feature_modify", $d, $oldd);
 		}
 	}
+}
+
+# feature_name(name, [&domain])
+# Returns a human-readable short feature name, even if it's a plugin
+sub feature_name
+{
+my ($f, $d) = @_;
+return $text{'feature_'.$f} || &plugin_call($f, "feature_name") || $f;
 }
 
 # domain_features(&dom)
@@ -14089,42 +14214,7 @@ if ($config{'dns'}) {
 					   "<tt>$master</tt>");
 			}
 
-		# Make sure this server is configured to use the local BIND
-		if (&foreign_check("net") && $config{'dns_check'}) {
-			&foreign_require("net");
-			local %ips = map { $_, 1 } &active_ip_addresses();
-			local $dns = &net::get_dns_config();
-			local $hasdns;
-			foreach my $ns (@{$dns->{'nameserver'}}) {
-				$hasdns++ if ($ips{&to_ipaddress($ns)} ||
-					      $ns eq "127.0.0.1" ||
-					      $ns eq "0.0.0.0");
-				}
-			if (!@{$dns->{'nameserver'}}) {
-				# No resolv.conf at all, but this means that
-				# DNS falls back to local
-				&$second_print($text{'check_dnsmissing'}." ".
-					       $mastermsg);
-				}
-			elsif (!$hasdns) {
-				# No local nameserver
-				my @dhcp = grep { $_->{'dhcp'} ||
-						  $_->{'bootp'} }
-						&net::boot_interfaces();
-				&$second_print(
-				   &text('check_eresolv4',
-					&ui_link("../net/list_dns.cgi",
-						 $text{'check_eresolvlist'})).
-				   (@dhcp ? " ".$text{'check_eresolv3'} : ""));
-				}
-			else {
-				&$second_print($text{'check_dnsok'}." ".
-					       $mastermsg);
-				}
-			}
-		else {
-			&$second_print($text{'check_dnsok2'}." ".$mastermsg);
-			}
+		&$second_print($text{'check_dnsok2'}." ".$mastermsg);
 
 		# Make sure TLSA records can be created
 		if ($config{'tlsa_records'}) {
@@ -14402,26 +14492,60 @@ if ($config{'web'}) {
 		}
 
 	&$second_print($text{'check_webok'});
+
+	# Check SuExec / CGI mode
+	if (&supports_suexec() && &supports_fcgiwrap()) {
+		&$second_print($text{'check_suexecok2'});
+		}
+	elsif (&supports_suexec()) {
+		&$second_print($text{'check_suexecok'});
+		}
+	elsif (&supports_fcgiwrap()) {
+		&$second_print($text{'check_fcgiwrapok'});
+		}
+
+	# Check HTTP2 support
+	my ($ok, $err) = &supports_http2();
+	if ($ok) {
+		&$second_print($text{'check_http2ok'});
+		}
+	else {
+		&$second_print(&text('check_http2err', $err));
+		}
 	}
 
 if (&domain_has_website()) {
-	# Check PHP versions
-	local @msg;
-	local @vers = &list_available_php_versions();
-	foreach my $v (@vers) {
-		if ($v->[1]) {
-			local $realv = &get_php_version($v->[0]);
-			push(@msg, ($realv || $v->[0])." (".$v->[1].")");
-			}
-		else {
-			push(@msg, $v->[0]." (mod_php)");
-			}
-		}
-	if (@msg) {
-		&$second_print(&text('check_webphpvers', join(", ", @msg)));
+	# Report on supported PHP modes
+	my @supp = grep { $_ ne 'none' } &supported_php_modes();
+	if (@supp) {
+		&$second_print(&text('check_webphpmodes',
+				     join(" ", @supp)));
 		}
 	else {
-		&$second_print("<b>$text{'check_webphpnovers'}</b>");
+		&$second_print($text{'check_ewebphpmodes'});
+		}
+
+	# Report on PHP versions (unless it's just FPM, which we cover later)
+	local @vers = &list_available_php_versions();
+	my @othersupp = grep { !/fpm|none/ } @supp;
+	if (@othersupp) {
+		local @msg;
+		foreach my $v (@vers) {
+			if ($v->[1]) {
+				local $realv = &get_php_version($v->[0]);
+				push(@msg, ($realv ||$v->[0])." (".$v->[1].")");
+				}
+			else {
+				push(@msg, $v->[0]." (mod_php)");
+				}
+			}
+		if (@msg) {
+			&$second_print(&text('check_webphpvers',
+					     join(", ", @msg)));
+			}
+		else {
+			&$second_print("<b>$text{'check_webphpnovers'}</b>");
+			}
 		}
 
 	# Check for PHP-FPM support
@@ -14452,8 +14576,6 @@ if (&domain_has_website()) {
 				foreach my $p (@pools) {
 					my $pd = &get_domain($p);
 					next if ($pd);
-					my ($ok) = &get_domain_php_fpm_port($d);
-					next if (!$ok);	# Don't fix if broken
 					my $t = get_php_fpm_pool_config_value(
 						$conf, $p, "listen");
 					# If returned "$t" is "127.0.0.1:9000", 
@@ -14527,9 +14649,6 @@ if (&domain_has_website()) {
 				}
 			}
 
-		# Report on supported PHP modes
-		my @supp = &supported_php_modes();
-		&$second_print(&text('check_webphpmodes', join(" ", @supp)));
 		}
 
 	# Check for any unsupported mod_php directives
@@ -15082,7 +15201,7 @@ elsif ($config{'quotas'}) {
 		if (&needs_xfs_quota_fix() == 1) {
 			my $reboot_msg = "\n<b>$text{'licence_xfsreboot'}</b>&nbsp;";
 			if (&foreign_available("init")) {
-				$reboot_msg .= ui_link("../init/reboot.cgi", $text{'licence_xfsrebootok'});
+				$reboot_msg .= ui_link("@{[&get_webprefix_safe()]}/init/reboot.cgi", $text{'licence_xfsrebootok'});
 				$reboot_msg .= ".";
 				}
 			&$second_print($reboot_msg);
@@ -15142,24 +15261,6 @@ if ($config{'ldap'}) {
 		else {
 			&$second_print(&text('check_ldap'));
 			}
-		}
-	}
-
-# Check for NSCD
-if ($config{'unix'}) {
-	if (&find_byname("nscd")) {
-		local $msg;
-		if (&foreign_available("init")) {
-			&foreign_require("init");
-			if (($init::init_mode eq 'init' ||
-			     $init::init_mode eq 'upstart' ||
-			     $init::init_mode eq 'systemd') &&
-			    &init::action_status("nscd") == 2) {
-				$msg = &text('check_enscd2',
-					'../init/edit_action.cgi?0+nscd');
-				}
-			}
-		&$second_print($text{'check_enscd'}." ".$msg);
 		}
 	}
 
@@ -15264,16 +15365,15 @@ if ($virtualmin_pro &&
     $vserial{'SerialNumber'} ne 'GPL') {
 	if ($gconfig{'os_type'} eq 'redhat-linux') {
 		# Check the YUM config file
-		my $repo = "/etc/yum.repos.d/virtualmin.repo";
-		if (!-r $repo) {
-			&$second_print(&text('check_eyumrepofile', $repo));
+		if (!-r $virtualmin_yum_repo) {
+			&$second_print(&text('check_eyumrepofile', $virtualmin_yum_repo));
 			}
 		else {
 			# File exists, but does it contain the right repo line?
-			my $lref = &read_file_lines($repo, 1);
+			my $lref = &read_file_lines($virtualmin_yum_repo, 1);
 			my $found = 0;
 			foreach my $l (@$lref) {
-				if ($l =~ /baseurl=http:\/\/([^:]+):([^\@]+)\@software.virtualmin.com/) {
+				if ($l =~ /baseurl=https?:\/\/([^:]+):([^\@]+)\@$upgrade_virtualmin_host/) {
 					if ($1 eq $vserial{'SerialNumber'} &&
 					    $2 eq $vserial{'LicenseKey'}) {
 						$found = 2;
@@ -15288,31 +15388,25 @@ if ($virtualmin_pro &&
 				&$second_print($text{'check_yumrepook'});
 				}
 			elsif ($found == 1) {
-				&$second_print(&text('check_yumrepowrong', $repo));
+				&$second_print(&text('check_yumrepowrong', $virtualmin_yum_repo));
 				}
 			else {
-				&$second_print(&text('check_yumrepomissing', $repo));
+				&$second_print(&text('check_yumrepomissing', $virtualmin_yum_repo));
 				}
 			}
 		}
 	elsif ($gconfig{'os_type'} eq 'debian-linux') {
 		# Check the APT config file
-		my $repo = "/etc/apt/sources.list";
-		my $repo_new = "/etc/apt/sources.list.d/virtualmin.list";
-		if (!-r $repo) {
-			&$second_print(&text('check_eaptrepofile', $repo));
+		if (!-r $virtualmin_apt_repo) {
+			&$second_print(&text('check_eaptrepofile', $virtualmin_apt_repo));
 			}
 		else {
-			# If it's a newish install using new path
-			if (-r $repo_new) {
-				$repo = $repo_new;
-				}
-			
 			# File exists, but does it contain the right repo line?
-			my $lref = &read_file_lines($repo, 1);
+			my $lref = &read_file_lines($virtualmin_apt_repo, 1);
 			my $found = 0;
 			foreach my $l (@$lref) {
-				if ($l =~ /^deb\s+http:\/\/([^:]+):([^\@]+)\@software.virtualmin.com/) {
+				# An old Debian format with login/pass inside of the repo file
+				if ($l =~ /^deb\s+https?:\/\/([^:]+):([^\@]+)\@$upgrade_virtualmin_host/) {
 					if ($1 eq $vserial{'SerialNumber'} &&
 					    $2 eq $vserial{'LicenseKey'}) {
 						$found = 2;
@@ -15322,28 +15416,47 @@ if ($virtualmin_pro &&
 						}
 					last;
 					}
+
+				# A new Debian format with auth in a separate file
+				if ($l =~ /^deb\s+(https):(\/)(\/).*($upgrade_virtualmin_host.*)$/ &&
+					-r "$virtualmin_apt_auth_dir/virtualmin.conf") {
+					my $auth_conf_lines = &read_file_contents("$virtualmin_apt_auth_dir/virtualmin.conf");
+					if ($auth_conf_lines =~ /machine\s+$upgrade_virtualmin_host\s+login\s+(\S+)\s+password\s+(\S+)/gmi) {
+						if ($1 eq $vserial{'SerialNumber'} &&
+						    $2 eq $vserial{'LicenseKey'}) {
+							$found = 2;
+							}
+						else {
+							$found = 1;
+							}
+						last;
+						}
+					}
 				}
 			if ($found == 2) {
 				&$second_print($text{'check_aptrepook'});
 				}
 			elsif ($found == 1) {
-				&$second_print(&text('check_aptrepowrong', $repo));
+				&$second_print(&text('check_aptrepowrong', $virtualmin_apt_repo));
 				}
 			else {
-				&$second_print(&text('check_aptrepomissing', $repo));
+				&$second_print(&text('check_aptrepomissing', $virtualmin_apt_repo));
 				}
 			}
 		}
 	}
 
-# Check for disabled features that are in use
-my @doms = &list_domains();
-foreach my $f (@features) {
-	if (!$config{$f} && (!$lastconfig || $lastconfig->{$f})) {
-		my @lost = grep { $_->{$f} } @doms;
-		if (@lost) {
-			return &text('check_lostfeature', $text{'feature_'.$f},
-				     join(" ", map { $_->{'dom'} } @lost));
+# Check for disabled features that were just turned off
+if ($lastconfig) {
+	my @doms = &list_domains();
+	foreach my $f (@features) {
+		if (!$config{$f} && $lastconfig->{$f}) {
+			my @lost = grep { $_->{$f} } @doms;
+			if (@lost) {
+				return &text('check_lostfeature',
+					$text{'feature_'.$f},
+					join(" ", map { $_->{'dom'} } @lost));
+				}
 			}
 		}
 	}
@@ -17020,10 +17133,8 @@ local @got = @_;
 local %pconfig = map { $_, 1 } &list_feature_plugins();
 local @notgot = grep { !$config{$_} && !$pconfig{$_} } @got;
 @got = grep { $config{$_} || $pconfig{$_} } @got;
-local @gotmsg = map { $text{'feature_'.$_} ||
-		      &plugin_call($_, "feature_name") || $_ } @got;
-local @notgotmsg = map { $text{'feature_'.$_} ||
-		         &plugin_call($_, "feature_name") || $_ } @notgot;
+local @gotmsg = map { &feature_name($_) } @got;
+local @notgotmsg = map { &feature_name($_) } @notgot;
 &$second_print(".. found ",join(", ", @gotmsg),".");
 if (@notgot) {
 	&$second_print("<b>However, the follow features are not supported or enabled on your system : ",join(", ", @notgotmsg).". Some functions of the migrated virtual server may not work.</b>");
@@ -18453,6 +18564,26 @@ foreach my $f (&list_provision_features()) {
 	elsif ($config{'provision_'.$f}) {
 		# Only option is cloudmin services
 		$d->{'provision_'.$f} = 1;
+		}
+	}
+# Check if template has an option to control cloud SMTP provider
+my $cloud = $d->{'smtp_cloud'} || $tmpl->{'mail_cloud'};
+if ($cloud eq 'local') {
+	delete($d->{'smtp_cloud'});
+	}
+else {
+	$d->{'smtp_cloud'} = $cloud;
+	}
+}
+
+# text_html(&text)
+# Prints given only if in HTML mode
+sub text_html {
+if (defined(&get_sub_ref_name)) {
+	my $print_mode = &get_sub_ref_name($first_print);
+	if ($print_mode &&
+	    $print_mode =~ /_html_/) {
+		return &text(@_);
 		}
 	}
 }

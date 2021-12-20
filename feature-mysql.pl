@@ -63,7 +63,7 @@ if (!$field || $field eq 'db') {
 # Check for user clash
 if (!$d->{'parent'} && (!$field || $field eq 'user')) {
 	foreach my $od (@doms) {
-		if (&mysql_user($d) eq &mysql_user($od)) {
+		if (!$od->{'parent'} && &mysql_user($d) eq &mysql_user($od)) {
 			return &text('setup_emysqluserdom', &mysql_user($d),
 					&show_domain_name($od));
 			}
@@ -430,6 +430,9 @@ if ($encpass ne $oldencpass && !$d->{'parent'} && !$oldd->{'parent'} &&
 			}
 		else {
 			&$second_print($text{'setup_done'});
+
+			# Update all installed scripts database password which are using MySQL
+			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbpass', &mysql_pass($d), 'mysql');
 			}
 		$rv++;
 		}
@@ -442,6 +445,10 @@ if ($encpass ne $oldencpass && !$d->{'parent'} && !$oldd->{'parent'} &&
 				};
 			&execute_for_all_mysql_servers($pfunc);
 			&$second_print($text{'setup_done'});
+
+			# Update all installed scripts database password which are using MySQL
+			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbpass', &mysql_pass($d), 'mysql');
+
 			$rv++;
 			}
 		else {
@@ -622,6 +629,9 @@ elsif ($user ne $olduser && !$d->{'parent'}) {
 			}
 		else {
 			&$second_print($text{'setup_done'});
+
+			# Update all installed scripts database username which are using MySQL
+			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbuser', $user, 'mysql');
 			}
 		$rv++;
 		}
@@ -635,6 +645,10 @@ elsif ($user ne $olduser && !$d->{'parent'}) {
 				};
 			&execute_for_all_mysql_servers($pfunc);
 			&$second_print($text{'setup_done'});
+
+			# Update all installed scripts database username which are using MySQL
+			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbuser', $user, 'mysql');
+
 			$rv++;
 			}
 		else {
@@ -1862,7 +1876,7 @@ sub modify_mysql_database_user
 local ($d, $olddbs, $dbs, $olduser, $user, $pass, $encpass) = @_;
 &require_mysql();
 local $myuser = &mysql_username($user);
-	local $myolduser = &mysql_username($olduser);
+local $myolduser = &mysql_username($olduser);
 if ($d->{'provision_mysql'}) {
 	# Update on provisioning server
 	my $mymod = &get_domain_mysql_module($d);
@@ -2923,8 +2937,7 @@ else {
 return @rv;
 }
 
-# execute_password_change_sql(&domain, user, password-sql, [plaintext-pass],
-# 			      [direct])
+# execute_password_change_sql(&domain, user, password-sql, [plaintext-pass], [direct])
 # Update a MySQL user's password for all hosts. Plainpass is the unencrypted
 # password, and encpass is an SQL expression for the hashed password like
 # 'fda2343243a' or password('foo')
@@ -3577,6 +3590,22 @@ foreach my $sd (@doms) {
 	&save_domain($sd);
 	}
 return 1;
+}
+
+# check_reset_mysql(&domain)
+# Returns an error message if the reset would delete any domains
+sub check_reset_mysql
+{
+my ($d) = @_;
+return undef if ($d->{'alias'});
+my @dbs = &domain_databases($d, ["mysql"]);
+return undef if (!@dbs);
+if (@dbs == 1 && $dbs[0]->{'name'} eq $d->{'db'}) {
+	# There is just one default database .. but is it empty?
+	my @tables = &list_dom_mysql_tables($d, $dbs[0]->{'name'}, 0, 1);
+	return undef if (!@tables);
+	}
+return &text('reset_emysql', join(" ", map { $_->{'name'} } @dbs));
 }
 
 $done_feature_script{'mysql'} = 1;

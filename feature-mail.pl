@@ -383,6 +383,31 @@ if (!$d->{'creating'} && $config{'mail_autoconfig'} &&
 	&enable_email_autoconfig($d);
 	}
 
+# Setup outgoing Cloud mail provider, if requested
+my $c = $d->{'smtp_cloud'};
+if ($c && defined(&list_smtp_clouds)) {
+	my ($cloud) = grep { $_->{'name'} eq $c } &list_smtp_clouds();
+	&$first_print(&text('setup_mail_smtpcloud',
+			    $cloud ? $cloud->{'desc'} : $c));
+	if (!$cloud) {
+		&$second_print($text{'setup_mail_nosmtpcloud'});
+		}
+	else {
+		my $sfunc = "smtpcloud_".$c."_create_domain";
+		my $info = { 'domain' => $d->{'dom'} };
+		my ($ok, $id, $location) = &$sfunc($d, $info);
+		if ($ok) {
+			$d->{'smtp_cloud_id'} = $id;
+			$d->{'smtp_cloud_location'} = $location;
+			&update_smtpcloud_spf($d, undef);
+			&$second_print($text{'setup_done'});
+			}
+		else {
+			&$second_print(&text('setup_mail_esmtpcloud', $id));
+			}
+		}
+	}
+
 &release_lock_mail($d);
 return 1;
 }
@@ -556,6 +581,33 @@ if ($supports_dependent) {
 
 # Remove secondary virtusers from slaves
 &sync_secondary_virtusers($d);
+
+# Remove cloud mail provider
+my $c = $d->{'smtp_cloud'};
+if ($c && defined(&list_smtp_clouds)) {
+	my ($cloud) = grep { $_->{'name'} eq $c } &list_smtp_clouds();
+	&$first_print(&text('delete_mail_smtpcloud',
+			    $cloud ? $cloud->{'desc'} : $c));
+	if (!$cloud) {
+		&$second_print($text{'setup_mail_nosmtpcloud'});
+		}
+	else {
+		my $sfunc = "smtpcloud_".$c."_delete_domain";
+		my $info = { 'domain' => $d->{'dom'},
+			     'id' => $d->{'smtp_cloud_id'},
+			     'location' => $d->{'smtp_cloud_location'} };
+		my ($ok, $err) = &$sfunc($d, $info);
+		if ($ok) {
+			delete($d->{'smtp_cloud'});
+			delete($d->{'smtp_cloud_id'});
+			&update_smtpcloud_spf($d, $c);
+			&$second_print($text{'setup_done'});
+			}
+		else {
+			&$second_print(&text('setup_mail_esmtpcloud', $err));
+			}
+		}
+	}
 
 &release_lock_mail($d);
 return 1;
@@ -1134,6 +1186,20 @@ if ($config{'mail_system'} != 5) {	# skip for vpopmail
 			}
 		}
 	}
+
+# Check cloud mail provider
+my $c = $d->{'smtp_cloud'};
+if ($c) {
+	my $vfunc = "smtpcloud_".$c."_validate_domain";
+	if (defined(&$vfunc)) {
+		my $info = { 'domain' => $d->{'dom'},
+			     'id' => $d->{'smtp_cloud_id'},
+			     'location' => $d->{'smtp_cloud_location'} };
+		my $err = &$vfunc($d, $info);
+		return $err if ($err);
+		}
+	}
+
 return undef;
 }
 
@@ -4818,6 +4884,15 @@ if ($supports_bcc) {
 		  ]));
 	}
 
+# Default Cloud SMTP provider
+if (defined(&list_smtp_clouds)) {
+	my @clouds = map { [ $_->{'name'}, $_->{'desc'} ] } &list_smtp_clouds();
+	unshift(@clouds, [ '', $text{'tmpl_mail_cloud_local'} ]);
+	print &ui_table_row(&hlink($text{'tmpl_mail_cloud'},
+				   "template_mail_cloud"),
+		&ui_select("mail_cloud", $tmpl->{'mail_cloud'}, \@clouds));
+	}
+
 print &ui_table_hr();
 
 # Default mailbox quota
@@ -4875,6 +4950,9 @@ if ($tmpl->{'mail_on'} eq 'yes') {
 $tmpl->{'mail_subject'} = $in{'subject'};
 $tmpl->{'mail_cc'} = $in{'cc'};
 $tmpl->{'mail_bcc'} = $in{'bcc'};
+if (defined($in{'mail_cloud'})) {
+	$tmpl->{'mail_cloud'} = $in{'mail_cloud'};
+	}
 
 # Save new user aliases
 if ($in{'aliases_mode'} == 0) {
@@ -6553,6 +6631,16 @@ else {
 	}
 
 return undef;
+}
+
+# reset_mail(&domain)
+# Calls the email delete and setup functions, but with the options to preserve
+# aliases enabled
+sub reset_mail
+{
+my ($d) = @_;
+&delete_mail($d, 0, 1, 1);
+&setup_mail($d, 1, 1);
 }
 
 $done_feature_script{'mail'} = 1;

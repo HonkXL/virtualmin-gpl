@@ -232,6 +232,23 @@ else {
 	}
 &create_framefwd_file($d);
 &$second_print($text{'setup_done'});
+
+if (!$d->{'alias'}) {
+	# If suexec isn't supported, setup fcgiwrap
+	if (($tmpl->{'web_fcgiwrap'} || !&supports_suexec()) &&
+	    &supports_fcgiwrap()) {
+		&$first_print($text{'setup_fcgiwrap'});
+		my $err = &enable_apache_fcgiwrap($d);
+		if ($err) {
+			&$second_print(&text('setup_efcgiwrap', $err));
+			}
+		else {
+			&$second_print(&text('setup_efcgiwrap',
+					     $d->{'fcgiwrap_port'}));
+			}
+		}
+	}
+
 &register_post_action(\&restart_apache);
 
 # Add the Apache user to the group for this virtual server, if missing,
@@ -407,7 +424,7 @@ else {
 
 		# Delete logs too, if outside home dir and if not a sub-domain
 		if ($alog && !&is_under_directory($d->{'home'}, $alog) &&
-		    !$d->{'subdom'}) {
+		    !$d->{'subdom'} && !$d->{'web_nodeletelogs'}) {
 			&$first_print($text{'delete_apachelog'});
 			local @dlogs = ($alog, glob("${alog}.*"),
 					glob("${alog}_*"), glob("${alog}-*"));
@@ -426,6 +443,10 @@ else {
 	&release_lock_web($d);
 	}
 &delete_php_fpm_pool($d);	# May not exist, but delete just in case
+if ($d->{'fcgiwrap_port'}) {
+	&delete_fcgiwrap_server($d);
+	delete($d->{'fcgiwrap_port'});
+	}
 undef(@apache::get_config_cache);
 return 1;
 }
@@ -570,40 +591,41 @@ return 1;
 # the Apache configuration
 sub modify_web
 {
-local $rv = 0;
+my ($d, $oldd, $alias, $oldalias) = @_;
+my $rv = 0;
 &require_apache();
 
 # Special case - converting an alias domain into a non-alias, or changing the
 # alias target. Just delete and re-create.
-if ($_[1]->{'alias'} != $_[0]->{'alias'}) {
-	&delete_web($_[1]);
-	&setup_web($_[0]);
+if ($oldd->{'alias'} != $d->{'alias'}) {
+	&delete_web($oldd);
+	&setup_web($d);
 	return 1;
 	}
 
-local $conf = &apache::get_config();
-local $need_restart = 0;
-local $mode = &get_domain_php_mode($_[1]);
+my $conf = &apache::get_config();
+my $need_restart = 0;
+my $mode = &get_domain_php_mode($oldd);
 
-if ($_[0]->{'alias'} && $_[0]->{'alias_mode'}) {
+if ($d->{'alias'} && $d->{'alias_mode'}) {
 	# Possibly just updating parent virtual server
-	if ($_[0]->{'dom'} ne $_[1]->{'dom'}) {
+	if ($d->{'dom'} ne $oldd->{'dom'}) {
 		&$first_print($text{'save_apache5'});
-		local $alias = &get_domain($_[0]->{'alias'});
+		my $alias = &get_domain($d->{'alias'});
 		&obtain_lock_web($alias);
-		local @ports = ( $alias->{'web_port'} );
+		my @ports = ( $alias->{'web_port'} );
 		push(@ports, $alias->{'web_sslport'}) if ($alias->{'ssl'});
 		foreach my $p (@ports) {
-			local ($pvirt, $pconf) = &get_apache_virtual(
+			my ($pvirt, $pconf) = &get_apache_virtual(
 							$alias->{'dom'}, $p);
 			if (!$pvirt) {
 				&$second_print($text{'setup_ewebalias'});
 				next;
 				}
-			local @sa = &apache::find_directive("ServerAlias",
+			my @sa = &apache::find_directive("ServerAlias",
 							    $pconf);
 			foreach my $s (@sa) {
-				$s =~ s/\Q$_[1]->{'dom'}\E($|\s)/$_[0]->{'dom'}$1/g;
+				$s =~ s/\Q$oldd->{'dom'}\E($|\s)/$d->{'dom'}$1/g;
 				}
 			&apache::save_directive("ServerAlias", \@sa, $pconf,
 						$conf);
@@ -616,16 +638,16 @@ if ($_[0]->{'alias'} && $_[0]->{'alias_mode'}) {
 	}
 else {
 	# Update an actual virtual server
-	&obtain_lock_web($_[0]);
-	local ($virt, $vconf, $conf) = &get_apache_virtual($_[1]->{'dom'},
-						    $_[1]->{'web_port'});
-	if ($_[0]->{'name'} != $_[1]->{'name'} ||
-	    $_[0]->{'ip'} ne $_[1]->{'ip'} ||
-	    $_[0]->{'ip6'} ne $_[1]->{'ip6'} ||
-	    $_[0]->{'virt6'} != $_[1]->{'virt6'} ||
-	    $_[0]->{'name6'} != $_[1]->{'name6'} ||
-	    $_[0]->{'ssl'} != $_[1]->{'ssl'} ||
-	    $_[0]->{'web_port'} != $_[1]->{'web_port'}) {
+	&obtain_lock_web($d);
+	my ($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
+						    $oldd->{'web_port'});
+	if ($d->{'name'} != $oldd->{'name'} ||
+	    $d->{'ip'} ne $oldd->{'ip'} ||
+	    $d->{'ip6'} ne $oldd->{'ip6'} ||
+	    $d->{'virt6'} != $oldd->{'virt6'} ||
+	    $d->{'name6'} != $oldd->{'name6'} ||
+	    $d->{'ssl'} != $oldd->{'ssl'} ||
+	    $d->{'web_port'} != $oldd->{'web_port'}) {
 		# Name-based hosting mode or IP has changed .. update the
 		# Listen directives, and the virtual host definition
 		&$first_print($text{'save_apache'});
@@ -633,33 +655,33 @@ else {
 			&$second_print($text{'delete_noapache'});
 			goto VIRTFAILED;
 			}
-		local $nvstar = &add_name_virtual($_[0], $conf,
-						  $_[0]->{'web_port'}, 0,
-						  $_[0]->{'ip'});
-		local $nvstar6;
-		if ($_[0]->{'ip6'}) {
+		my $nvstar = &add_name_virtual($d, $conf,
+						  $d->{'web_port'}, 0,
+						  $d->{'ip'});
+		my $nvstar6;
+		if ($d->{'ip6'}) {
 			$nvstar6 = &add_name_virtual(
-				$_[0], $conf, $_[0]->{'web_port'}, 0,
-				"[".$_[0]->{'ip6'}."]");
+				$d, $conf, $d->{'web_port'}, 0,
+				"[".$d->{'ip6'}."]");
 			}
-		&add_listen($_[0], $conf, $_[0]->{'web_port'});
+		&add_listen($d, $conf, $d->{'web_port'});
 
 		# Change the virtualhost IPs
-		local $lref = &read_file_lines($virt->{'file'});
+		my $lref = &read_file_lines($virt->{'file'});
 		$lref->[$virt->{'line'}] =
 			"<VirtualHost ".
-			&get_apache_vhost_ips($_[0], $nvstar, $nvstar6).
+			&get_apache_vhost_ips($d, $nvstar, $nvstar6).
 			">";
 		&flush_file_lines($virt->{'file'});
 
 		undef(@apache::get_config_cache);
-		($virt, $vconf, $conf) = &get_apache_virtual($_[1]->{'dom'},
-						      $_[1]->{'web_port'});
+		($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
+						      $oldd->{'web_port'});
 		$rv++;
 		$need_restart = 1;
 		&$second_print($text{'setup_done'});
 		}
-	if ($_[0]->{'home'} ne $_[1]->{'home'}) {
+	if ($d->{'home'} ne $oldd->{'home'}) {
 		# Home directory has changed .. update any directives that
 		# referred to the old directory
 		&$first_print($text{'save_apache3'});
@@ -667,19 +689,19 @@ else {
 			&$second_print($text{'delete_noapache'});
 			goto VIRTFAILED;
 			}
-		&modify_web_home_directory($_[0], $_[1], $virt, $vconf, $conf);
-		($virt, $vconf, $conf) = &get_apache_virtual($_[1]->{'dom'},
-						      $_[1]->{'web_port'});
+		&modify_web_home_directory($d, $oldd, $virt, $vconf, $conf);
+		($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
+						      $oldd->{'web_port'});
 		$rv++;
-		&find_html_cgi_dirs($_[0]);
+		&find_html_cgi_dirs($d);
 
 		# Re-create wrapper scripts, which contain home
-		if (defined(&create_php_wrappers) && !$_[0]->{'alias'}) {
-			&create_php_wrappers($_[0]);
+		if (defined(&create_php_wrappers) && !$d->{'alias'}) {
+			&create_php_wrappers($d);
 			}
 		&$second_print($text{'setup_done'});
 		}
-	if (!$_[0]->{'subdom'} && $_[1]->{'subdom'}) {
+	if (!$d->{'subdom'} && $oldd->{'subdom'}) {
 		# No longer a sub-domain .. fix up any references to the old
 		# HTML and CGI directories, and log files
 		&$first_print($text{'save_apache11'});
@@ -687,17 +709,17 @@ else {
 			&$second_print($text{'delete_noapache'});
 			goto VIRTFAILED;
 			}
-		local $phsrc = &public_html_dir($_[1]);
-		local $phdst = &public_html_dir($_[0]);
-		local $cgisrc = &cgi_bin_dir($_[1]);
-		local $cgidst = &cgi_bin_dir($_[0]);
-		local $lref = &read_file_lines($virt->{'file'});
-		local $alogsrc = &get_apache_log($_[1]->{'dom'},
-						 $_[1]->{'web_port'}, 0);
-		local $elogsrc = &get_apache_log($_[1]->{'dom'},
-						 $_[1]->{'web_port'}, 1);
-		local $alogdst = &get_apache_template_log($_[0], 0);
-		local $elogdst = &get_apache_template_log($_[0], 1);
+		my $phsrc = &public_html_dir($oldd);
+		my $phdst = &public_html_dir($d);
+		my $cgisrc = &cgi_bin_dir($oldd);
+		my $cgidst = &cgi_bin_dir($d);
+		my $lref = &read_file_lines($virt->{'file'});
+		my $alogsrc = &get_apache_log($oldd->{'dom'},
+						 $oldd->{'web_port'}, 0);
+		my $elogsrc = &get_apache_log($oldd->{'dom'},
+						 $oldd->{'web_port'}, 1);
+		my $alogdst = &get_apache_template_log($d, 0);
+		my $elogdst = &get_apache_template_log($d, 1);
 		for($i=$virt->{'line'}; $i<=$virt->{'eline'}; $i++) {
 			if ($phsrc && $phdst) {
 				$lref->[$i] =~ s/\Q$phsrc\E/$phdst/g;
@@ -714,14 +736,14 @@ else {
 			}
 		&flush_file_lines($virt->{'file'});
 		undef(@apache::get_config_cache);
-		($virt, $vconf, $conf) = &get_apache_virtual($_[1]->{'dom'},
-						      $_[1]->{'web_port'});
-		&setup_apache_logs($_[0], $alogdst, $elogdst);
-		&link_apache_logs($_[0], $alogdst, $elogdst);
+		($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
+						      $oldd->{'web_port'});
+		&setup_apache_logs($d, $alogdst, $elogdst);
+		&link_apache_logs($d, $alogdst, $elogdst);
 		$rv++;
 		&$second_print($text{'setup_done'});
 		}
-	if ($_[0]->{'alias'} && $_[2] && $_[2]->{'dom'} ne $_[3]->{'dom'}) {
+	if ($d->{'alias'} && $alias && $alias->{'dom'} ne $oldalias->{'dom'}) {
 		# This is an alias, and the domain it is aliased to has
 		# changed .. update all Proxy* and Redirect directives
 		&$first_print($text{'save_apache4'});
@@ -729,23 +751,23 @@ else {
 			&$second_print($text{'delete_noapache'});
 			goto VIRTFAILED;
 			}
-		local $lref = &read_file_lines($virt->{'file'});
+		my $lref = &read_file_lines($virt->{'file'});
 		for($i=$virt->{'line'}; $i<=$virt->{'eline'}; $i++) {
 			if ($lref->[$i] =~
 			    /^\s*(Proxy|Redirect\s|RedirectPermanent\s)/) {
-				$lref->[$i] =~ s/$_[3]->{'dom'}/$_[2]->{'dom'}/g;
+				$lref->[$i] =~ s/$oldalias->{'dom'}/$alias->{'dom'}/g;
 				}
 			}
 		&flush_file_lines($virt->{'file'});
 		undef(@apache::get_config_cache);
-		($virt, $vconf, $conf) = &get_apache_virtual($_[1]->{'dom'},
-						      $_[1]->{'web_port'});
+		($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
+						      $oldd->{'web_port'});
 		$rv++;
 		&$second_print($text{'setup_done'});
 		}
-	if ($_[0]->{'proxy_pass_mode'} == 1 &&
-	    $_[1]->{'proxy_pass_mode'} == 1 &&
-	    $_[0]->{'proxy_pass'} ne $_[1]->{'proxy_pass'}) {
+	if ($d->{'proxy_pass_mode'} == 1 &&
+	    $oldd->{'proxy_pass_mode'} == 1 &&
+	    $d->{'proxy_pass'} ne $oldd->{'proxy_pass'}) {
 		# This is a proxying forwarding website and the URL has
 		# changed - update all Proxy* directives
 		&$first_print($text{'save_apache6'});
@@ -753,25 +775,25 @@ else {
 			&$second_print($text{'delete_noapache'});
 			goto VIRTFAILED;
 			}
-		local $lref = &read_file_lines($virt->{'file'});
+		my $lref = &read_file_lines($virt->{'file'});
 		for($i=$virt->{'line'}; $i<=$virt->{'eline'}; $i++) {
 			if ($lref->[$i] =~ /^\s*ProxyPass(Reverse)?\s/) {
-				$lref->[$i] =~ s/$_[1]->{'proxy_pass'}/$_[0]->{'proxy_pass'}/g;
+				$lref->[$i] =~ s/$oldd->{'proxy_pass'}/$d->{'proxy_pass'}/g;
 				}
 			}
 		&flush_file_lines($virt->{'file'});
 		undef(@apache::get_config_cache);
-		($virt, $vconf, $conf) = &get_apache_virtual($_[1]->{'dom'},
-						      $_[1]->{'web_port'});
+		($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
+						      $oldd->{'web_port'});
 		$rv++;
 		&$second_print($text{'setup_done'});
 		}
-	if ($_[0]->{'proxy_pass_mode'} != $_[1]->{'proxy_pass_mode'}) {
+	if ($d->{'proxy_pass_mode'} != $oldd->{'proxy_pass_mode'}) {
 		# Proxy mode has been enabled or disabled .. remove all
 		# ProxyPass / , ProxyPassReverse / and AliasMatch ^/$
 		# directives, and create new ones as appropriate.
-		local $mode = $_[0]->{'proxy_pass_mode'} ||
-			      $_[1]->{'proxy_pass_mode'};
+		my $mode = $d->{'proxy_pass_mode'} ||
+			      $oldd->{'proxy_pass_mode'};
 		&$first_print($mode == 2 ? $text{'save_apache8'}
 					 : $text{'save_apache9'});
 		if (!$virt) {
@@ -780,8 +802,8 @@ else {
 			}
 
 		# Take out old proxy directives and block
-		local $lref = &read_file_lines($virt->{'file'});
-		local @lines = @$lref[$virt->{'line'}+1 .. $virt->{'eline'}-1];
+		my $lref = &read_file_lines($virt->{'file'});
+		my @lines = @$lref[$virt->{'line'}+1 .. $virt->{'eline'}-1];
 		@lines = grep { !/^\s*ProxyPass\s+\/\s/ &&
 				!/^\s*ProxyPassReverse\s+\/\s/ &&
 				!/^\s*AliasMatch\s+\^\/\.\*\$\s/ &&
@@ -796,53 +818,53 @@ else {
 			}
 
 		# Add new directives
-		local @ppdirs = &apache_proxy_directives($_[0]);
+		my @ppdirs = &apache_proxy_directives($d);
 		push(@lines, @ppdirs);
 		splice(@$lref, $virt->{'line'} + 1,
 		       $virt->{'eline'} - $virt->{'line'} - 1, @lines);
 		&flush_file_lines($virt->{'file'});
 		undef(@apache::get_config_cache);
-		($virt, $vconf, $conf) = &get_apache_virtual($_[1]->{'dom'},
-						      $_[1]->{'web_port'});
+		($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
+						      $oldd->{'web_port'});
 		$rv++;
 		&$second_print($text{'setup_done'});
 		}
-	if ($_[0]->{'user'} ne $_[1]->{'user'}) {
+	if ($d->{'user'} ne $oldd->{'user'}) {
 		# Username has changed .. update SuexecUserGroup
 		&$first_print($text{'save_apache7'});
-		&modify_web_user_group($_[0], $_[1], $virt, $vconf, $conf);
+		&modify_web_user_group($d, $oldd, $virt, $vconf, $conf);
 		$rv++;
 		&$second_print($text{'setup_done'});
 
 		# Set owner on log files
-		local $web_user = &get_apache_user($_[0]);
-		local $gid = $web_user && $web_user ne 'none' ? $web_user
-							: $_[0]->{'gid'};
-		local @ldv;
+		my $web_user = &get_apache_user($d);
+		my $gid = $web_user && $web_user ne 'none' ? $web_user
+							: $d->{'gid'};
+		my @ldv;
 		foreach my $ld ("ErrorLog", "TransferLog", "CustomLog") {
 			push(@ldv, &apache::find_directive($ld, $vconf, 1));
 			}
 		foreach my $ldv (@ldv) {
-			if (&safe_domain_file($_[0], $ldv)) {
+			if (&safe_domain_file($d, $ldv)) {
 				&set_ownership_permissions(
-					$_[0]->{'uid'}, $gid, undef, $ldv);
+					$d->{'uid'}, $gid, undef, $ldv);
 				}
 			}
-		&link_apache_logs($_[0]);
+		&link_apache_logs($d);
 
 		# Add the Apache user to the group for the new domain
-		local $tmpl = &get_template($_[0]->{'template'});
+		my $tmpl = &get_template($d->{'template'});
 		if ($tmpl->{'web_user'} ne 'none' && $web_user) {
-			&add_user_to_domain_group($_[0], $web_user,
+			&add_user_to_domain_group($d, $web_user,
 						  'setup_webuser');
 			}
 
 		# Update FPM config file with new username
 		if ($mode eq "fpm") {
-			&create_php_fpm_pool($_[0]);
+			&create_php_fpm_pool($d);
 			}
 		}
-	if ($_[0]->{'dom'} ne $_[1]->{'dom'}) {
+	if ($d->{'dom'} ne $oldd->{'dom'}) {
 		# Domain name has changed .. update ServerName and ServerAlias,
 		# and any log files that contain the domain name
 		&$first_print($text{'save_apache2'});
@@ -850,12 +872,12 @@ else {
 			&$second_print($text{'delete_noapache'});
 			goto VIRTFAILED;
 			}
-		&modify_web_domain($_[0], $_[1], $virt, $vconf, $conf, 1);
+		&modify_web_domain($d, $oldd, $virt, $vconf, $conf, 1);
 		$rv++;
 
 		# If filename contains domain name, rename the Apache .conf file
-		local $newfile = &get_website_file($_[0]);
-		local $oldfile = &get_website_file($_[1]);
+		my $newfile = &get_website_file($d);
+		my $oldfile = &get_website_file($oldd);
 		if ($virt->{'file'} eq $oldfile &&
 		    $newfile ne $oldfile &&
 		    !-r $newfile) {
@@ -864,27 +886,33 @@ else {
 			&apache::create_webfile_link($newfile);
 			undef(@apache::get_config_cache);
 			($virt, $vconf, $conf) = &get_apache_virtual(
-				$_[0]->{'dom'}, $_[0]->{'web_port'});
+				$d->{'dom'}, $d->{'web_port'});
 			}
 
 		# Re-link Apache logs
-		&link_apache_logs($_[0]);
+		&link_apache_logs($d);
 		&$second_print($text{'setup_done'});
+		}
+	if (($d->{'user'} ne $oldd->{'user'} ||
+	     $d->{'dom'} ne $oldd->{'dom'}) && $d->{'fcgiwrap_port'}) {
+		# Re-setup the fcgiwrap server
+		&delete_fcgiwrap_server($oldd);
+		&setup_fcgiwrap_server($d);
 		}
 
 	# If any other rename step fails becuase no <virtualhost> was found,
 	# the code will jump to here.
 	VIRTFAILED:
-	if ($_[0]->{'home'} ne $_[1]->{'home'}) {
+	if ($d->{'home'} ne $oldd->{'home'}) {
 		# Update session dir and upload path in php.ini files
-		local @fixes = (
-		  [ "session.save_path", $_[1]->{'home'}, $_[0]->{'home'}, 1 ],
-		  [ "upload_tmp_dir", $_[1]->{'home'}, $_[0]->{'home'}, 1 ],
+		my @fixes = (
+		  [ "session.save_path", $oldd->{'home'}, $d->{'home'}, 1 ],
+		  [ "upload_tmp_dir", $oldd->{'home'}, $d->{'home'}, 1 ],
 		  );
-		&fix_php_ini_files($_[0], \@fixes);
+		&fix_php_ini_files($d, \@fixes);
 		}
-	&release_lock_web($_[0]);
-	&create_framefwd_file($_[0]);
+	&release_lock_web($d);
+	&create_framefwd_file($d);
 	if ($need_restart && $rv) {
 		# Need a full restart
 		&register_post_action(\&restart_apache, 1);
@@ -921,7 +949,25 @@ else {
 						    $d->{'web_port'});
 	return &text('validate_eweb', "<tt>$d->{'dom'}</tt>") if (!$virt);
 
-	# Check IP addresses
+	# Do overall Apache validation, and check if there's an error in
+	# this domain's block
+	my $err = &apache::test_config();
+	if ($err && $err =~ /\s+on\s+line\s+(\d+)\s+/) {
+		my $lnum = $1;
+		my $svirt;
+		if ($d->{'ssl'}) {
+			($svirt) = &get_apache_virtual($d->{'dom'},
+						       $d->{'web_sslport'});
+			}
+		if ($lnum >= $virt->{'line'} && $lnum <= $virt->{'eline'} ||
+		    ($svirt && $lnum >= $svirt->{'line'} && $lnum <= $svirt->{'eline'})) {
+			$err =~ s/\r?\n/ /g;
+			return &text('validate_ewebconfig',
+				     "<tt>".&html_escape($err)."</tt>");
+			}
+		}
+
+	# Check private IP addresses
 	if ($d->{'virt'}) {
 		local $ipp = $d->{'ip'}.":".$d->{'web_port'};
 		&indexof($ipp, @{$virt->{'words'}}) >= 0 ||
@@ -1245,6 +1291,8 @@ if ($config{'check_apache'}) {
 		return 0;
 		}
 	}
+&apache::format_modifed_config_files()
+	if (defined(&apache::format_modifed_config_files));
 local $apachelock = "$module_config_directory/apache-restart";
 &lock_file($apachelock);
 local $pid = &get_apache_pid();
@@ -1427,6 +1475,10 @@ if ($tmpl->{'web_writelogs'}) {
 			$d = "$1$2 \"|$writelogs_cmd $_[1]->{'id'} $3\"$4";
 			}
 		}
+	}
+if ($tmpl->{'web_http2'} && &supports_http2()) {
+	# Enable HTTPv2 if supported by Apache
+	push(@dirs, "Protocols h2 h2c http/1.1");
 	}
 return @dirs;
 }
@@ -2511,7 +2563,8 @@ if ($config{'web'}) {
 			     $tmpl->{'writelogs'} ? ( "writelogs" ) : ( ),
 			     "html_dir", "html_dir_def", "html_perms",
 			     "alias_mode", "web_port", "web_sslport",
-			     "web_ssi", "web_ssi_suffix", );
+			     "web_ssi", "web_ssi_suffix",
+			     &supports_fcgiwrap() ? ( "fcgiwrap" ) : ( ) );
 	if ($config{'webalizer'}) {
 		push(@webfields, "stats_mode", "stats_dir", "stats_hdir",
 				 "statspass", "statsnoedit");
@@ -2534,7 +2587,7 @@ if ($config{'web'}) {
 		&ui_textarea("web_ssl", join("\n", split(/\t/, $tmpl->{'web_ssl'})),
 			     5, 60));
 
-	# Input for logging via program. Deprecated, so don't show unless enabled
+	# Input for logging via program. Deprecated so don't show unless enabled
 	if ($tmpl->{'web_writelogs'}) {
 		print &ui_table_row(&hlink($text{'newweb_writelogs'},
 					   "template_writelogs"),
@@ -2550,6 +2603,14 @@ if ($config{'web'}) {
 			 [ 1, $text{'newweb_useryes'}." ".
 			      &ui_user_textbox("user", $tmpl->{'web_user'} eq 'none' ?
 							'' : $tmpl->{'web_user'}) ] ]));
+
+	# CGI scripts execution mode
+	if (&supports_fcgiwrap()) {
+		print &ui_table_row(&hlink($text{'tmpl_web_fcgiwrap'}, "template_web_fcgiwrap"),
+			&ui_radio("fcgiwrap", $tmpl->{'web_fcgiwrap'} ? 1 : 0,
+				  [ [ 1, $text{'tmpl_web_fcgiwrap1'} ],
+				    [ 0, $text{'tmpl_web_fcgiwrap0'} ] ]));
+		}
 
 	# HTML sub-directory input
 	print &ui_table_row(&hlink($text{'newweb_htmldir'}, "template_html_dir_def"),
@@ -2673,15 +2734,11 @@ print &ui_table_row(&hlink($text{'newweb_usermin'},
 # Setup Dovecot and Postfix SSL certs
 print &ui_table_row(&hlink($text{'newweb_dovecot'},
 			   "template_web_dovecot_ssl"),
-	&ui_radio("web_dovecot_ssl",
-		  $tmpl->{'web_dovecot_ssl'} ? 1 : 0,
-		  [ [ 1, $text{'yes'} ], [ 0, $text{'no'} ] ]));
+	&ui_yesno_radio("web_dovecot_ssl", $tmpl->{'web_dovecot_ssl'}));
 
 print &ui_table_row(&hlink($text{'newweb_postfix'},
 			   "template_web_postfix_ssl"),
-	&ui_radio("web_postfix_ssl",
-		  $tmpl->{'web_postfix_ssl'} ? 1 : 0,
-		  [ [ 1, $text{'yes'} ], [ 0, $text{'no'} ] ]));
+	&ui_yesno_radio("web_postfix_ssl", $tmpl->{'web_postfix_ssl'}));
 
 # Add redirects for webmail and admin
 print &ui_table_hr();
@@ -2731,6 +2788,10 @@ if ($config{'proxy_pass'} == 2) {
 				join("\n", split(/\t/, $tmpl->{'frame'})),
 				10, 60));
 	}
+
+# Enable HTTP2 for new websites
+print &ui_table_row(&hlink($text{'newweb_http2'}, 'template_web_http2'),
+	&ui_yesno_radio("web_http2", $tmpl->{'web_http2'}));
 }
 
 # parse_template_web(&tmpl)
@@ -2751,6 +2812,9 @@ if ($config{'web'}) {
 		$tmpl->{'web_ssl'} = $in{'web_ssl'};
 		if (defined($in{'writelogs'})) {
 			$tmpl->{'web_writelogs'} = $in{'writelogs'};
+			}
+		if (defined($in{'fcgiwrap'})) {
+			$tmpl->{'web_fcgiwrap'} = $in{'fcgiwrap'};
 			}
 		if ($in{'html_dir_def'}) {
 			delete($tmpl->{'web_html_dir'});
@@ -2872,6 +2936,9 @@ if ($config{'proxy_pass'} == 2) {
 	# Save frame-forwarding settings
 	$tmpl->{'frame'} = &parse_none_def("frame");
 	}
+
+# Save HTTP2 option
+$tmpl->{'web_http2'} = $in{'web_http2'};
 }
 
 # postsave_template_web(&template)
@@ -2901,7 +2968,8 @@ my $mmap = &php_mode_numbers_map();
 my %cannums = map { $mmap->{$_}, 1 } &supported_php_modes();
 $cannums{int($tmpl->{'web_php_suexec'})} = 1;
 my @opts = grep { $cannums{$_->[0]} }
-		([ 0, $text{'phpmode_mod_php'} ],
+		([ 4, $text{'phpmode_none'} ],
+		 [ 0, $text{'phpmode_mod_php'} ],
 	         [ 1, $text{'phpmode_cgi'} ],
 	         [ 2, $text{'phpmode_fcgid'} ],
 	         [ 3, $text{'phpmode_fpm'} ]);
@@ -3617,6 +3685,103 @@ if ($any) {
 	}
 }
 
+# get_domain_supported_http_protocols(&domain)
+# Returns an array ref of possible protocols for a domain's webserver, using the
+# Apache names, or an error message. An empty array ref indicates no support
+# for changing protocols.
+sub get_domain_supported_http_protocols
+{
+my ($d) = @_;
+my $p = &domain_has_website($d);
+if ($p eq 'web') {
+	return &supports_http2() ? [ 'h2', 'h2c', 'http/1.1' ] : [ ];
+	}
+elsif ($p) {
+	return &plugin_call($p, "feature_get_supported_http_protocols", $d);
+	}
+else {
+	return "No website enabled for this domain";
+	}
+}
+
+# get_domain_http_protocols(&domain)
+# Returns an array ref of HTTP protocols currently enabled for a domain, an
+# empty list if none are set, or an error message.
+sub get_domain_http_protocols
+{
+my ($d) = @_;
+my $p = &domain_has_website($d);
+if ($p eq 'web') {
+	my ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $d->{'web_port'});
+	return "No Apache virtualhost found" if (!$virt);
+	my ($prots) = &apache::find_directive("Protocols", $vconf);
+	return [ ] if (!$prots);
+	return [ split(/\s+/, $prots) ];
+	}
+elsif ($p) {
+	return &plugin_call($p, "feature_get_http_protocols", $d);
+	}
+else {
+	return "No website enabled for this domain";
+	}
+}
+
+# get_default_http_protocols(&domain)
+# Returns an array ref of HTTP protocols that will be used if none are set for
+# a domain. If empty, there is no default.
+sub get_default_http_protocols
+{
+my ($d) = @_;
+my $p = &domain_has_website($d);
+if ($p eq 'web') {
+	&require_apache();
+	my $conf = &apache::get_config();
+	my ($prots) = &apache::find_directive("Protocols", $conf);
+	return $prots ? [ split(/\s+/, $prots) ] : [ 'http/1.1' ];
+	}
+elsif ($p) {
+	if (&plugin_defined($p, "feature_default_http_protocols")) {
+		return &plugin_call($p, "feature_default_http_protocols", $d);
+		}
+	else {
+		return [ ];
+		}
+	}
+else {
+	return "No website enabled for this domain";
+	}
+}
+
+# save_domain_http_protocols(&domain, &protocols)
+# Updates the list of supported HTTP protocols, or sets to the default if the
+# protocols list is empty. Returns undef on success or an error message on
+# failure.
+sub save_domain_http_protocols
+{
+my ($d, $prots) = @_;
+my $p = &domain_has_website($d);
+if ($p eq 'web') {
+	my @ports = ( $d->{'web_port'},
+		      $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
+	my @pdirs = ref($prots) && @$prots ? ( join(" ", @$prots) ) : ( );
+	foreach my $p (@ports) {
+		my ($virt, $vconf, $conf) =
+			&get_apache_virtual($d->{'dom'}, $p);
+		return "No Apache virtualhost found" if (!$virt);
+		&apache::save_directive("Protocols", \@pdirs, $vconf, $conf);
+		&flush_file_lines($virt->{'file'}, undef, 1);
+		}
+	&register_post_action(\&restart_apache);
+	return undef;
+	}
+elsif ($p) {
+	return &plugin_call($p, "feature_save_http_protocols", $d, $prots);
+	}
+else {
+	return "No website enabled for this domain";
+	}
+}
+
 # get_suexec_path()
 # Returns the full path to the Apache suexec command, if installed, or undef
 sub get_suexec_path
@@ -3754,6 +3919,40 @@ if ($d) {
 return 1;
 }
 
+# supports_fcgiwrap()
+# Returns 1 if fcgiwrap is supported by Apache on this system
+sub supports_fcgiwrap
+{
+return 0 if (!&has_command("fcgiwrap"));
+&require_apache();
+if ($apache::site{'fullversion'}) {
+	return &compare_versions($apache::site{'fullversion'}, "2.4.26") >= 0;
+	}
+else {
+	return $apache::httpd_modules{'core'} >= 2.426;
+	}
+}
+
+# supports_http2()
+# Returns 1 if HTTPv2 is supported by Apache on this system
+sub supports_http2
+{
+&require_apache();
+my $err;
+if (!$apache::httpd_modules{'mod_http2'}) {
+	$err = "Missing Apache module mod_http2";
+	}
+elsif ($apache::httpd_modules{'mod_prefork'}) {
+	$err = "Incompatible Apache module mod_prefork is enabled";
+	}
+elsif (!$apache::site{'fullversion'} ||
+       &compare_versions($apache::site{'fullversion'}, "2.4.17") < 0) {
+	$err = "Apache must be at least version 2.4.17";
+	}
+my @rv = ($err ? 0 : 1, $err);
+return wantarray ? @rv : $rv[0];
+}
+
 # setup_apache_logs(&domain, [access-log, error-log])
 # Create empty Apache log files for a domain, and set their ownership
 sub setup_apache_logs
@@ -3883,7 +4082,7 @@ local ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $port);
 return ( ) if (!$virt);		# Cannot find our own site?
 local @rv;
 foreach my $v (&apache::find_directive_struct("VirtualHost", $conf)) {
-	if ($v->{'words'}->[0] eq $virt->{'words'}->[0]) {
+	if (&indexof($virt->{'words'}->[0], @{$v->{'words'}}) >= 0) {
 		# Matches IP .. find the domain if we can
 		local $sn = &apache::find_directive("ServerName",
 						    $v->{'members'});
@@ -4720,6 +4919,262 @@ if (!$sn) {
 	$sn = &get_system_hostname();
 	}
 return $sn;
+}
+
+# setup_fcgiwrap_server(&domain)
+# Starts up a fcgiwrap process running as the domain user, and enables it
+# at boot time. Returns an OK flag and the port number selected to listen on.
+sub setup_fcgiwrap_server
+{
+my ($d) =  @_;
+
+# Work out socket file for fcgiwrap
+my $socketdir = "/var/fcgiwrap";
+if (!-d $socketdir) {
+	&make_dir($socketdir, 0777);
+	}
+my $domdir = "$socketdir/$d->{'id'}.sock";
+if (!-d $domdir) {
+	&make_dir($domdir, 0770);
+	}
+my $user = &get_apache_user();
+&set_ownership_permissions($user, $d->{'gid'}, undef, $domdir);
+my $port = "$domdir/socket";
+
+# Get the command
+my ($cmd, $log, $pidfile) = &get_fcgiwrap_server_command($d, $port);
+$cmd || return (0, $text{'fcgid_ecmd'});
+
+# Create init script
+&foreign_require("init");
+my $old_init_mode = $init::init_mode;
+if ($init::init_mode eq "upstart") {
+	$init::init_mode = "init";
+	}
+my $name = &init_script_fcgiwrap_name($d);
+my %cmds_abs = (
+	'echo', &has_command('echo'),
+	'cat', &has_command('cat'),
+	'chmod', &has_command('chmod'),
+	'kill', &has_command('kill'),
+	'sleep', &has_command('sleep'),
+	'fuser', &has_command('fuser'),
+	'rm', &has_command('rm'),
+	);
+if (defined(&init::enable_at_boot_as_user)) {
+	# Init system can run commands as the user
+	&init::enable_at_boot_as_user($name,
+		      "Apache fcgiwrap server for $d->{'dom'}",
+		      "$cmds_abs{'rm'} -f $port ; $cmd >>$log 2>&1 </dev/null & $cmds_abs{'echo'} \$! >$pidfile && sleep 2 && $cmds_abs{'chmod'} 777 $port",
+		      "$cmds_abs{'kill'} `$cmds_abs{'cat'} $pidfile` ; ".
+		      "$cmds_abs{'sleep'} 1 ; ".
+		      "$cmds_abs{'rm'} -f $port",
+		      undef,
+		      { 'fork' => 1,
+			'pidfile' => $pidfile },
+		      $d->{'user'},
+		      );
+	}
+else {
+	# Older Webmin requires use of command_as_user
+	&init::enable_at_boot($name,
+		      "Apache fcgiwrap server for $d->{'dom'}",
+		      &command_as_user($d->{'user'}, 0,
+			"$cmd >>$log 2>&1 </dev/null")." & $cmds_abs{'echo'} \$! >$pidfile && $cmds_abs{'chmod'} +r $pidfile && sleep 2 && $cmds_abs{'chmod'} 777 $port",
+		      &command_as_user($d->{'user'}, 0,
+			"$cmds_abs{'kill'} `$cmds_abs{'cat'} $pidfile`").
+			" ; $cmds_abs{'sleep'} 1".
+			($cmds_abs{'fuser'} ? " ; $cmds_abs{'fuser'} $port | xargs kill"
+					    : "").
+			" ; $cmds_abs{'rm'} -f $port",
+		      undef,
+		      { 'fork' => 1,
+			'pidfile' => $pidfile },
+		      );
+	}
+$init::init_mode = $old_init_mode;
+
+# Launch it, and save the PID
+&init::start_action($name);
+
+return (1, $port);
+}
+
+# delete_fcgiwrap_server(&domain)
+# Shut down the fcgiwrap process, and delete it from starting at boot
+sub delete_fcgiwrap_server
+{
+my ($d) = @_;
+
+# Stop the server
+&foreign_require("init");
+my $name = &init_script_fcgiwrap_name($d);
+&init::stop_action($name);
+
+# Delete init script
+my $old_init_mode = $init::init_mode;
+if ($init::init_mode eq "upstart") {
+        $init::init_mode = "init";
+        }
+&init::disable_at_boot($name);
+&init::delete_at_boot($name);
+$init::init_mode = $old_init_mode;
+
+# Delete socket file, if any
+if ($d->{'fcgiwrap_port'} =~ /^(\/\S+)\/socket$/) {
+	my $domdir = $1;
+	&unlink_file($d->{'fcgiwrap_port'});
+	&unlink_file($domdir);
+	}
+}
+
+# get_fcgiwrap_server_command(&domain, port)
+# Returns a command to run the fcgiwrap server, log file and PID file
+sub get_fcgiwrap_server_command
+{
+my ($d, $port) = @_;
+my $cmd = &has_command("fcgiwrap");
+if ($port =~ /^\//) {
+	$cmd .= " -s unix:".$port;
+	}
+else {
+	$cmd .= " -s tcp:127.0.0.1:".$port;
+	}
+my $log = "$d->{'home'}/logs/fcgiwrap.log";
+my $piddir = "/var/fcgiwrap";
+if (!-d $piddir) {
+	&make_dir($piddir, 0777);
+	}
+my $pidfile = "$piddir/$d->{'id'}.fcgiwrap.pid";
+return ($cmd, $log, $pidfile);
+}
+
+# init_script_fcgiwrap_name(&domain)
+# Returns the name of the init script for the FCGId server
+sub init_script_fcgiwrap_name
+{
+my ($d) = @_;
+my $name = "fcgiwrap-$d->{'dom'}";
+$name =~ s/\./-/g;
+return $name;
+}
+
+# enable_apache_fcgiwrap(&domain)
+# Turn on fcgiwrap for running CGIs for a domain
+sub enable_apache_fcgiwrap
+{
+my ($d) = @_;
+my ($ok, $port) = &setup_fcgiwrap_server($d);
+return $port if (!$ok);
+$d->{'fcgiwrap_port'} = $port;
+my @ports = ( $d->{'web_port'} );
+push(@ports, $d->{'web_sslport'}) if ($d->{'ssl'});
+foreach my $p (@ports) {
+	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $p);
+	next if (!$virt);
+	my @dirs = &apache::find_directive_struct("Directory", $vconf);
+	my $cgid = &cgi_bin_dir($d);
+	my ($dir) = grep { $_->{'words'}->[0] eq $cgid } @dirs;
+	if ($dir) {
+		&apache::save_directive("SetHandler",
+		  [ "proxy:unix:$port|fcgi://localhost" ],
+		  $dir->{'members'}, $conf);
+		&apache::save_directive("ProxyFCGISetEnvIf",
+		  [ "true SCRIPT_FILENAME \"$d->{'home'}%{reqenv:SCRIPT_NAME}\"" ],
+		  $dir->{'members'}, $conf);
+		&flush_file_lines($virt->{'file'});
+		}
+	else {
+		return "$cgid not found";
+		}
+	}
+&register_post_action(\&restart_apache);
+return undef;
+}
+
+# disable_apache_fcgiwrap(&domain)
+# Remove Apache directives for fcgiwrap, and shut down the fcgiwrap server
+sub disable_apache_fcgiwrap
+{
+my ($d) = @_;
+return undef if (!$d->{'fcgiwrap_port'});
+my @ports = ( $d->{'web_port'} );
+push(@ports, $d->{'web_sslport'}) if ($d->{'ssl'});
+my $port = $d->{'fcgiwrap_port'};
+foreach my $p (@ports) {
+        my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $p);
+        next if (!$virt);
+        my @dirs = &apache::find_directive_struct("Directory", $vconf);
+        my $cgid = &cgi_bin_dir($d);
+        my ($dir) = grep { $_->{'words'}->[0] eq $cgid } @dirs;
+	if ($dir) {
+		my @sh = &apache::find_directive("SetHandler", $vconf);
+		@sh = grep { !/proxy:unix:\Q$port\E:/ } @sh;
+		&apache::save_directive("SetHandler", \@sh,
+					$dir->{'members'}, $conf);
+		&apache::save_directive("ProxyFCGISetEnvIf", [],
+					$dir->{'members'}, $conf);
+		&flush_file_lines($virt->{'file'});
+		}
+	}
+&register_post_action(\&restart_apache);
+&delete_fcgiwrap_server($d);
+delete($d->{'fcgiwrap_port'});
+return undef;
+}
+
+# reset_web(&domain)
+# Turn the website feature off and on again, but preserve redirects
+sub reset_web
+{
+my ($d) = @_;
+my $ssl = $d->{'ssl'};
+
+# Save redirects, PHP version, PHP mode and per-directory settings
+my (@redirs, $mode, @dirs);
+if (!$d->{'alias'}) {
+	@redirs = &list_redirects($d);
+	$mode = &get_domain_php_mode($d);
+	@dirs = &list_domain_php_directories($d);
+	}
+
+# Remove the SSL and regular websites
+if ($ssl) {
+	$d->{'ssl'} = 0;
+	&delete_ssl($d);
+	}
+$d->{'web'} = 0;
+$d->{'web_nodeletelogs'} = 1;
+&delete_web($d);
+
+# Recreate the SSL and regular websites
+$d->{'web'} = 1;
+$d->{'web_nodeletelogs'} = 0;
+&setup_web($d);
+if ($ssl) {
+	$d->{'ssl'} = 1;
+	&setup_ssl($d);
+	}
+
+if (!$d->{'alias'}) {
+	# Put back redirects
+	&$first_print($text{'reset_webrestore'});
+	foreach my $r (@redirs) {
+		&create_redirect($d, $r);
+		}
+
+	# Put back PHP mode
+	&save_domain_php_mode($d, $mode);
+
+	# Put back per-domain PHP versions
+	if ($mode ne "none" && $mode ne "mod_php") {
+		foreach my $dir (@dirs) {
+			&save_domain_php_directory($d, $dir->{'dir'},
+						   $dir->{'version'});
+			}
+		}
+	&$first_print($text{'setup_done'});
+	}
 }
 
 $done_feature_script{'web'} = 1;

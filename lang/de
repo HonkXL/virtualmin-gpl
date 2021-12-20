@@ -1412,7 +1412,6 @@ check_webok=Apache ist installiert.
 check_webphpvers=Die folgenden PHP Versionen sind verfügbar : $1
 check_webphpnovers=Keine PHP Versionen wurden auf Ihrem System gefunden!
 check_ftpok=ProFTPd ist installiert.
-check_dnsok=BIND DNS-Server ist installiert und das System ist konfiguriert diesen zu nutzen.
 check_dnsok2=BIND DNS-Server ist installiert.
 check_dnsok3=BIND DNS-Domains werden auf Service-Host gehostet.
 check_dnsmaster=Allerdings ist der Standard-Master-DNS-Server $1 kein Fully Qualified Domain Name.
@@ -1442,8 +1441,6 @@ check_edepwebalizer=Webalizer kann nicht in der <a href='$1'>Modulkonfiguration<
 check_edepssl=SSL kann nicht in der <a href='$1'>Modulkonfiguration</a> von Virtualmin aktiviert werden, wenn Apache nicht installiert ist.
 check_eshell=Die Shell $1 für Nicht-FTP-Benutzer ist nicht in $2 enthalten, welches eventuell den FTP-Zugang möglich macht.
 check_eftpshell=Die Shell $1 für FTP-Benutzer ist nicht in $2 enthalten, welches eventuell den FTP-Zugang unmöglich macht.
-check_enscd=Warnung - der Name Service Caching Daemon (NSCD) läuft auf Ihrem System. Dies verhindert, dass Virtualmin neue Unix Benutzer und Gruppen erstellen kann.
-check_enscd2=Sie können in dem <a href='$1'>Hochfahren und Herunterfahren Aktionen</a> Modul NSCD deaktivieren.
 check_allwebmin=Alle Webmin-Benutzer mit den neuen Einstellungen aktualisieren..
 check_needupdate=Einige der Modul-Konfigurations-Einstellungen steuern auf welche Module Webmin-Benutzer Zugriff haben. Die generelle Konfiguration hat sich geändert. Bitte klicken Sie hier um alle Benutzer mit neuen Berechtigungen auszustatten.
 check_updatenow=Update de Webmin-Benutzer
@@ -1638,7 +1635,6 @@ backup_sshserver=SSH-Server
 backup_s3path=Bucket und Pfad
 backup_path=Datei auf Server
 backup_login=Anmelden als Benutzer
-backup_pass=mit Passwort
 backup_mailfiles2=Inklusive E-Maildateien
 backup_dirlogs=Inklusive Logdateiverzeichnis
 backup_feature_unix=Administrations Benutzerpasswort und Speichergrenzen (Quota)
@@ -2639,7 +2635,6 @@ resel_edefns=Nameserver '$1' ist ungültig
 licence_unlimited=unlimitiert
 licence_goterr=.. ein Problem wurde erkannt : $1
 licence_maxdoms=Ihr System ist für nur $1 Server lizenziert, aber Sie haben $2.
-licence_maxservers=Ihre Seriennummer wird für nur $1 Server lizenziert, wird aber von $2 verwendet.
 licence_changeip=Update nicht korrekte IP-Adressen
 licence_newcert=Generiere neues Zertifikat
 licence_newcsr=Neues Zertifikat anfordern
@@ -2726,7 +2721,6 @@ scripts_softwaremod=Installiere Pakete $1 ..
 scripts_esoftwaremod=.. fehlgeschlagen zu installieren!
 scripts_esoftware=.. das Softwarepaket Webmin-Modul ist nicht installiert!
 scripts_eupdate=.. automatische Modul-Installation ist nicht auf Ihrem System verfügbar.
-scripts_addext=Aktiviere Modul in PHP Konfiguration ..
 scripts_gotmod=.. PHP-Module $1 ist nun verfügbar.
 scripts_nopearmod=Das PHP Pear Modul $1 ist erforderlich, aber Webmins PHP Pear Version ist nicht verfügbar zum installieren - fahre trotzdem fort.
 scripts_nopearcmd=Das PHP Pear Modul $1 ist erforderlich, aber PHP Pear Version $2 ist nicht installiert - fahre trotzdem fort.
@@ -3597,7 +3591,6 @@ upgrade_rpms=Upgrade Virtualmin RPM Pakete : $1
 upgrade_eyumfile=Kein Virtualmin GPL repository wurden in $1 gefunden
 upgrade_update=Aktualisiere verfügbare Pakete von APT ..
 upgrade_debs=Upgrade Virtualmin Debian Pakete : $1
-upgrade_yumclear=Lösche YUM Caches ..
 upgrade_etypematch=Upgraden ist nicht möglich, da der Installation Virtualmin Typ <tt>$1</tt> ist, aber Webmin <tt>$2</tt> ist
 
 maillog_title=Such Mail Log
@@ -3654,6 +3647,7 @@ bwreset_eday=Fehlender oder ungültiger Tag im Monat
 bwreset_eyear=Fehlendes oder ungültiges Jahr
 bwreset_edate=Ungültiges Startdatum
 bwreset_efeatures=Keine Features ausgewählt
+
 bwreset_edoms=Keine Virtuellen Server gewählt
 bwreset_done=.. fertig.
 bwreset_running=Bandbreiten-Statistiken aus Log-Dateien neu generieren ..

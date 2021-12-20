@@ -9,6 +9,9 @@ $d = &get_domain($in{'dom'});
 &error_setup($text{'dbname_err'});
 $oldd = { %$d };
 
+# Do the change
+&ui_print_unbuffered_header(&domain_in($d), $text{'dbname_title'}, "");
+
 # Validate inputs
 foreach $f (@database_features) {
 	if (defined($in{$f}) && !$in{$f."_def"}) {
@@ -26,8 +29,6 @@ foreach $f (@database_features) {
 		}
 	}
 
-# Do the change
-&ui_print_unbuffered_header(&domain_in($d), $text{'dbname_title'}, "");
 
 # Run the before command
 &set_domain_envs($oldd, "DBNAME_DOMAIN", $d);

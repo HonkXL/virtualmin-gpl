@@ -1702,7 +1702,6 @@ check_ewebconfig=Er zijn Apache configuratie fouten gevonden : $1
 check_ewebphp=Apache configuratie file $1 bevat $2 regels waarmee PHP werkt met domein eigenaar permissies. Deze regels moeten worden verwijdert.
 check_webok=Apache is geinstalleerd
 check_ftpok=ProFTPd is geinstalleerd.
-check_dnsok=BIND DNS server is geinstalleerd , en het systeem is geconfigureerd om het te gebruiken.
 check_dnsok2=BIND DNS server is geinstalleerd.
 check_dnsok3=BIND DNS domeinen worden gehost op een service server.
 check_dnsmaster=Echter, de standaard master DNS server $1 is geen volledige gekwalificeerde domein naam.
@@ -1730,11 +1729,9 @@ check_edepwebalizer=Webalizer kan niet worden aangezet in de Virtualmin <a href=
 check_edepssl=SSL kan niet worden aangezet in de Virtualmin <a href='$1'>module configuratie</a> of het moet in Apache aanstaan.
 check_eshell=Shell $1 voor niet-FTP gebruikers is toegevoegd in $2, waardoor er FTP toegang is.
 check_eftpshell=Shell $1 voor FTP gebruikers is niet toegevoegd in $1, waardoor er geen FTP toegang zal zijn.
-check_enscd=Waarschuwing - de naam service caching daemon (NSCD) is aan het werk op uw systeem. Dit kan ervoor zorgen dat Virtualmin niet fatsoenlijk nieuwe Unix gebruikers en groepen kan aanmaken.
 check_emysqlsync=Synchronisatie tussen Unix en MySQL gebruikers is aangezet in de <a href='$1'>MySQL Database</a> module. Dit is niet nodig omdat Virtualmin zelf MySQL accounts aanmaakt voor domein eigenaren indien dit nodig is en moet daarom worden uitgezet.
 check_equotasync=Standaard harddisk quota's voor nieuwe gebruikers zijn aangezet op de filesystemen : $1. Dit is niet nodig omdat Virtualmin zelf quota's zet voor nieuwe gebruikers, en moeten dus worden uitgezet in de <a href='$2'>Harddisk Quota's</a> module.
 check_egquotasync=Standaard harddisk quota's voor nieuwe groepen zijn aangezet op de filesystemen : $1. Dit is niet nodig omdat Virtualmin zelf quota's insteld voor nieuwe domeinen, en moeten dus worden uitgezet in de <a href='$2'>Disk Quota's</a> module.
-check_enscd2=U kunt de NSCD uitschakelen in de <a href='$1'>Opstart en Afsluit Acties</a> module.
 check_allwebmin=Updaten van alle Webmin gebruikers met de nieuwe instellingen ..
 check_allresel=Updaten van alle resellers met de nieuwe instellingen ..
 check_needupdate=Sommige van de module configuratie instellingen die effect hebben op de modules waar Webmin gebruikers toegang hebben zijn verandert. Klik op de knop hieronder om alle gebruikers te updaten met de nieuwe permissies.
@@ -2063,7 +2060,6 @@ backup_ftpserver=FTP server
 backup_sshserver=SSH server
 backup_path=File op server
 backup_login=Login als gebruiker
-backup_pass=met wachtwoord
 backup_mailfiles2=Inclusief email files
 backup_dirlogs=Inclusief log directory
 backup_feature_unix=Administratie gebruikers wachtwoord, quota en Cron taken
@@ -2219,7 +2215,6 @@ backup_started2=.. gestart.
 backup_epurge=Ontbrekende of niet-numeriek aantal dagen om oude backups te verwijderen
 backup_epurgetime=Verwijderen van oude backups word alleen ondersteund wanneer een op datum gebaseerde bestemming word gebruikt en <b>strftime toevoegingen</b> aanstaat
 backup_epurgepath=Verwijderen van oude backups kan niet worden aangezet, omdat de basis directory niet kon worden uitgepakt vanaf het opgegeven pad. Het opgegeven pad moet lijken op <tt>/backup/virtualmin-%d-%m-%Y</tt>, en mag nooit een top-niveau directory zijn.
-backup_purging2=Backup's verwijderen van $2 ouder dan $1 dagen ..
 backup_purgenobase=.. kon niet uitwerken wat de basis directory is van de bestemming
 backup_deletingdir=Verwijderen van directory $1, welke $2 dagen oud is ..
 backup_deletingfile=Verwijderen van file $1, welke $2 dagen oud is ..
@@ -3275,7 +3270,6 @@ resel_max_bw=Maximum bandbreedte limieten voor alle servers
 resel_features=Toegestane opties voor servers
 resel_err=Mislukt om reseller op te slaan
 resel_ename=Ontbrekende of ongeldige reseller naam - alleen letters, nummers en karakters - , _ en punten zijn toegestaan
-reset_ewebmin=De login naam <tt>webmin</tt> is gereserveerd
 resel_emax_quota=Ontbrekende of ongeldig maximum quota
 resel_emax_doms=Ontbrekende of ongeldig maximum aantal servers
 resel_emax_aliasdoms=Ontbrekende of ongeldig maximum aantal alias servers
@@ -3331,7 +3325,6 @@ licence_unlimited=Ongelimiteerd
 licence_goterr=.. er is een probleem ontdekt : $1
 licence_ecannot=U bent niet bevoegd om de Virtualmin licentie te controleren
 licence_maxdoms=Uw systeem licentie is geldig voor $1 servers, maar u heeft er $2.
-licence_maxservers=Uw serie nummer is alleen geldig voor $1 servers, maar is gebruikt voor $2.
 
 config_deftheme=Globale Webmin standaard
 config_oldtheme=Oude Webmin thema
@@ -3435,7 +3428,6 @@ scripts_esoftwaremod=.. mislukt om te installeren!
 scripts_esoftware=.. het Software Pakket Webmin module is niet geinstalleerd!
 scripts_eupdate=.. de automatisch module installatie is niet beschikbaar op uw systeem.
 scripts_einstallmod=Module is niet beschikbaar zelfs niet na de installatie!
-scripts_addext=Module aanzetten in de PHP configuratie ..
 scripts_gotmod=.. PHP module $1 is nu beschikbaar.
 scripts_nopearmod=De PHP Pear modules $1 zijn nodig, maar Webmin's Pear module is niet beschikbaar om hem te installeren - toch doorgaan?
 scripts_nopearcmd=De PHP Pear modules $1 zijn nodig, maar Pear voor PHP versie $2 is niet geinstalleerd - toch doorgaan?
@@ -3464,6 +3456,7 @@ scripts_epythoninst=.. de automatisch Python module installatie mislukte
 scripts_installgem=Installeren van Ruby Gems pakket ..
 scripts_mmax=(op zijn hoogst $1)
 scripts_sitelink=Meer informatie voor gebruik van dit script kunt u vinden op <a href='$1' target=_new>$1</a>.
+
 scripts_userpass=Het aanvankelijke administratie inlog was $1 met het wachtwoord $2.
 scripts_useronly=De aanvankelijke administratie inlog was $1.
 scripts_passonly=Het aanvankelijke administratie wachtwoord was $1.
@@ -4650,13 +4643,11 @@ upgrade_complete=Uw systeem is succesvol ge-upgrade naar Virtualmin Pro !
 upgrade_theme=Aanzetten theme <i>$1</i> ..
 upgrade_esharedroot=Uw Webmin root directory $1 is gedeeld tussen meerdere systemen - module updates zijn niet toegestaan
 upgrade_eyumrepo=Virtualmin is geinstalleerd vanuit een RPM, maar gebruikt niet de Virtualmin GPL repository. Upgraden is niet mogelijk op dit moment.
-upgrade_eyumlist=Het $1 RPM pakker is niet gevonden in de lijst met beschikbare pakketten voor YUM. Misschien is 1 van de huidige repositories niet bereikbaar?
 upgrade_edebrepo=Virtualmin is geinstalleerd van een Debian pakket, maar gebruikt niet de Virtualmin GPL repository. Upgraden is niet mogelijk op dit moment.
 upgrade_rpms=Upgraden van Virtualmin RPM pakketten : $1
 upgrade_eyumfile=Geen Virtualmin GPL repository is gevonden in $1
 upgrade_update=Beschikbare pakketten updaten vanaf APT ..
 upgrade_debs=Upgraden van Virtualmin Debian pakketten : $1
-upgrade_yumclear=Opruimen van YUM cache ..
 upgrade_etypematch=Upgraden is niet mogelijk als het Virtualmin installatie type <tt>$1</tt> is en Webmin <tt>$2</tt> is
 
 maillog_title=Zoek Email Log
@@ -4734,6 +4725,7 @@ bwreset_edate=Ongeldige start datum
 bwreset_efeatures=Geen extra's geselecteerd
 bwreset_edoms=Geen virtuele servers geselecteerd
 bwreset_doing=Reset de bandbreedte tellers voor de geselecteerde servers en extra's ..
+
 bwreset_done=.. klaar.
 bwreset_running=Herberekenen van de bandbreedte statistieken van de log files ..
 bwreset_started=.. proces is gestart. Dit kan diverse uren duren indien u gekozen heeft om het proces opnieuw te doen voor de logs over een langere periode of grote aantallen domeinen.
@@ -5032,7 +5024,6 @@ mail_err=Mislukt om de email instelling op te slaan
 mail_ebcc=Ontbrekend of ongeldig BCC adres
 mail_bccing=Alles BCC-en en verstuur de email naar $1 ..
 mail_nobcc=De BCC uitschakelen van versturen email
-mail_bccoff=Laat BCC-en bij email versturen uitgeschakeld.
 
 nf_header=De volgende nieuwe opties zijn beschikbaar in $1 ..
 nf_desc=Optie

@@ -91,7 +91,7 @@ if (!$field || $field eq 'db') {
 # Check for user clash
 if (!$d->{'parent'} && (!$field || $field eq 'user')) {
 	foreach my $od (@doms) {
-		if (&postgres_user($d) eq &postgres_user($od)) {
+		if (!$od->{'parent'} && &postgres_user($d) eq &postgres_user($od)) {
 			return &text('setup_epostgresuserdom',
 				     &postgres_user($d),
 				     &show_domain_name($od));
@@ -221,6 +221,9 @@ if ($pass ne $oldpass && !$_[0]->{'parent'} &&
 			"alter user ".&postgres_uquote($olduser).
 			" with password $pass");
 		&$second_print($text{'setup_done'});
+
+		# Update all installed scripts database password which are using PostgreSQL
+		&update_all_installed_scripts_database_credentials($_[0], $_[1], 'dbpass', &postgres_pass($_[0]), 'postgres');
 		}
 	else {
 		&$second_print($text{'save_nopostgres'});
@@ -282,6 +285,9 @@ elsif ($user ne $olduser && !$_[0]->{'parent'}) {
 				" with password $pass");
 			$_[0]->{'postgres_user'} = $user;
 			&$second_print($text{'setup_done'});
+
+			# Update all installed scripts database username which are using PostgreSQL
+			&update_all_installed_scripts_database_credentials($_[0], $_[1], 'dbuser', $user, 'postgres');
 			}
 		else {
 			# Cannot
@@ -1141,6 +1147,22 @@ if (&postgresql::get_postgresql_version() < 9.5) {
 	push(@rv, "nocreateuser");
 	}
 return join(" ", @rv);
+}
+
+# check_reset_postgres(&domain)
+# Returns an error message if the reset would delete any databases
+sub check_reset_postgres
+{
+my ($d) = @_;
+return undef if ($d->{'alias'});
+my @dbs = &domain_databases($d, ["postgres"]);
+return undef if (!@dbs);
+if (@dbs == 1 && $dbs[0]->{'name'} eq $d->{'db'}) {
+	# There is just one default database .. but is it empty?
+	my @tables = &list_postgres_tables($d, $dbs[0]->{'name'});
+	return undef if (!@tables);
+	}
+return &text('reset_epostgres', join(" ", map { $_->{'name'} } @dbs));
 }
 
 $done_feature_script{'postgres'} = 1;

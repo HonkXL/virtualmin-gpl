@@ -47,14 +47,19 @@ setup_eslashpass=Passord som inneholder et tilbakeskritt støttes ikke av MySQL
 setup_etmpl=Du har ikke lov til å bruke den valgte malen
 
 setup_ewebphpmode=PHP-utførelsesmodus $1 ble valgt, men støttes ikke på dette systemet!
+setup_fcgiwrap=Starter fcgiwrap server ..
+setup_efcgiwrap=.. mislyktes : $1
 setup_esslusermin=Usermin er ikke installert
 setup_bind_cloud=Legger til ny DNS-sone ved hjelp av $1 ..
+setup_ebind_ecloud=.. støttes ikke : $1
 setup_ebind_cloud=.. mislyktes : $1 
 setup_ebindslaveip2=.. kunne ikke bestemme IP-adressen til dette systemet. Du må angi IP-adressen i BIND DNS Server-modulen.
 setup_ebindslaveip=.. kunne ikke bestemme en gyldig IP-adresse for dette systemet (fikk $1). Du må angi IP-adressen i BIND DNS Server-modulen.
 setup_enodnssecalg=.. DNSSEC-algoritme ikke valgt i servermal
 setup_usermindown=.. kjører foreløpig ikke
+setup_failed=.. mislyktes
 setup_logrotatealready=.. allerede aktivert for loggfil $1 
+setup_econtenting=.. klarte ikke å lage innledende innhold : $1
 setup_sshkey1=Genererer SSH private og offentlige nøkler ..
 setup_sshkey2=Autoriserer SSH offentlig nøkkel ..
 setup_esshkeydir=Virtuell server trenger en katalog og Unix-bruker
@@ -72,6 +77,12 @@ setup_ednscloudexists=Valgt DNS-skyleverandør eksisterer ikke!
 setup_ednscloudstate=DNS-skyleverandør $1 er ikke klar til bruk
 setup_ednscloudclash=Kunne ikke se etter sammenstøt med DNS-skyleverandør $1 : $2 
 setup_dnscloudclash=DNS-sone eksisterer allerede hos skyleverandør $1 
+setup_mail_smtpcloud=Konfigurerer leverandør av sky -e -post $1 ..
+setup_mail_nosmtpcloud=.. leverandør eksisterer ikke!
+setup_mail_esmtpcloud=.. mislyktes : $1
+setup_overquota=Virtuell serveropprettelse mislyktes på grunn av mangel på kvote : $1
+setup_overgroupquota=Serverkvoten for $2 av $1 er nådd
+setup_overuserquota=Domeneeierkvoten for $2 av $1 er nådd
 
 users_indomsub=$1 brukere i domene $2 ($3 inkludert underdomener)
 users_mailclient=Vis innstillinger for e-postklient
@@ -121,10 +132,22 @@ delete_remoteuser=.. bevarer brukeren på fjernsystemet $1
 delete_homepreserve=.. bevare katalog montert fra $1 
 delete_ednssubof=Virtuell server $1 kan ikke slettes, siden den inneholder DNS-poster for server $2 
 delete_esslnoips=Ingen SSL-sertifikater funnet for domene
+delete_mail_smtpcloud=Fjerner leverandør av skymelding $1 ..
 
 save_bind_cloud=Endrer DNS-domenenavn på $1 ..
 save_bind_ecloud=.. mislyktes : $1 
+save_ssl12=Ber om Let's Encrypt-sertifikat for det nye domenet ..
+save_essl12=.. forespørsel mislyktes : $1
 save_statussslcert=Endrer e-post i SSL-sertifikatstatusovervåker ..
+save_installed_scripts_dbuser_mysql=Oppdaterer MySQL-brukernavn for installerte skript ..
+save_installed_scripts_dbpass_mysql=Oppdaterer MySQL-passord for installerte skript ..
+save_installed_scripts_db_mysql=Oppdaterer MySQL-databasenavn for installerte skript ..
+save_installed_scripts_dbuser_postgres=Oppdaterer PostgreSQL-brukernavn for installerte skript ..
+save_installed_scripts_dbpass_postgres=Oppdaterer PostgreSQL-passord for installerte skript ..
+save_installed_scripts_db_postgres=Oppdaterer PostgreSQL-databasenavn for installerte skript ..
+save_installed_scripts_err_file=.. mislyktes: kan ikke lese <tt>$1</tt> filen
+save_installed_scripts_err_file_lines=.. mislyktes: kunne ikke finne strenger som skal erstattes i filen <tt>$1</tt>
+save_installed_scripts_done=.. gjort for <tt>$1</tt> fil
 
 acl_migrate=Kan migrere sikkerhetskopier?
 
@@ -133,6 +156,7 @@ import_egroupclash=Den virtuelle serveren $1 bruker allerede det valgte gruppena
 
 disable_bind_cloud=Deaktiverer DNS-sone på $1 ..
 disable_ebind_cloud=.. mislyktes : $1 
+disable_ebind_cloud2=.. støttes ikke av skyleverandør
 
 enable_bind_cloud=Aktiverer DNS-sone på $1 ..
 enable_ebind_cloud=.. mislyktes : $1 
@@ -142,12 +166,18 @@ newweb_sslprotos_def=Ikke tillat alle usikre protokoller
 newweb_esslproto=SSL-protokoller må være som SSLv3 eller TLSv1.1, eventuelt forhåndsinnstilt av en -
 newweb_dovecot=Vil du konfigurere Dovecot til å bruke samme SSL-sertifikat?
 newweb_postfix=Vil du konfigurere Postfix til å bruke samme SSL-sertifikat?
+newweb_http2=Vil du aktivere HTTP2-protokollen for nye nettsteder?
 
 feature_ssl=Apache SSL-nettsted
 
 check_ewebdefphpmode2=PHP-utførelsesmodus $1 ble valgt i standardmal, men støttes ikke på dette systemet. Endre standard til $2.
-check_webnosuexec=SuExec kan ikke brukes til å kjøre PHP-skript i CGI- eller FCGId-modus : $1 
+check_suexecok2=CGI -skript kan kjøres ved hjelp av SuExec eller fcgiwrap.
+check_suexecok=CGI -skript kan kjøres med SuExec.
+check_fcgiwrapok=CGI -skript kan kjøres ved hjelp av fcgiwrap.
+check_http2ok=Apache støtter HTTPv2 på systemet ditt.
+check_http2err=Apache støtter ikke HTTPv2 : $1
 check_webphpmodes=Følgende PHP-utførelsesmodus er tilgjengelig : $1 
+check_ewebphpmodes=Ingen PHP-utførelsesmoduser er tilgjengelige!
 check_webphpversinis=PHP-versjoner har endret seg til $1 siden sist sjekk. Regenererer eventuelle manglende php.ini-filer.
 check_webphpfpm=PHP-FPM versjon $1 -støtte er tilgjengelig på dette systemet.
 check_webphpnofpm=PHP-FPM-støtte ble ikke oppdaget : $1 
@@ -161,20 +191,16 @@ check_webadminfixed=Ikke-støttet $1 -direktiv ble fjernet fra $2 Apache-nettste
 check_etlsa=TLSA DNS-poster kan ikke opprettes på systemet ditt: $1.
 check_tlsaok=TLSA DNS-poster vil bli lagt til nye domener.
 check_mysqlok=MySQL $1 er installert og kjører.
-check_eresolv2=Virtualmin er konfigurert til å konfigurere DNS-soner, men dette systemet er ikke konfigurert for å bruke seg selv som en DNS-server. Enten legg til 127.0.0.1 til $1, slå av BIND-funksjonen på $2-siden, eller deaktiver alternativet <b>Kontroller resolv.conf</b> på Virtualmin-konfigurasjonssiden.
-check_eresolv3=Det ser ut til at DHCP blir brukt til å dynamisk konfigurere nettverksgrensesnittene, noe som kan føre til at DNS-serverne blir satt ut basert på innstillinger levert av DHCP-serveren. Det anbefales sterkt å bruke en statisk IP-adresse med Virtualmin.
-check_eresolvlist=liste over DNS-servere
-check_dnsmissing=Systemet ser ikke ut til å ha noen DNS-servere konfigurert. Standard oppførselen til å bruke en lokal DNS-server bør imidlertid fortsatt fungere.
 check_jailkitok=Chroot-fengsler er tilgjengelige på dette systemet
 check_jailkiterr=Chroot-fengsler er ikke tilgjengelige : $1 
-check_eyumrepofile=Konfigurasjonsfilen $1 for Virtualmin YUM finnes ikke!
-check_yumrepook=Virtualmin YUM-arkivet er konfigurert riktig
-check_yumrepowrong=Konfigurasjonsfilen $1 for Virtualmin YUM-arkivet inneholder feil serienummer på lisensnøkkelen!
-check_yumrepomissing=Konfigurasjonsfilen $1 for Virtualmin APT refererer ikke til software.virtualmin.com!
+check_eyumrepofile=Konfigurasjonsfilen til Virtualmin -depotet $1 finnes ikke!
+check_yumrepook=Virtualmin -depotet er konfigurert riktig
+check_yumrepowrong=Konfigurasjonsfilen til Virtualmin -depotet $1 inneholder feil serienummer på lisensnøkkelen!
+check_yumrepomissing=Konfigurasjonsfilen til Virtualmin -depotet $1 refererer ikke til software.virtualmin.com!
 check_eaptrepofile=APT-repository konfigurasjonsfilen $1 eksisterer ikke!
 check_aptrepook=Virtualmin APT-repository er riktig konfigurert
 check_aptrepowrong=APT-arkivets konfigurasjonsfil $1 inneholder feil serienummer på lisensnøkkelen!
-check_aptrepomissing=Arkivets konfigurasjonsfil $1 refererer ikke til software.virtualmin.com!
+check_aptrepomissing=Konfigurasjonsfilen Virtualmin APT -depot $1 refererer ikke til software.virtualmin.com!
 
 check_eqmailldap=Qmail+LDAP-støtte er fjernet i Virtualmin 6.00
 
@@ -188,6 +214,7 @@ log_mail_domain=Endrede e-postinnstillinger for server $1
 log_proxy_domain=Endret proxyer for server $1 
 log_kill_scheds=Stoppet $1 planlagte sikkerhetskopier
 log_copycert_proftpd=Kopiert SSL-sertifikat til ProFTPD
+log_copycert_all=Kopierte SSL -sertifikat til alle tjenester
 log_retention=Oppdaterte innstillinger for oppretting av postkasse
 log_wizard=Install Wizard trinn : $1 
 log_save_cloud=Oppdatert leverandør av sikkerhetskopier av sky $1 
@@ -218,6 +245,8 @@ backup_gcpath=Bøtte og sti
 backup_dbpath=Dropbox-sti
 backup_bbpath=Backblaze-bane
 backup_webminserver=Webmin-server
+backup_pass2=Logg inn med passord
+backup_pass3=Eller SSH -nøkkelfil
 backup_dirhomes2=Ta med <tt>$1</tt> katalog
 backup_nicewebmin=$1 på Webmin-server $2 
 backup_nicego=Google-mappen $1 
@@ -237,6 +266,8 @@ backup_edbpath2=Dropbox-banen kan ikke starte eller avslutte med en skråstrek
 backup_ebbpath=Mangler Backblaze-bane
 backup_ebbpath2=Backblaze-banen kan ikke starte eller ende med en skråstrek
 backup_einconly=Det kan ikke opprettes en trinnvis planlagt sikkerhetskopi med mindre du har konfigurert minst en full sikkerhetskopi
+backup_donepurge=Sikkerhetskopieringen er fullført, men slettingen mislyktes. Endelig størrelse var $1.
+backup_purgesubject=Fullført sikkerhetskopiering av Virtualmin på $1 til $2, men sletting mislyktes
 backup_upload7=Laster opp arkiv til Google Cloud Storage ..
 backup_upload8=Laster opp arkiv til Dropbox ..
 backup_upload9=Laster opp arkiv til Webmin-server $1 ..
@@ -249,6 +280,7 @@ backup_efeatureeval=.. sikkerhetskopi av $1 mislyktes : $2
 backup_ekilllock=En sikkerhetskopi til samme destinasjon med PID $1 er avsluttet
 backup_edesturl=Sikkerhetskopiedestinasjon $1 er ugyldig : $2 
 backup_eownergone=Eierdomenet eksisterer ikke lenger!
+backup_purging3=Sletter sikkerhetskopier fra $2 som matcher $3 eldre enn $1 dager ..
 backup_purgedtime=.. fant $1 sikkerhetskopier, men ingen var gamle nok
 backup_purgeegcbuckets=.. kunne ikke registrere Google-bøtter : $1 
 backup_purgeefiles3=.. kunne ikke registrere Google Cloud Storage-filer : $1 
@@ -262,6 +294,8 @@ restore_contents=Kontrollerer innholdet i sikkerhetskopien ..
 restore_gotcontents2=.. fant $1 virtuelle servere og $2 globale virtualmin-innstillinger
 restore_gotcontents=.. fant $1 virtuelle servere
 
+restore_zipcmd=.. dekomprimeringskommando $1 er ikke installert
+restore_ezipcmd=Dekompresjonskommando $1 er ikke installert
 restore_erecreate=.. oppretting av manglende server mislyktes : $1 
 restore_disabledomain=Deaktiver virtuell server $1 på nytt.
 restore_downloadgc=Laster ned arkiv fra Google Cloud Storage ..
@@ -289,7 +323,7 @@ limits_jail=Chroot fengsel domene Unix bruker?
 limits_ejailon=Kunne ikke aktivere chroot fengsel : $1 
 limits_ejailoff=Kunne ikke deaktivere chroot fengsel : $1 
 
-rename_ednssub=Følgende DNS-underdomener bruker denne serverens sonefil : $1 
+rename_dnssub=Flytter DNS-domener til sine egne sonefiler ..
 rename_eparentuser=Brukernavnet kan bare endres for servere på toppnivå
 
 cert_hasnossl=Advarsel - denne virtuelle serveren har ikke et SSL-nettsted aktivert ennå. Ethvert SSL-sertifikat kan bare brukes til andre tjenester.
@@ -302,6 +336,10 @@ cert_expiring=Utløper om $1 dager
 cert_future=$1 dager til utløpet
 cert_remove=Slett SSL-sertifikat
 cert_removedesc=Siden SSL-sertifikatet til denne virtuelle serveren ikke er i bruk, kan det slettes permanent ved å klikke på denne knappen.
+cert_copyall=Kopier SSL -sertifikat til tjenester
+cert_copyalldesc=Bruk dette SSL -sertifikatet for forespørsler til dette domenet i $1
+cert_copyall2=Angi som standard servicesertifikat
+cert_copyall2desc=Bruk dette SSL -sertifikatet som standard i $1
 cert_svcs=Brukt av tjenester
 cert_ecerts=Sertifikatet inneholder ingen BEGIN/END-blokker
 cert_eoutside=Sertifikatet inneholder en END-blokk uten samsvarende BEGIN
@@ -318,6 +356,11 @@ cert_already_postfix_dom=Postfix (vert $1)
 cert_already_dovecot_ip=Dovecot (IP $1)
 cert_already_dovecot_dom=Dovecot (vert $1)
 cert_already_proftpd=proftpd
+cert_service_webmin=Webmin
+cert_service_usermin=Usermin
+cert_service_postfix=Postfix
+cert_service_dovecot=Dovecot
+cert_service_proftpd=ProFTPD
 cert_copymsg=Knappene nedenfor kopierer dette domenets SSL-sertifikat som standard for den valgte tjenesten. Dette vil bli brukt hvis ingen per-domene eller per-IP sertifikat er konfigurert.
 cert_fcopy=Kopier til ProFTPD
 cert_fcopydesc=Bruk dette sertifikatet i ProFTPD for SSL-beskyttede FTP-tilkoblinger av klienter.
@@ -342,15 +385,6 @@ cert_letsmonths=$1 måneder
 cert_lets_success=Siste vellykkede fornyelse
 cert_lets_failure=Siste mislykkede fornyelse
 cert_lets_freason=Fornyelse mislyktes pga
-cert_desc9=På denne siden kan du velge om SSL-forespørsler til Webmin, Usermin og andre servere skal bruke SSL-sertifikatet. Dette kan konfigureres for forespørsler til serverens IP eller domenenavn, eller settes som standard for alle SSL-tilkoblinger som ikke har et spesifikt sertifikat konfigurert.
-cert_webminsvc=Webmin domenesertifikat aktivert?
-cert_userminsvc=Usermin domenesertifikat aktivert?
-cert_postfixsvc=Postfix IP-sertifikat aktivert?
-cert_dovecotsvc=Dovecot domain sertifikat aktivert?
-cert_peripheader=Domeneservicesertifikater
-cert_webminsvcdef=Nei (bruk standardsertifikat)
-cert_webminsvcdom=Ja (for forespørsler til $1)
-cert_webminsvcip=Ja (for forespørsler til $1 og $2)
 cert_eperiperr=Kunne ikke lagre servicesertifikater
 cert_eperipinst=Tjeneste $1 er ikke installert
 cert_eperipfail=Tjeneste $1 mislyktes
@@ -361,6 +395,9 @@ newtmpl_name1=Innstillinger for sub-servere
 tmpl_exclude=Kataloger å ekskludere fra sikkerhetskopier
 tmpl_exdirs=Oppførte kataloger ..
 tmpl_web_ssl=Ekstra direktiver for SSL nettsteder
+tmpl_web_fcgiwrap=Kjør CGI -skript med
+tmpl_web_fcgiwrap1=Fcgiwrap server
+tmpl_web_fcgiwrap0=SuExec hvis mulig, fcgiwrap ellers
 tmpl_logrotate_shared=Vil du dele logrotatkonfigurasjon med alle domener?
 tmpl_logrotate_shared0=Nei (Apache starter på nytt etter hvert domene)
 tmpl_logrotate_shared1=Ja (Apache starter bare én gang på nytt)
@@ -368,6 +405,8 @@ tmpl_dnsmx=Vertsnavn for MX-post
 tmpl_dnsmxauto=Standard (<tt>e-post. ${DOM}</tt>)
 tmpl_dnsnone=Ingen ekstra poster
 tmpl_jail=Chroot fengsel nytt domene Unix brukere?
+tmpl_mail_cloud=Standard leverandør av levering av sky -e -post
+tmpl_mail_cloud_local=& lt; Ingen - lever direkte & gt;
 tmpl_owners_none=Ingen eiere
 tmpl_dnsindom=Opprette NS-poster i serverens domene?
 
@@ -427,6 +466,7 @@ resel_unix=Opprette FTP/SSH-konto for forhandler?
 resel_from=Fra adresse for e-post fra forhandler
 resel_fromdef=Samme som ovenfor
 resel_max_topdoms=Maksimum servere på toppnivå
+resel_ewebmin=Påloggingsnavnet <tt>webmin</tt> er reservert
 resel_emax_topdoms=Manglende eller ugyldig maksimum antall toppnivå-servere
 resel_eclash2=En unix-bruker med samme navn eksisterer allerede
 resel_migrate=Kan migrere sikkerhetskopier?
@@ -437,17 +477,25 @@ resel_ebefore=Før modifikasjonskommandoen mislyktes : $1
 licence_ok2=.. lisensen er <i>gyldig</i>. Den er gyldig for $1 Virtualmin-domener, og for bruk på $2 -systemer.
 licence_ok3=.. lisensen er <i>gyldig</i>. Den er gyldig for $1 Virtualmin-domener, og for bruk på $2 -systemer til $3.
 licence_goterr2=.. ugyldig utløpsdato : $1 
+licence_maxservers2=Serienummeret ditt $3 er lisensiert for bare $1 server, men brukes på $2.
+licence_maxwarn=Med mindre dette serienummeret brukes midlertidig for å migrere til en ny server, må du kjøpe en tilleggslisens på <a target=_blank href='$1'>$2</a> for å forhindre brudd på tjenestereglene og unngå tidlig avslutning av eksisterende lisens.
 licence_xfsreboot=Systemet ditt må startes på nytt for å aktivere XFS-kvoter i rotfilsystemet. Inntil dette er gjort, vil Virtualmin ikke oppdage kvoter som aktive, og det vil være umulig å anvende grenser for diskbruk på virtuelle servere eller brukere.
 licence_xfsrebootok=Starte på nytt nå
 
 scripts_emissing=Manus eksisterer ikke!
 scripts_ephpvers2=Dette skriptet kan ikke installeres, da ingen PHP-versjoner ble funnet
+scripts_uerr=Kunne ikke avinstallere skriptet
 scripts_idb2=Bruker database med tabellprefiks
 scripts_idbtbpref=med bordprefiks
 scripts_deregistering=Avregistrerer nå $1 versjon $2 ..
 scripts_cats=kategorier
+scripts_phpmodinst=Installere modul fra programvarepakker ..
+scripts_phpmoddone=.. installert modul fra pakke $1
+scripts_phpmodfailed=.. klarte ikke å installere modulen fra $1 mulige pakker
 scripts_passmode4=Opprinnelig passord for skript
+scripts_idbneed_link=, som kan aktiveres på <a href='$1'>$2</a> siden
 scripts_iphpneed=PHP er deaktivert for denne virtuelle serveren
+scripts_iphpnover=Det ble ikke funnet noen PHP -versjon for denne virtuelle serveren
 scripts_iphpfullver=PHP-versjon $1 eller nyere kreves, men denne virtuelle serveren bruker versjon $2 
 scripts_iphpmaxver=PHP-versjon under $1 kreves, men denne virtuelle serveren bruker versjon $2 
 scripts_abandoned2=Dette skriptet støttes ikke lenger og vil ikke motta sikkerhetsoppdateringer.
@@ -456,6 +504,18 @@ scripts_discontinued=Utgått
 scripts_can=Tilgjengelig i
 scripts_gpl_to_pro=Nå bare tilgjengelig i Pro
 scripts_gpl_to_pro_upgrade=Oppgradering for dette skriptet er nå bare tilgjengelig i Pro
+
+scripts_gpl_pro_tip=Pro -funksjon
+scripts_gpl_pro_tip_hide=Takk for advarselen
+scripts_gpl_pro_tip_hide2=Takk, jeg skal tenke på det
+scripts_gpl_pro_tip_and=og
+scripts_gpl_pro_tip_enroll=Vennligst vurder å kjøpe <a target=_blank href='$1'>Virtualmin Pro</a>-lisens for å støtte utviklingen og låse opp denne og mange andre kule funksjoner.
+scripts_gpl_pro_tip_list_scripts=Det er flere installasjonsskript tilgjengelig!
+scripts_gpl_pro_tip_enroll_list_scripts=Vurder å kjøpe <a target=_blank href='$1'>Virtualmin Pro</a> lisens for å støtte utviklingen og låse opp alle installasjonsskript som er oppført nedenfor.
+scripts_gpl_pro_tip_clouds=Støtte for $1-leverandører er også tilgjengelig!
+scripts_gpl_pro_tip_title_dashboard=Skaff deg Virtualmin Pro
+scripts_gpl_pro_tip_enroll_dashboard=Vennligst vurder å kjøpe <a target=_blank href='$1'>Virtualmin Pro</a>-lisens for å støtte utviklingen av webhotellets kontrollpanel du elsker og låse opp mange kule funksjoner.
+scripts_gpl_pro_tip_dashboard=Visste du at Virtualmin Pro har mange flotte funksjoner som ikke er inkludert i GPL -versjonen?
 
 sysinfo_python=Python-versjon
 sysinfo_pythonpath=Sti til Python
@@ -511,7 +571,15 @@ newmysqls_einuse=En server som brukes av $1 domener kan ikke fjernes
 move_desc3=Denne siden lar deg endre destinasjonen til en alias-server, slik at all tilgang til Internett eller e-post blir videresendt til det nylig valgte domenet.
 move_target2=Nytt aliasmål
 
+newvalidate_tabsreset=Tilbakestill funksjoner
 newvalidate_subservers=Fikser du også under-servere?
+newvalidate_desc4=ADVARSEL! Denne siden kan brukes til å tilbakestille funksjonstilstanden for en valgt virtuell server. Dette kan føre til at innstillinger går tapt som en del av prosessen med å returnere funksjoner til en kjent god tilstand.
+newvalidate_header4=Alternativer for tilbakestilling av funksjoner
+newvalidate_reset=Tilbakestill nå
+newvalidate_resetdom=Virtuell server som skal tilbakestilles
+newvalidate_resetfeats=Funksjoner for å tilbakestille
+newvalidate_resetskip=Vil du fortsette selv om innstillingene går tapt?
+newvalidate_resetonoff=Fullt tilbakestilt ved å slå funksjoner på og av?
 
 validate_esslfile=SSL $1 -fil er ikke gyldig : $2 
 validate_euserhome=Administrasjonsbruker $1 har hjemmekatalog $3, men den skal være $2 
@@ -520,6 +588,8 @@ validate_ednsa6=DNS-sone har ingen AAAA-poster
 validate_ednsns2=DNS-sone har ingen NS-poster
 validate_ednsns=NS-post $1 kan ikke løses til en IP-adresse
 validate_ednsip6=DNS-posten $1 løser seg til IPv6-adressen $2 i stedet for den virtuelle serverens IPv6-adresse $3 
+validate_ecloud=DNS -domenet ble ikke funnet på skyleverandøren $1
+validate_ewebconfig=Det ble funnet en feil i den virtuelle vertskonfigurasjonen : $1
 validate_ewebphpconfig=PHP-konfigurasjonsfeil ble funnet i versjon $1 : $2 
 validate_ewebphpfpmport=PHP FPM-konfigurasjonsfeil funnet : $1 
 validate_ewebroot=Apache DocumentRoot er ikke satt til HTML-katalog $1 
@@ -566,6 +636,10 @@ phpmode_deldir=Fjerner PHP-katalogen $1 ..
 phpmode_edeldir=.. primær katalog kan ikke fjernes!
 phpmode_adddir=Legger til PHP-katalog $1 på versjon $2 ..
 phpmode_savedir=Oppdaterer PHP-katalogen $1 til versjon $2 ..
+phpmode_http2=Vil du aktivere støtte for HTTP2-protokollen?
+phpmode_http2on=Aktiverer HTTP2 ..
+phpmode_http2off=Deaktiverer HTTP2 ..
+phpmode_http2def=Bruker standard HTTP2-modus..
 
 website_header=Nettstedsalternativer
 
@@ -581,6 +655,7 @@ spf_dpct=Prosentandel av meldinger som skal brukes
 spf_delrecs=Slette $1 DNS-poster ..
 spf_addrecs=Legger til $1 DNS-poster ..
 spf_ttl=Setter standard TTL til $1 ..
+spf_ettlsupport=.. støttes ikke av DNS -leverandør
 spf_enablednssec=Oppretter DNSSEC nøkkel og poster ..
 spf_disablednssec=Fjerner DNSSEC-poster ..
 spf_ednssecsupport=.. DNSSEC kan ikke administreres for dette domenet
@@ -589,6 +664,15 @@ spf_disabletlsa=Fjerner TLSA-poster ..
 spf_etlsa=.. støttes ikke på dette systemet : $1 
 spf_synctlsa=Oppdaterer TLSA-poster ..
 spf_esynctlsa=.. ingen funnet for dette domenet
+spf_enablesub=Flytter DNS -poster til foreldresonen ..
+spf_enablesubalready=.. allerede der
+spf_eenablesub=.. mislyktes : $1
+spf_cloud=Hosting for DNS -poster
+spf_disablesub=Flytter DNS -poster fra foreldresonen ..
+spf_dnscloud=Flytter DNS -poster til skyleverandør $1 ..
+spf_dnslocal=Flytter DNS -poster til lokal hosting ..
+spf_eclouddns=.. mislyktes : $1
+spf_ecloud=Kunne ikke oppdatere DNS -vert : $1
 
 s3_emodule2=Perl-modulen $1 som trengs for å kommunisere med Amazons S3-tjeneste, kunne ikke lastes : $2 
 s3_emodule3=Perl-modulene $1 eller $2 som trengs for å kommunisere med Amazons S3-tjeneste er ikke installert
@@ -599,6 +683,8 @@ dynip_external=Eksternt manus ..
 dynip_none=Ikke oppdater noen tjeneste
 
 upgrade_epackages=Fant ingen pakker å installere!
+upgrade_eyumlist=$1 RPM -pakken ble ikke funnet i listen over tilgjengelige pakker fra depotet. Kanskje en av de nåværende depotene dine ikke fungerer?
+upgrade_yumclear=Rydder lagringsbuffer ..
 
 exclude_dbs=Databaser og tabeller du kan hoppe over
 exclude_dbdesc=Skriv inn en <tt>database</tt> navn eller <tt>database.table</tt> på hver linje.
@@ -620,6 +706,11 @@ mail_nothing=Ingen endringer ble gjort!
 mail_ecloudid=Det må spesifiseres en ID for det valgte skypostfilteret
 mail_url=Gjeldende URL-adresse for filtreringsleverandører
 mail_mx=Nåværende MX-poster
+mail_smtp_cloud=Nettskyleverandør av postlevering
+mail_smtp_local=&lt;Ingen - lever direkte fra dette systemet&gt;
+mail_smtp_cloudoff=Fjerner sky-SMTP-leverandør $1 ..
+mail_smtp_cloudon=Konfigurerer sky-SMTP-leverandør $1 ..
+mail_smtp_cloudfailed=.. mislyktes : $1
 
 sched_allplan=På plan $1 
 sched_allplans=På $1 planer
@@ -718,6 +809,29 @@ retention_folders0=Alle brukermapper
 retention_folders1=Bare innboksen
 retention_desc=Denne siden lar deg Virtualmin slette gamle e-postmeldinger automatisk fra postkassene til domeneeiere og e-postbrukere.
 
+smtpclouds_title=Leverandører av Cloud Mail
+smtpclouds_tmpl=Standard SMTP -leverandør for nye domener kan angis på siden <a href='$1'>servermal</a>.
+smtpclouds_ecannot=Du har ikke tillatelse til å redigere leverandører av levering av sky -e -post
+smtpclouds_return=leverandører av leveranser til skypost
+
+smtpcloud_eaws=Kommandoen <tt>aws</tt> er nødvendig for å bruke Amazons SES -tjeneste
+smtpcloud_ses_location=Standard API -plassering
+smtpcloud_ses_longdesc=Legitimasjonen på denne siden finner du på siden Sikkerhetsopplysninger for kontoen din på <a href=https://console.aws.amazon.com/ target=_blank>AWS -konsollen</a>.
+smtpcloud_header=Alternativer for levering av e -post
+smtpcloud_provider=Leverandørens navn på e -post
+smtpcloud_url=Leverandørens nettsted for e -post
+smtpcloud_eaws_dns=Amazon SES trenger en DNS -sone for å kunne aktivere nye domener
+smtpcloud_epostfix=Amazon SES kan ikke konfigureres med mindre Postfix er installert
+smtpcloud_esmtpuser=Kunne ikke konvertere SES hemmelige nøkkel til SMTP -passord
+smtpcloud_egetver=Kunne ikke få Amazon SES -bekreftelsesstatus : $1
+smtpcloud_evaltok=Amazon SES -verifisering er ikke fullført. Du må opprette en DNS TXT -post med navnet $2 med verdien $1.
+smtpcloud_evaltok2=Amazon SES -verifisering returnerte ingen informasjon for dette domenet!
+smtpcloud_egetquota=Kunne ikke hente Amazon SES-kvote : $1
+smtpcloud_esandbox=Amazon SES-kontoen din er fortsatt i sandkassemodus, og kan derfor bare sende e-post til bekreftede domener.
+smtpcloud_ses_sandbox=SES produksjonstilstand
+smtpcloud_ses_inprod=Produksjon klar
+smtpcloud_ses_insandbox=I SES Sandbox - postlevering er begrenset til <a href='$1' target=_blank>kontoen din er oppgradert</a>.
+
 provision_nolimit=ubegrenset
 
 records_valuespf=Avsender er tillatt fra spesifikasjonen
@@ -791,6 +905,7 @@ cloud_header=Alternativer for leverandør av skylagring
 cloud_provider=Tilbyderens navn
 cloud_url=Leverandørens nettsted
 cloud_es3_endpoint=S3-kompatibel server må være et gyldig vertsnavn
+cloud_es3_endport=S3 -kompatibel serverport må være et nummer
 cloud_es3_chunk=Last opp delestørrelse må være et positivt tall
 cloud_egone=Ukjent leverandør av skylagring!
 cloud_rs_user=Rackspace-brukernavn
@@ -809,6 +924,7 @@ cloud_google_project=Prosjekt-ID
 cloud_google_location=Plassering for nye bøtter
 cloud_google_oauth=OAuth2-kode fra Google
 cloud_google_token=OAuth2-token fra Google
+cloud_s3_longdesc=Legitimasjonen på denne siden finner du på siden Sikkerhetsopplysninger for kontoen din på <a href=https://console.aws.amazon.com/ target=_blank>AWS -konsollen</a>.
 cloud_google_longdesc=Innstillingene på denne siden leveres av Google når du gir API-tilgang til prosjektet ditt på <a href=https://console.developers.google.com/apis/credentials target=_blank>Google APIs Console</a> -siden, under <b>APIer og autentisering</b> -> <b>legitimasjon</b>.
 cloud_dropbox_longdesc=Før du kan ta sikkerhetskopi til Dropbox, må du først <a href=http://www.virtualmin.com/dropbox-referral target=_blank>opprette en konto</a> på nettstedet deres hvis du ikke allerede har en.
 cloud_bb_longdesc=Før du kan sikkerhetskopiere til Backblaze, må du først <a href=https://backblaze.com/ target=_blank>opprette en konto</a>, og deretter aktivere <b>B2 Cloud Storage</b> på <b>Mine innstillinger</b> side. Deretter må du generere en applikasjonsnøkkel med alle funksjoner på siden <b>App-nøkler</b>.
@@ -948,6 +1064,8 @@ letsencrypt_title=Be om sertifikat
 letsencrypt_doing2=Be om et sertifikat for $1 fra Let's Encrypt ..
 letsencrypt_failed=.. forespørsel mislyktes : $1 
 letsencrypt_done=.. forespørselen var vellykket!
+letsencrypt_evalid=.. domenevalidering mislyktes
+letsencrypt_econnect=.. tilkoblingskontroll mislyktes
 letsencrypt_renew=Forny automatisk sertifikatet?
 letsencrypt_erenew=Manglende eller ikke-numeriske måneder før fornyelse
 letsencrypt_sfailed=La oss kryptere sertifikatfornyelse mislyktes!
@@ -1086,9 +1204,40 @@ dnscloud_url=DNS-leverandørens nettsted
 dnscloud_users=Brukt av virtuelle servere
 dnscloud_nousers=Ingen enda
 dnscloud_route53_location=Standard soneplassering
+dnscloud_route53_longdesc=Legitimasjonen på denne siden finner du på siden Sikkerhetsopplysninger for kontoen din på <a href=https://console.aws.amazon.com/ target=_blank>AWS -konsollen</a>.
 dnscloud_err=Kunne ikke lagre sky DNS-leverandør
 dnscloud_egone=Leverandør eksisterer ikke!
 dnscloud_eawscreds=AWS-legitimasjon er ikke gyldig
 dnscloud_clear=Slett legitimasjon
 
+dnscloud_cloudflare_email=Cloudflare -kontoadresse
+dnscloud_cloudflare_apikey=Cloudflare API -nøkkel
+dnscloud_caccount=Bruker konto $1
+dnscloud_cloudflare_longdesc=Innstillingene på denne siden finner du på <a target=_blank href=https://dash.cloudflare.com/profile/api-tokens>API-tokens</a> -siden i Cloudflare-oversikten.
+dnscloud_cloudflare_eemail=Manglende eller ugyldig e-postadresse
+dnscloud_cloudflare_eapikey=Heksidecimal API-nøkkel mangler eller er ugyldig
+dnscloud_cloudflare_ecreds=Cloudflare -legitimasjon ble ikke akseptert : $1
+dnscloud_cloudflare_esfx=Domenet $1 er ikke under en offentlig toppdommer
+dnscloud_cloudflare_esfx2=Domenet $1 kan bare være ett nivå under toppdomenet $2
+dnscloud_cloudflare_ens=Kunne ikke lete opp NS -poster : $1
+dnscloud_cloudflare_ens2=Ingen NS -poster ble funnet for $1. Cloudflare krever at DNS -domener registreres først.
+
 install_mod_perl_link=Bruk siden <a href='$1'>Perl Modules</a> i Webmin for å installere den
+
+reset_edns=DNS-poster vil gå tapt : $1
+reset_emysql=MySQL-databaser vil bli slettet : $1
+reset_epostgres=PostgreSQL-databaser vil bli slettet : $1
+reset_webrestore=Gjenoppretter omdirigeringer og PHP-innstillinger ..
+reset_unix=Tilbakestiller Unix-bruker og -gruppe ..
+reset_eunixuser=.. bruker $1 eksisterer ikke!
+reset_eunixgroup=.. gruppe $1 eksisterer ikke!
+reset_err=Kunne ikke tilbakestille funksjoner
+reset_title=Tilbakestille funksjoner
+reset_edom=Virtuell server kan ikke tilbakestilles
+reset_efeatures=Ingen funksjoner å tilbakestille er valgt
+reset_efeatures2=Ingen gyldige funksjoner å tilbakestille er valgt
+reset_enoreset=$1 kan ikke tilbakestilles
+reset_doing=Tilbakestiller $1 ..
+reset_iwarning=.. ignorerer advarsel : $1
+reset_swarning=.. hoppe advarsel  : $1
+reset_dataloss=.. tilbakestilling vil føre til tap av data : $1

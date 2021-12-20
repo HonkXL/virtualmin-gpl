@@ -2899,7 +2899,8 @@ if ($in{"dns_mode"} != 1) {
 	local @ns = split(/\n+/, $in{'dnsns'});
 	foreach my $n (@ns) {
 		&check_ipaddress($n) && &error(&text('newdns_ensip', $n));
-		&to_ipaddress($n) || &error(&text('newdns_enshost', $n));
+		&to_ipaddress($n) || &to_ip6address($n) ||
+			&error(&text('newdns_enshost', $n));
 		}
 	$tmpl->{'dns_ns'} = join(" ", @ns);
 	$tmpl->{'dns_prins'} = $in{'dnsprins'};
@@ -3045,6 +3046,41 @@ if ($bump) {
 else {
 	&after_records_change($d);
 	}
+}
+
+# update_smtpcloud_spf(&domain, [old-cloud])
+# Update the SPF record for a domain's DNS cloud
+sub update_smtpcloud_spf
+{
+my ($d, $oldcloud) = @_;
+my $newcloud = $d->{'smtp_cloud'};
+my $spf = &get_domain_spf($d);
+return 0 if (!$spf);
+if ($oldcloud) {
+	# Remove SPF options for old cloud
+	my $sfunc = "smtpcloud_".$oldcloud."_get_spf";
+	my @oldspf = defined(&$sfunc) ? &$sfunc($d) : ( );
+	foreach my $s (@oldspf) {
+		my ($n, $v) = split(/:/, $s);
+		$n .= ":";
+		if ($spf->{$n}) {
+			$spf->{$n} = [ grep { $_ ne $v } @{$s->{$n}} ];
+			}
+		}
+	}
+if ($newcloud) {
+	# Add SPF options for new cloud
+	my $sfunc = "smtpcloud_".$newcloud."_get_spf";
+	my @newspf = defined(&$sfunc) ? &$sfunc($d) : ( );
+	foreach my $s (@newspf) {
+		my ($n, $v) = split(/:/, $s);
+		$n .= ":";
+		my @vals = $spf->{$n} ? @{$spf->{$n}} : ( );
+		@vals = &unique(@vals, $v);
+		$spf->{$n} = \@vals;
+		}
+	}
+&save_domain_spf($d, $spf);
 }
 
 # is_domain_spf_enabled(&domain)
@@ -3364,6 +3400,22 @@ if ($d->{'ip6'} && $d->{'ip6'} ne $defip6) {
 	push(@{$spf->{'ip6:'}}, $d->{'ip6'});
 	}
 $spf->{'all'} = $tmpl->{'dns_spfall'} + 1;
+
+# Add SPF records for DNS cloud
+my $cloud = $d->{'smtp_cloud'};
+if ($cloud) {
+	my $sfunc = "smtpcloud_".$cloud."_get_spf";
+	if (defined(&$sfunc)) {
+		my @newspf = &$sfunc($d);
+		foreach my $s (@newspf) {
+			my ($n, $v) = split(/:/, $s);
+			$n .= ":";
+			my @vals = $spf->{$n} ? @{$spf->{$n}} : ( );
+			@vals = &unique(@vals, $v);
+			$spf->{$n} = \@vals;
+			}
+		}
+	}
 return $spf;
 }
 
@@ -4410,12 +4462,14 @@ push(@r, @{$r->{'values'}}) if ($val);
 return join("/", @r);
 }
 
-# modify_dns_cloud(&domain, cloud-name)
+# modify_dns_cloud(&domain, cloud-name|"local"|"services")
 # Update the Cloud DNS provider for a domain, while preserving records
 sub modify_dns_cloud
 {
 my ($d, $cloud) = @_;
-return undef if ($d->{'dns_cloud'} eq $cloud);
+my $oldcloud = $d->{'dns_cloud'} ? $d->{'dns_cloud'} :
+	       $d->{'provision_dns'} ? 'services' : 'local';
+return undef if ($oldcloud eq $cloud);
 
 # Is the cloud provider working?
 if ($cloud ne "local") {
@@ -4555,6 +4609,42 @@ my ($d) = @_;
 return 1 if ($d->{'provision_dns'} || !$d->{'dns_cloud'});
 my ($c) = grep { $_->{'name'} eq $d->{'dns_cloud'} } &list_dns_clouds();
 return $c && $c->{'defttl'};
+}
+
+# check_reset_dns(&domain)
+# Check for non-standard DNS records
+sub check_reset_dns
+{
+my ($d) = @_;
+return undef if ($d->{'alias'});
+
+# Get the default set of records
+my $temp = &transname();
+local $bind8::config{'auto_chroot'} = undef;
+local $bind8::config{'chroot'} = undef;
+&create_standard_records($temp, $d, $d->{'dns_ip'} || $d->{'ip'});
+my $defrecs = [ &bind8::read_zone_file($temp, $d->{'dom'}) ];
+
+# Compare with the actual records
+my $recs = [ &get_domain_dns_records($d) ];
+return undef if (!@$recs);
+my @doomed;
+foreach my $r (@$recs) {
+	next if (&is_dnssec_record($r));
+	next if (!$r->{'name'} || !$r->{'type'});
+	my ($dr) = grep { $_->{'name'} eq $r->{'name'} &&
+			  $_->{'type'} eq $r->{'type'} } @$defrecs;
+	if (!$dr) {
+		my $n = $r->{'name'};
+		$n =~ s/\.\Q$d->{'dom'}\E\.//;
+		push(@doomed, "$n ($r->{'type'})");
+		}
+	}
+
+if (@doomed) {
+	return &text('reset_edns', join(", ", @doomed));
+	}
+return undef;
 }
 
 $done_feature_script{'dns'} = 1;

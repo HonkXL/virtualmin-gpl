@@ -156,6 +156,7 @@ local $rv = { 'name' => $name,
 	      'source' => $sfiles[0]->[3],
 	      'depends_func' => "script_${name}_depends",
 	      'dbs_func' => "script_${name}_dbs",
+	      'db_conn_desc_func' => "script_${name}_db_conn_desc",
 	      'params_func' => "script_${name}_params",
 	      'parse_func' => "script_${name}_parse",
 	      'check_func' => "script_${name}_check",
@@ -654,6 +655,166 @@ else {
 	}
 }
 
+# get_script_database_credentials(&domain, &script-opts)
+# Returns database credentials for a given script under certain domain
+sub get_script_database_credentials
+{
+my ($d, $opts) = @_;
+my ($sdbtype, $sdbname) = split(/_/, $opts->{'db'}, 2);
+my $sdbhost = &get_database_host($sdbtype, $d);
+my $sdbuser = $sdbtype eq "mysql" ? &mysql_user($d) : &postgres_user($d);
+my $sdbpass = $sdbtype eq "mysql" ? &mysql_pass($d) : &postgres_pass($d, 1);
+return ($sdbhost, $sdbtype, $sdbname, $sdbuser, $sdbpass);
+}
+
+# update_all_installed_scripts_database_credentials(&domain, &olddomain, option-record-type, option-record-value, database-type)
+# Updates script's given database related setting option (db-username, db-password, db-name)
+# with a new value for all installed scripts under the given virtual server, considering database type,
+# in case installed script supports it (uses database).
+sub update_all_installed_scripts_database_credentials
+{
+my ($d, $oldd, $type, $value, $dbtype) = @_;
+my @domain_scripts = &list_domain_scripts($d);
+my ($printed_type, @printed_name);
+foreach my $script (@domain_scripts) {
+	my $sname = $script->{'name'};
+	my $sdata = &get_script($sname);
+	my $sproject = $script->{'opts'}->{'project'};
+	my $db_conn_desc = $sdata->{'db_conn_desc_func'};
+	my ($sdbtype) = split(/_/, $script->{'opts'}->{'db'}, 2);
+	my $sdir = $script->{'opts'}->{'dir'};
+	my ($dhome, $olddhome) = ($d->{'home'}, $oldd->{'home'});
+	if ($dhome ne $olddhome) {
+		$sdir =~ s/^\Q$olddhome\E/$dhome/;
+		}
+	if (defined(&$db_conn_desc) && $dbtype eq $sdbtype) {
+		# Check if a script has a description sub
+		$db_conn_desc = &{$db_conn_desc};
+		if (ref($db_conn_desc)) {
+			&$first_print($text{"save_installed_scripts_${type}_${dbtype}"}) if (!$printed_type++);
+			# Extract script config file(s) to operate on
+			my @script_config_files = keys %{$db_conn_desc};
+			my $script_config_files_count = scalar(@script_config_files);
+			my $script_config_file_count;
+			foreach my $script_config_file (@script_config_files) {
+				my $script_config_types = $db_conn_desc->{$script_config_file};
+				if (ref($script_config_types)) {
+					# Check if described type in a script file equals the one from the caller
+					my ($config_type_current) = grep {$_ eq $type} keys %{$script_config_types};
+					if ($config_type_current) {
+						&$indent_print() if(!$script_config_file_count++);
+						&$first_print("$sdata->{'desc'} ..") if (!$printed_name[$sdata->{'desc'}]), push(@printed_name, $sdata->{'desc'});
+						my $script_options_to_update = $script_config_types->{$config_type_current};
+						my ($replace_target, $replace_with, $value_func, @value_func_params, $script_option_multi, %options_multi);
+						foreach my $script_option (keys %{$script_options_to_update}) {
+							# Parse repalce
+							if ($script_option eq 'replace') {
+								$replace_target = $script_options_to_update->{$script_option}->[0];
+								$replace_with = $script_options_to_update->{$script_option}->[1];
+								}
+							# Parse optional function to run on the replacement
+							if ($script_option eq 'func') {
+								$value_func = $script_options_to_update->{$script_option};
+								}
+							# Parse optional function params
+							if ($script_option eq 'func_params') {
+								@value_func_params = split(',', $script_options_to_update->{$script_option});
+								}
+							# Check if multi params must be replaced (complex replacement)
+							if ($script_option eq 'multi') {
+								$script_option_multi++;
+								}
+							}
+
+						# Pass new value through optional function if defined
+						if (defined(&$value_func)) {
+							$value = &$value_func($value, @value_func_params);
+						}
+						
+						# Prepare substitution for complex replacement for multiple
+						# options by getting other credentials from current config
+						if ($script_option_multi) {
+							my ($sdbhost, $sdbtype, $sdbname, $sdbuser, $sdbpass) =
+							    &get_script_database_credentials($d, $script->{'opts'});
+							%options_multi = ('sdbhost' => $sdbhost,
+							                  'sdbtype' => $sdbtype,
+							                  'sdbname' => $sdbname,
+							                  'sdbuser' => $sdbuser,
+							                  'sdbpass' => $sdbpass
+							                 );
+							}
+
+						# Construct simple replacement based on type
+						else {
+							$replace_with =~ s/\$\$s$type/$value/;
+							}
+
+						# Run substitution if target and replacement are fine
+						my ($error, $success);
+
+						# Config file to run replacements on
+						my $script_config_file_path = "$sdir/$script_config_file";
+
+						# If script project is set, change config file path accordingly
+						if ($sproject) {
+							if (-r "$sdir/$sproject/$sproject/$script_config_file") {
+								$script_config_file_path = "$sdir/$sproject/$sproject/$script_config_file";
+								}
+							elsif (-r "$sdir/$sproject/$script_config_file") {
+								$script_config_file_path = "$sdir/$sproject/$script_config_file";
+								}
+							}
+						if (-r $script_config_file_path) {
+							my $script_config_file_lines = read_file_lines_as_domain_user($d, $script_config_file_path);
+							if ($replace_target && $replace_with) {
+								foreach my $config_file_line (@{$script_config_file_lines}) {
+									if ($config_file_line =~ /(?<spaces>\s*)(?<replace_target>$replace_target)/) {
+										if ($script_option_multi) {
+											# Construct replacement first
+											foreach my $option_multi (keys %options_multi) {
+												# Substitute with new value
+												my $option_multi_value = $options_multi{$option_multi};
+												if ($option_multi eq "s$type") {
+													$option_multi_value = $value;
+													}
+												$replace_with =~ s/\$\$$option_multi/$option_multi_value/;
+												}
+											# Perform complex replacement (multi)
+											$config_file_line = "$+{spaces}$+{replace_target}$replace_with";
+											}
+										else {
+											# Perform simple replacement
+											$config_file_line = "$+{spaces}$replace_with";
+											}
+										$success++;
+										}
+									}
+								}
+							flush_file_lines_as_domain_user($d, $script_config_file_path);
+							if ($success) {
+								$success = 
+									$script_config_files_count > 1 ?
+									   &text('save_installed_scripts_done', $script_config_file) :
+									   $text{'setup_done'};
+								}
+							else {
+								$error = &text('save_installed_scripts_err_file_lines', $script_config_file);
+								}
+						}
+						else {
+							$error = &text('save_installed_scripts_err_file', $script_config_file);
+							}
+						&$first_print($error || $success);
+						&$outdent_print() if($script_config_file_count == $script_config_files_count);
+						}
+					}
+				}
+			}
+		}
+	}
+&$second_print($text{"setup_done"}) if ($printed_type);
+}
+
 # setup_web_for_php(&domain, &script, php-version)
 # Update a virtual server's web config to add any PHP settings from the template
 sub setup_web_for_php
@@ -789,7 +950,7 @@ if ($mode eq "fpm") {
 				$diff eq '+' && &php_value_diff($ov, $v) < 0 ||
 				$diff eq '-' && &php_value_diff($ov, $v) > 0;
 		if ($change) {
-			&save_php_fpm_ini_value($d, $n, $v);
+			&save_php_fpm_ini_value($d, $n, $v, 1);
 			}
 		}
 	}
@@ -998,6 +1159,7 @@ foreach my $m (@mods) {
 	local $opt = &indexof($m, @optmods) >= 0 ? 1 : 0;
 	&$first_print(&text($opt ? 'scripts_optmod' : 'scripts_needmod',
 			    "<tt>$m</tt>"));
+	&$indent_print();
 
 	# Find the php.ini file
 	&foreign_require("phpini");
@@ -1007,6 +1169,7 @@ foreach my $m (@mods) {
 			&get_domain_php_ini($d, $phpver);
 	if (!$inifile) {
 		# Could not find php.ini
+		&$outdent_print();
 		&$second_print($mode eq "mod_php" || $mode eq "fpm" ?
 			$text{'scripts_noini'} : $text{'scripts_noini2'});
 		if ($opt) { next; }
@@ -1014,7 +1177,6 @@ foreach my $m (@mods) {
 		}
 
 	# Configure the domain's php.ini to load it, if needed
-	&$indent_print();
 	local $pconf = &phpini::get_config($inifile);
 	local @allexts = grep { $_->{'name'} eq 'extension' } @$pconf;
 	local @exts = grep { $_->{'enabled'} } @allexts;
@@ -1022,7 +1184,6 @@ foreach my $m (@mods) {
 	local $backupinifile;
 	if (!$got) {
 		# Needs to be enabled
-		&$first_print($text{'scripts_addext'});
 		$backupinifile = &transname();
 		&copy_source_dest($inifile, $backupinifile);
 		local $lref = &read_file_lines($inifile);
@@ -1049,7 +1210,6 @@ foreach my $m (@mods) {
 			}
 		undef($phpini::get_config_cache{$inifile});
 		undef(%main::php_modules);
-		&$second_print($text{'setup_done'});
 		if (&check_php_module($m, $phpver, $d) == 1) {
 			# We have it now!
 			goto GOTMODULE;
@@ -1125,35 +1285,19 @@ foreach my $m (@mods) {
 				}
 			}
 		}
-	@poss = sort { $a cmp $b } @poss;
+	@poss = sort { $a cmp $b } &unique(@poss);
+	my @newpkgs;
+	&$first_print($text{'scripts_phpmodinst'});
 	foreach my $pkg (@poss) {
 		my @pinfo = &software::package_info($pkg);
 		my $nodotverpkg = $pkg;
 		$nodotverpkg =~ s/\.//;
 		
-		# We either need to check for success 
-		# exactly or not check it at all (permissive)
-		my $success = 1;
 		if (!@pinfo) {
 			# Not installed .. try to fetch it
-			&$first_print(&text('scripts_softwaremod',
-					    "<tt>$pkg</tt>"));
-			if ($first_print eq \&null_print) {
-				# Suppress output
-				&capture_function_output(
-				    \&software::update_system_install, $pkg);
-				}
-			elsif ($first_print eq \&first_text_print) {
-				# Make output text
-				local $out = &capture_function_output(
-				    \&software::update_system_install, $pkg);
-				print &html_tags_to_text($out);
-				}
-			else {
-				# Show HTML output
-				my @rs = &software::update_system_install($pkg);
-				$iok = 1 if (scalar(@rs));
-				}
+			my ($out, $rs) = &capture_function_output(
+				\&software::update_system_install, $pkg);
+			$iok = 1 if (scalar(@$rs));
 			local $newpkg = $pkg;
 			if ($software::update_system eq "csw") {
 				# Real package name is different
@@ -1162,20 +1306,23 @@ foreach my $m (@mods) {
 			local @pinfo2 = &software::package_info($newpkg);
 			if (@pinfo2 && $pinfo2[0] eq $newpkg) {
 				# Yep, it worked
-				&$second_print($text{'setup_done'});
-				
-				# Check for success
-				$iok = 1 if ($success);
-				push(@$installed, $m) if ($installed && $success);
+				$iok = 1;
+				push(@newpkgs, $m);
 				}
 			}
 		else {
 			# Already installed .. we're done
-			$iok = 1  if ($success);
+			$iok = 1;
 			}
 		}
-	if (!$iok) {
-		&$second_print($text{'scripts_esoftwaremod'});
+	push(@$installed, @newpkgs) if ($installed);
+	if ($iok) {
+		&$second_print(&text('scripts_phpmoddone',
+			       "<tt>".join(" ", @newpkgs)."</tt>"));
+		&$outdent_print();
+		}
+	else {
+		&$second_print(&text('scripts_phpmodfailed', scalar(@poss)));
 		&$outdent_print();
 		&copy_source_dest($backupinifile, $inifile) if ($backupinifile);
 		if ($opt) { next; }
@@ -1184,8 +1331,8 @@ foreach my $m (@mods) {
 
 	# Finally re-check to make sure it worked
 	GOTMODULE:
-	&$outdent_print();
 	undef(%main::php_modules);
+	&$outdent_print();
 	if (&check_php_module($m, $phpver, $d) != 1) {
 		&$second_print($text{'scripts_einstallmod'});
 		&copy_source_dest($backupinifile, $inifile) if ($backupinifile);
@@ -2772,16 +2919,19 @@ if (&indexof("php", @{$script->{'uses'}}) >= 0) {
 	my $minfunc = $script->{'php_fullver_func'};
 	my $maxfunc = $script->{'php_maxver_func'};
 	my $fullver = &get_php_version($phpver, $d);
-	if (defined(&$minfunc)) {
+	if (!$fullver && $mode ne "none") {
+		push(@rv, $text{'scripts_iphpnover'});
+		}
+	if ($fullver && defined(&$minfunc)) {
 		my $minver = &$minfunc($d, $ver, $sinfo);
 		if (&compare_versions($fullver, $minver) < 0) {
-			return &text('scripts_iphpfullver', $minver, $phpver);
+			return &text('scripts_iphpfullver', $minver, $fullver);
 			}
 		}
-	if (defined(&$maxfunc)) {
+	if ($fullver && defined(&$maxfunc)) {
 		my $maxver = &$maxfunc($d, $ver, $sinfo);
-		if (&compare_versions($fullver, $maxver) < 0) {
-			return &text('scripts_iphpmaxver', $maxver, $phpver);
+		if (&compare_versions($fullver, $maxver) > 0) {
+			return &text('scripts_iphpmaxver', $maxver, $fullver);
 			}
 		}
 	}
@@ -2800,7 +2950,10 @@ if (defined(&{$script->{'dbs_func'}})) {
 			$dbnames[0] :
 			&text('scripts_idbneedor', @dbnames[0..$#dbnames-1],
 						   $dbnames[$#dbnames]);
-		push(@rv, &text('scripts_idbneed', $dbneed));
+		push(@rv, &text('scripts_idbneed', $dbneed) .
+			(&can_edit_domain($d) ? 
+			 &text_html('scripts_idbneed_link',
+				        "edit_domain.cgi?dom=$d->{'id'}", $text{'edit_title'}) : ""));
 		}
 	}
 
@@ -2810,18 +2963,16 @@ push(@rv, map { &text('scripts_icommand', "<tt>$_</tt>") }
 
 # Check for webserver CGI or PHP support
 local $p = &domain_has_website($d);
-if ($p && $p ne 'web') {
-	local $cancgi = &plugin_call($p, "feature_web_supports_cgi", $d);
-	local @canphp = &plugin_call($p, "feature_web_supported_php_modes", $d);
-	if (&indexof("php", @{$script->{'uses'}}) >= 0 && !@canphp) {
-		return $text{'scripts_inophp'};
-		}
-	if (&indexof("cgi", @{$script->{'uses'}}) >= 0 && !$cancgi) {
-		return $text{'scripts_inocgi'};
-		}
-	if (&indexof("apache", @{$script->{'uses'}}) >= 0) {
-		return $text{'scripts_inoapache'};
-		}
+local $cancgi = &has_cgi_support($d);
+if (&indexof("cgi", @{$script->{'uses'}}) >= 0 && !$cancgi) {
+	return $text{'scripts_inocgi'};
+	}
+if ($p ne "web" && &indexof("apache", @{$script->{'uses'}}) >= 0) {
+	return $text{'scripts_inoapache'};
+	}
+my @supp = grep { $_ ne "none" } &supported_php_modes($d);
+if (&indexof("php", @{$script->{'uses'}}) >= 0 && !@supp) {
+	return $text{'scripts_inophp'};
 	}
 
 return wantarray ? @rv : join(", ", @rv);
@@ -3205,51 +3356,10 @@ sub script_migrated_status
 {
 my ($status, $migrated, $can_upgrade) = @_;
 return script_migrated_disallowed($script->{'migrated'}) ?
-         &ui_link("http://www.virtualmin.com/shop",
+         &ui_link("https://virtualmin.com/shop/",
            $text{'scripts_gpl_to_pro'.($can_upgrade ? "_upgrade" : "").''}, 
              ($can_upgrade ? " text-warning" : ""), " target=_blank") :
            $status;
-}
-
-# build_pro_scripts_list()
-# Builds a list of Virtualmin Pro scripts for inclusion to GPL package
-sub build_pro_scripts_list
-{
-my @scripts_pro_list;
-my @scripts = map { &get_script($_) } &list_scripts();
-@scripts = grep { $_->{'avail'} } @scripts;
-@scripts = sort { lc($a->{'desc'}) cmp lc($b->{'desc'}) } @scripts;
-foreach my $script (@scripts) {
-	my @vers = grep { &can_script_version($script, $_) }
-		     @{$script->{'install_versions'}};
-	next if (!@vers);
-	next if ($script->{'dir'} !~ /$scripts_directories[3]/ &&
-	        !$script->{'migrated'});
-	push(@scripts_pro_list,
-	    { 'version' => $vers[0],
-	      'name' => $script->{'name'},
-	      'desc' => $script->{'desc'},
-	      'longdesc' => $script->{'longdesc'},
-	      'categories' => $script->{'categories'},
-	      'pro' => 1
-	      },
-	    );
-	}
-my $scripts_pro_file = "$scripts_directories[2]/scripts-pro.info";
-my $fh = "SCRIPTS";
-&open_tempfile($fh, ">$scripts_pro_file");
-&print_tempfile($fh, &serialise_variable(\@scripts_pro_list));
-&close_tempfile($fh);
-}
-
-# load_pro_scripts_list() 
-# Returns a pre-built list of install scripts which are only available in Virtualmin Pro
-sub load_pro_scripts_list
-{
-my $scripts_pro_file = "$scripts_directories[2]/scripts-pro.info";
-my $scripts = &unserialise_variable(&read_file_contents($scripts_pro_file));
-return $scripts if ($scripts && scalar(@{$scripts}) > 0);
-return undef;
 }
 
 1;

@@ -49,6 +49,18 @@ return ("mysql", "json", "mbstring", "session",
         "zip", "gd", "openssl", "xml");
 }
 
+# script_phpmyadmin_php_vars()
+# Returns an array of extra PHP variables needed for this script
+sub script_phpmyadmin_php_vars
+{
+return ([ 'memory_limit', '128M', '+' ],
+        [ 'max_execution_time', 300, '+' ],
+        [ 'file_uploads', 'On' ],
+        [ 'upload_max_filesize', '1G', '+' ],
+        [ 'post_max_size', '1G', '+' ]);
+}
+
+
 sub script_phpmyadmin_php_optional_modules
 {
 my ($d, $ver, $phpver, $opts) = @_;
@@ -66,18 +78,6 @@ local @rv;
 
 &has_domain_databases($d, [ "mysql" ], 1) ||
 	push(@rv, "phpMyAdmin requires a MySQL database");
-
-# Check for PHP 5.2+ or 5.3+, if needed
-my $wantver = &script_phpmyadmin_php_fullver($d, $ver, $sinfo);
-if ($wantver) {
-	my $phpv = &get_php_version($phpver || 5, $d);
-	if (!$phpv) {
-		push(@rv, "Could not work out exact PHP version");
-		}
-	elsif (&compare_versions($phpv, $wantver) < 0) {
-		push(@rv, "phpMyAdmin requires PHP version $wantver or later");
-		}
-	}
 
 # Check for latest MySQL
 if (&compare_versions($ver, "4.2.3") >= 0 &&

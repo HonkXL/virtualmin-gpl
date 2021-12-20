@@ -466,6 +466,28 @@ if ($d->{'dom'} ne $oldd->{'dom'} && &self_signed_cert($d) &&
 		}
 	}
 
+if ($d->{'dom'} ne $oldd->{'dom'} && &is_letsencrypt_cert($d) &&
+    !&check_domain_certificate($d->{'dom'}, $d)) {
+	# Domain name has changed ... re-request let's encrypt cert
+	&$first_print($text{'save_ssl12'});
+	if ($d->{'letsencrypt_dname'}) {
+		# Update any explicitly chosen domain names
+		my @dnames = split(/\s+/, $d->{'letsencrypt_dname'});
+		foreach my $dn (@dnames) {
+			$dn = $d->{'dom'} if ($dn eq $oldd->{'dom'});
+			$dn =~ s/\.\Q$oldd->{'dom'}\E$/\.$d->{'dom'}/;
+			}
+		$d->{'letsencrypt_dname'} = join(" ", @dnames);
+		}
+	my ($ok, $err) = &renew_letsencrypt_cert($d);
+	if ($ok) {
+		&$second_print($text{'setup_done'});
+		}
+	else {
+		&$second_print(&text('save_essl12', $err));
+		}
+	}
+
 # If anything has changed that would impact the per-domain SSL cert for
 # another server like Postfix or Webmin, re-set it up as long as it is supported
 # with the new settings
@@ -533,6 +555,14 @@ foreach my $od (&get_domain_by("ssl_same", $d->{'id'})) {
 
 # Update DANE DNS records
 &sync_domain_tlsa_records($d);
+
+# If this domain had it's own lets encrypt cert, delete any leftover files
+# for it under /etc/letsencrypt
+&foreign_require("webmin");
+if ($d->{'letsencrypt_last'} && !$d->{'ssl_same'} &&
+    defined(&webmin::cleanup_letsencrypt_files)) {
+	&webmin::cleanup_letsencrypt_files($d->{'dom'});
+	}
 
 # If this domain was sharing a cert with another, forget about it now
 if ($d->{'ssl_same'}) {
@@ -636,6 +666,10 @@ if ($key && !-r $key) {
 local $info = &cert_info($d);
 if (!$info || !$info->{'cn'}) {
 	return &text('validate_esslcertinfo', "<tt>$cert</tt>");
+	}
+local $err = &validate_cert_format($cert, 'cert');
+if ($err) {
+	return $err;
 	}
 
 # Make sure this domain or www.domain matches cert. Include aliases, because
@@ -949,14 +983,21 @@ local ($d) = @_;
 return &cert_file_info($d->{'ssl_cert'}, $d);
 }
 
-# cert_file_split(file)
+# cert_file_split(file|data)
 # Returns a list of certs in some file
 sub cert_file_split
 {
-local ($file) = @_;
-local @rv;
-my $lref = &read_file_lines($file, 1);
-foreach my $l (@$lref) {
+my ($file) = @_;
+my $data;
+if ($file =~ /^\//) {
+	$data = &read_file_contents($file);
+	}
+else {
+	$data = $file;
+	}
+my @rv;
+my @lines = split(/\r?\n/, $data);
+foreach my $l (@lines) {
 	my $cl = $l;
 	$cl =~ s/^#.*//;
 	if ($cl =~ /^-----BEGIN/) {
@@ -1289,18 +1330,18 @@ return undef;
 sub extract_cert_parameters
 {
 my ($data) = @_;
-local @lines = grep { /\S/ } split(/\r?\n/, $data);
-my $l = 0;
-my $p = "";
-if ($lines[0] =~ /-----BEGIN\s+(\S+)\s+PARAMETERS-----/) {
-	$p .= $lines[0]."\n";
-	while($lines[++$l] !~ /--END\s+(\S+)\s+PARAMETERS-----/) {
-		$p .= $lines[$l]."\n";
+my @parts = &cert_file_split($data);
+my $rv = "";
+my $params = "";
+foreach my $p (@parts) {
+	if ($p =~ /^-----BEGIN\s+(\S+)\s+PARAMETERS-----/) {
+		$params .= $p;
 		}
-	$p .= $lines[$l]."\n";
-	$l++;
+	else {
+		$rv .= $p;
+		}
 	}
-return (join("\n", @lines[$l..$#lines])."\n", $p);
+return ($rv, $params);
 }
 
 # cert_pem_data(&domain)
@@ -1765,13 +1806,17 @@ return wantarray ? @rv : $rv[0];
 # hash's cert file. This can only be called at domain creation time.
 sub find_matching_certificate
 {
-local ($d) = @_;
-local $lnk = $d->{'link_certs'} ? 1 :
-	     $d->{'nolink_certs'} ? 0 :
-	     $config{'nolink_certs'} ? 0 : 1;
+my ($d) = @_;
+my $lnk = $d->{'link_certs'} == 1 ? 1 :
+	  $d->{'link_certs'} == 2 ? 2 :
+	  $d->{'nolink_certs'} ? 0 :
+	  $config{'nolink_certs'} == 1 ? 0 :
+	  $config{'nolink_certs'} == 2 ? 2 : 1;
 if ($lnk) {
-	local @sames = grep { $_->{'user'} eq $d->{'user'} }
-			    &find_matching_certificate_domain($d);
+	my @sames = &find_matching_certificate_domain($d);
+	if ($lnk != 2) {
+		@sames = grep { $_->{'user'} eq $d->{'user'} } @sames;
+		}
 	if (@sames) {
 		my ($same) = grep { !$_->{'parent'} } @sames;
 		$same ||= $sames[0];
@@ -2050,10 +2095,8 @@ if ($d->{'virt'}) {
 				  'enabled' => 1,
 				  'sectionname' => 'local',
 				  'sectionvalue' => $d->{'ip'},
-				  'file' => $l->{'file'},
-				  'line' => $l->{'line'} + 1,
-				  'eline' => $l->{'line'} + 0 };
-			&dovecot::save_section($conf, $imap);
+				  'file' => $l->{'file'} };
+			&dovecot::create_section($conf, $imap, $l);
 			push(@{$l->{'members'}}, $imap);
 			push(@$conf, $imap);
 			$l->{'eline'} = $imap->{'eline'}+1;
@@ -2080,10 +2123,8 @@ if ($d->{'virt'}) {
 				  'enabled' => 1,
 				  'sectionname' => 'local',
 				  'sectionvalue' => $d->{'ip'},
-				  'file' => $l->{'file'},
-				  'line' => $l->{'line'} + 1,
-				  'eline' => $l->{'line'} + 0 };
-			&dovecot::save_section($conf, $pop3);
+				  'file' => $l->{'file'} };
+			&dovecot::create_section($conf, $pop3, $l);
 			push(@{$l->{'members'}}, $pop3);
 			push(@$conf, $pop3);
 			$created++;
@@ -2165,9 +2206,7 @@ else {
 						  'file' => $cfile, },
 						],
 					  'file' => $cfile };
-				my $lref = &read_file_lines($l->{'file'}, 1);
-				$l->{'line'} = $l->{'eline'} = scalar(@$lref);
-				&dovecot::save_section($conf, $l);
+				&dovecot::create_section($conf, $l);
 				push(@$conf, $l);
 				&flush_file_lines($l->{'file'}, undef, 1);
 				}
@@ -2620,6 +2659,12 @@ return $info && ($info->{'issuer_cn'} =~ /Let's\s+Encrypt/i ||
 # Check all domains that need a new Let's Encrypt cert
 sub apply_letsencrypt_cert_renewals
 {
+my $le_max_renewals = 300.0;
+my $le_max_time = 3*60*60;	# 3 hours
+my $last_renew_time = $config{'last_letsencrypt_mass_renewal'};
+my $now = time();
+
+my $done = 0;
 foreach my $d (&list_domains()) {
 	# Does the domain have SSL enabled and a renewal policy?
 	next if (!&domain_has_ssl_cert($d) || !$d->{'letsencrypt_renew'});
@@ -2657,7 +2702,17 @@ foreach my $d (&list_domains()) {
 	# Don't even attempt now if the lock is being held
 	next if (&test_lock($ssl_letsencrypt_lock));
 
+	# Don't exceed the global let's encrypt rate limit
+	if ($last_renew_time) {
+		my $diff = $now - $last_renew_time;
+		if ($done > $le_max_renewals / $le_max_time * $diff / 2) {
+			# Done too much this cycle (more than half of the limit)
+			last;
+			}
+		}
+
 	# Time to attempt the renewal
+	$done++;
 	my ($ok, $err, $dnames) = &renew_letsencrypt_cert($d);
 	my ($subject, $body);
 	if (!$ok) {
@@ -2681,6 +2736,9 @@ foreach my $d (&list_domains()) {
 	my $from = &get_global_from_address($d);
 	&send_notify_email($from, [$d], $d, $subject, $body);
 	}
+
+$config{'last_letsencrypt_mass_renewal'} = $now;
+&save_module_config();
 }
 
 # renew_letsencrypt_cert(&domain)
@@ -2859,6 +2917,7 @@ if ($d->{'ssl_same'}) {
 
 # Create file of all the certs
 my $combfile = &default_certificate_file($d, 'combined');
+my $newfile = !-e $combfile;
 &lock_file($combfile);
 &create_ssl_certificate_directories($d);
 &open_tempfile_as_domain_user($d, COMB, ">$combfile");
@@ -2868,11 +2927,14 @@ if (-r $d->{'ssl_chain'}) {
 	}
 &close_tempfile_as_domain_user($d, COMB);
 &unlock_file($combfile);
-&set_certificate_permissions($d, $combfile);
+if ($newfile) {
+	&set_certificate_permissions($d, $combfile);
+	}
 $d->{'ssl_combined'} = $combfile;
 
 # Create file of all the certs, and the key
 my $everyfile = &default_certificate_file($d, 'everything');
+my $newfile = !-e $everyfile;
 &lock_file($everyfile);
 &open_tempfile_as_domain_user($d, COMB, ">$everyfile");
 &print_tempfile(COMB, &read_file_contents($d->{'ssl_key'})."\n");
@@ -2882,7 +2944,9 @@ if (-r $d->{'ssl_chain'}) {
 	}
 &close_tempfile_as_domain_user($d, COMB);
 &unlock_file($everyfile);
-&set_certificate_permissions($d, $everyfile);
+if ($newfile) {
+	&set_certificate_permissions($d, $everyfile);
+	}
 $d->{'ssl_everything'} = $everyfile;
 }
 
@@ -3123,6 +3187,14 @@ if ($cert_info) {
 		$d->{'ssl_cert_expiry'} = $expiry;
 		}
 	}
+}
+
+# can_reset_ssl(&domain)
+# Resetting SSL on it's own doesn't make sense, since it's included in the web
+# feature reset
+sub can_reset_ssl
+{
+return 0;
 }
 
 $done_feature_script{'ssl'} = 1;

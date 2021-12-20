@@ -436,20 +436,19 @@ foreach my $p (@ports) {
 			# Add a new FilesMatch block with the socket
 			$files = { 'name' => 'FilesMatch',
 			           'type' => 1,
-				   'value' => '\.php$',
-				   'members' => [
-					{ 'name' => 'SetHandler',
-					  'value' => $wanth,
-					},
-				   ],
-				 };
+			           'value' => '\.php$',
+			           'words' => ['\.php$'],
+			           'members' => [
+			             { 'name' => 'SetHandler',
+			               'value' => $wanth,
+			             },
+			           ],
+			         };
 			&apache::save_directive_struct(
 				undef, $files, $vconf, $conf);
 			}
-		elsif (!&apache::find_directive("SetHandler",
-						$files->{'members'})) {
+		else {
 			# Add the SetHandler directive to the FilesMatch block
-			# if missing
 			&apache::save_directive("SetHandler", [$wanth],
 						$files->{'members'}, $conf);
 			}
@@ -914,7 +913,8 @@ sub php_mode_numbers_map
 return { 'mod_php' => 0,
 	 'cgi' => 1,
 	 'fcgid' => 2,
-	 'fpm' => 3 };
+	 'fpm' => 3,
+	 'none' => 4, };
 }
 
 # list_available_php_versions([&domain], [forcemode])
@@ -1027,6 +1027,7 @@ if (!$php_command_for_version_cache{$v,$cgimode}) {
 		push(@opts, "/opt/csw/php$v/bin/php-cgi");
 		}
 	push(@opts, "php$v-cgi", "php-cgi$v", "php$v");
+	$v =~ s/^(\d+\.\d+)\.\d+$/$1/;
 	my $nodotv = $v;
 	$nodotv =~ s/\.//;
 	if ($nodotv ne $v) {
@@ -1193,19 +1194,17 @@ elsif (!$p) {
 &require_apache();
 local $mode = &get_domain_php_mode($d);
 return "PHP versions cannot be set in mod_php mode" if ($mode eq "mod_php");
-local $pfound = 0;
 
 if ($mode eq "fpm") {
 	# Remove the old version pool and create a new one if needed.
 	# Since it will be on the same port, no Apache changes are needed.
 	my $phd = &public_html_dir($d);
-	$dir eq $phd || return "Public HTML directory not found";
+	$dir eq $phd || return "FPM version can only be changed for the top-level directory";
 	if ($ver ne $d->{'php_fpm_version'}) {
 		&delete_php_fpm_pool($d);
 		$d->{'php_fpm_version'} = $ver;
 		&save_domain($d);
 		&create_php_fpm_pool($d);
-		$pfound++;
 		}
 	}
 else {
@@ -1218,7 +1217,6 @@ else {
 		local $conf = &apache::get_config();
 		local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $p);
 		next if (!$virt);
-		$pfound++;
 
 		# Check for an existing <Directory> block
 		local @dirs = &apache::find_directive_struct("Directory", $vconf);
@@ -1324,7 +1322,6 @@ if (!$noini) {
 	}
 
 &register_post_action(\&restart_apache);
-$pfound || return "Apache virtual host was not found";
 return undef;
 }
 
@@ -1824,7 +1821,8 @@ return ( ) if (!&foreign_installed("software"));
 return ( ) if (!defined(&software::package_info));
 my @rv;
 my %donever;
-foreach my $pname ("php-fpm", "php5-fpm", "php7-fpm",
+foreach my $pname ("php-fpm",
+		   (map { "php${_}-fpm" } @all_possible_short_php_versions),
 		   (map { my $v = $_; $v =~ s/\.//g;
 			  ("php${v}-php-fpm", "php${v}-fpm", "php${v}w-fpm",
 			   "rh-php${v}-php-fpm", "php${_}-fpm",
@@ -1906,7 +1904,9 @@ foreach my $pname ("php-fpm", "php5-fpm", "php7-fpm",
 		# Init script for any version as a fallback
 		my @nodot = map { my $u = $_; $u =~ s/\.//g; $u }
 				@all_possible_php_versions;
-		foreach my $init ("php-fpm", "php5-fpm", "php7-fpm",
+		foreach my $init ("php-fpm",
+				  (map { "php${_}-fpm" }
+				       @all_possible_short_php_versions),
 				  (map { "php${_}-fpm" }
 				       @all_possible_php_versions),
 				  (map { "rh-php${_}-php-fpm" } @nodot),
@@ -2086,6 +2086,11 @@ $found || return "No Apache VirtualHost containing an FPM SetHandler found";
 # Second update the FPM server port
 my $conf = &get_php_fpm_config($d);
 &save_php_fpm_config_value($d, "listen", $socket);
+if ($socket =~ /^\//) {
+	# Also set correct owner for the file if switching to socket mode
+	&save_php_fpm_config_value($d, "listen.owner", $d->{'user'});
+	&save_php_fpm_config_value($d, "listen.group", $d->{'ugroup'});
+	}
 &register_post_action(\&restart_php_fpm_server, $conf);
 &register_post_action(\&restart_apache);
 
@@ -2133,6 +2138,10 @@ if (-r $file) {
 	&save_php_fpm_config_value($d, "user", $d->{'user'});
 	&save_php_fpm_config_value($d, "group", $d->{'ugroup'});
 	&save_php_fpm_config_value($d, "listen", $port);
+	if (&get_php_fpm_config_value($d, "listen.owner")) {
+		&save_php_fpm_config_value($d, "listen.owner", $d->{'user'});
+		&save_php_fpm_config_value($d, "listen.group", $d->{'ugroup'});
+		}
 	}
 else {
 	# Create a new file
@@ -2144,14 +2153,17 @@ else {
 	@$lref = ( "[$d->{'id'}]",
 		   "user = ".$d->{'user'},
 		   "group = ".$d->{'ugroup'},
+		   "listen.owner = ".$d->{'user'},
+		   "listen.group = ".$d->{'ugroup'},
+		   "listen.mode = 0660",
 		   "listen = ".$port,
 		   "pm = dynamic", 
 		   "pm.max_children = $defchildren",
 		   "pm.start_servers = 1",
 		   "pm.min_spare_servers = 1",
 		   "pm.max_spare_servers = 5",
-	   	   "php_admin_value[upload_tmp_dir] = $tmp",
-		   "php_admin_value[session.save_path] = $tmp" );
+	   	   "php_value[upload_tmp_dir] = $tmp",
+		   "php_value[session.save_path] = $tmp" );
 	&flush_file_lines($file);
 
 	# Add / override custom options (with substitution)
@@ -2248,11 +2260,20 @@ return undef;
 }
 
 # get_php_fpm_ini_value(&domain, name)
-# Returns the value of a ini setting from the domain's pool file
+# Returns the value of a PHP ini setting from the domain's pool file
 sub get_php_fpm_ini_value
 {
 my ($d, $name) = @_;
-return &get_php_fpm_config_value($d, "php_value[${name}]");
+my $k = "php_value";
+my $rv = &get_php_fpm_config_value($d, "php_value[${name}]");
+if (!defined($rv)) {
+	my $k = "php_admin_value";
+	$rv = &get_php_fpm_config_value($d, "php_admin_value[${name}]");
+	if (!defined($rv)) {
+		$k = undef;
+		}
+	}
+return wantarray ? ($rv, $k) : $rv;
 }
 
 # save_php_fpm_config_value(&domain, name, value)
@@ -2300,12 +2321,14 @@ elsif ($found < 0 && defined($value)) {
 return 1;
 }
 
-# save_php_fpm_ini_value(&domain, name, value)
+# save_php_fpm_ini_value(&domain, name, value, [admin?])
 # Adds, updates or deletes an ini setting in the domain's pool file
 sub save_php_fpm_ini_value
 {
-my ($d, $name, $value) = @_;
-return &save_php_fpm_config_value($d, "php_value[${name}]", $value);
+my ($d, $name, $value, $admin) = @_;
+my (undef, $k) = &get_php_fpm_ini_value($d, $name);
+$k ||= ($admin ? "php_admin_value" : "php_value");
+return &save_php_fpm_config_value($d, $k."[".$name."]", $value);
 }
 
 # increase_fpm_port(string)

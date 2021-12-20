@@ -58,6 +58,27 @@ if (&need_config_check() && &can_check_config()) {
 		  });
 	}
 
+# Suggest to GPL user to get Virtualmin Pro
+if (!$virtualmin_pro &&
+    &should_show_pro_tip('dashboard', 1)) {
+	# Do not show dashboard alert within first seven days, until things settle down
+	&foreign_require("webmin");
+	my $uptime = &webmin::get_system_uptime();
+	if (!$uptime || $uptime > 60*60*24 * 7) {
+		push(@rv, { 'type' => 'warning',
+			    'level' => 'info',
+			    'warning' => { 'alert' => &alert_pro_tip('dashboard', {
+			        'alert_title' => $text{'scripts_gpl_pro_tip_title_dashboard'},
+			        'alert_body1' => $text{'scripts_gpl_pro_tip_dashboard'} . " ",
+			        'alert_body2' => &text('scripts_gpl_pro_tip_enroll_dashboard',
+			                               'https://www.virtualmin.com/product-category/virtualmin/'),
+			        'button_text' => $text{'scripts_gpl_pro_tip_hide2'},
+			        'button_icon' => 'fa fa-fw fa-heartbeat',
+			    	}) },
+			  });
+		}
+	} 
+
 # Show a domain owner info about his domain, but NOT info about the system
 if (!&master_admin() && !&reseller_admin()) {
 	my @table;
@@ -195,12 +216,12 @@ if (!&can_view_sysinfo()) {
 my $hasvposs = foreign_check("package-updates");
 my $canvposs = foreign_available("package-updates");
 if (!$data->{'noupdates'} && $hasvposs && $canvposs && @vposs) {
-	my $html = &ui_form_start("package-updates/update.cgi");
+	my $html = &ui_form_start("@{[&get_webprefix_safe()]}/package-updates/update.cgi");
 	$html .= &ui_hidden("redirdesc", $text{'right_sysinfo'});
 	$html .= &ui_hidden("confirm", 1);
 	$html .= &text(@vposs > 1 ? 'right_upcount' : 'right_upcount1',
 		       scalar(@vposs),
-		       'package-updates/index.cgi?mode=updates')."<p>\n";
+		       &get_webprefix_safe() . '/package-updates/index.cgi?mode=updates')."<p>\n";
 	$html .= &ui_columns_start([ $text{'right_upname'},
                                      $text{'right_updesc'},
                                      $text{'right_upver'} ], "80%");
@@ -230,13 +251,13 @@ if (!$data->{'nostatus'} && $info->{'startstop'} &&
 	my @ss = @{$info->{'startstop'}};
 	my @down = grep { !$_->{'status'} } @ss;
 	my @table;
-	my $idir = '/'.$module_name.'/images';
+	my $idir = &get_webprefix_safe() . '/'.$module_name.'/images';
 	foreach my $status (@ss) {
 		# Work out label, possibly with link
 		my $label;
 		foreach my $l (@{$status->{'links'}}) {
 			if ($l->{'manage'}) {
-				$label = &ui_link($l->{'link'},
+				$label = &ui_link(&get_webprefix_safe() . $l->{'link'},
 						  $status->{'name'});
 				}
 			}
@@ -248,14 +269,14 @@ if (!$data->{'nostatus'} && $info->{'startstop'} &&
 		my $action_icon = ($status->{'status'} ?
 		   "<img src='$idir/stop.png' alt='$status->{'desc'}' />" :
 		   "<img src='$idir/start.png' alt='$status->{'desc'}' />");
-		my $action_link = "<a href='/$module_name/$action?".
+		my $action_link = "<a href='@{[&get_webprefix_safe()]}/$module_name/$action?".
 		   "feature=$status->{'feature'}&id=$status->{'id'}'".
 		   " title='$status->{'desc'}'>".
 		   "$action_icon</a>";
 
 		# Restart link 
 		my $restart_link = ($status->{'status'}
-		   ? "<a href='/$module_name/restart_feature.cgi?".
+		   ? "<a href='@{[&get_webprefix_safe()]}/$module_name/restart_feature.cgi?".
 		     "feature=$status->{'feature'}&id=$status->{'id'}'".
 		     " title='$status->{'restartdesc'}'>".
 		     "<img src='$idir/reload.png'".
@@ -369,7 +390,7 @@ if (!$data->{'noquotas'} && @quota && (&master_admin() || &reseller_admin())) {
 		my $cmd = &can_edit_domain($q->[0]) ? "edit_domain.cgi"
 						    : "view_domain.cgi";
 		my $chart = { 'desc' => &ui_link(
-			'/'.$module_name.'/'.$cmd.'?dom='.$q->[0]->{'id'},
+			&get_webprefix_safe() . '/'.$module_name.'/'.$cmd.'?dom='.$q->[0]->{'id'},
 			 &show_domain_name($q->[0])) };
 		if ($qshow) {
 			# By percent used
@@ -453,7 +474,7 @@ if (!$data->{'nobw'} && $config{'bw_active'} && @bwdoms && $maxbw) {
 		my $cmd = &can_edit_domain($d) ? "edit_domain.cgi"
 					       : "view_domain.cgi";
 		my $chart = { 'desc' => &ui_link(
-			'/'.$module_name.'/'.$cmd.'?dom='.$d->{'id'},
+			&get_webprefix_safe() . '/'.$module_name.'/'.$cmd.'?dom='.$d->{'id'},
 			 &show_domain_name($d)) };
 		my $pc = $d->{'bw_limit'} ?
 			int($d->{'bw_usage'}*100 / $d->{'bw_limit'}) : undef;
@@ -500,7 +521,7 @@ if (&master_admin() && !$data->{'noips'} && $info->{'ips'}) {
 			$umsg = "<tt>$ipi->[4]</tt>";
 			}
 		else {
-			my $slink = '/'.$module_name.
+			my $slink = &get_webprefix_safe() . '/'.$module_name.
 				    '/search.cgi?field=ip&what='.$ipi->[0];
 			$umsg = &ui_link($slink, &text('right_ips', $ipi->[3]));
 			}
