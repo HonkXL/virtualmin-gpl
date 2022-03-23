@@ -15,6 +15,15 @@ use Time::Local;
 my $mysql_module_version = &read_file_contents(
 	"$config_directory/mysql/version"); 
 chop($mysql_module_version);
+if (!$mysql_module_version) {
+	if ($config{'mysql'}) {
+		&foreign_require("mysql");
+		if (defined(&mysql::get_mysql_version)) {
+			$mysql_module_version = &mysql::get_mysql_version();
+			&mysql::save_mysql_version($mysql_module_version);
+			}
+		}
+	}
 if ($mysql_module_version =~ /mariadb/i) {
 	foreach my $t (keys %text) {
 		$text{$t} =~ s/MySQL/MariaDB/g if ($t !~ /^newmysqls_ver/);
@@ -252,7 +261,7 @@ $upgrade_virtualmin_testpage = "/licence-test.txt";
 $upgrade_virtualmin_updates = "/wbm/updates.txt";
 
 $connectivity_check_host = "software.virtualmin.com";
-$connectivity_check_port = 80;
+$connectivity_check_port = 443;
 $connectivity_check_page = "/cgi-bin/connectivity.cgi";
 
 $resolve_check_host = "software.virtualmin.com";
@@ -311,6 +320,10 @@ $ssl_passphrase_dir = "$module_config_directory/sslpass";
 
 $ssl_letsencrypt_lock = "$module_var_directory/letsencrypt-lock";
 
+$ssl_certificate_parent = "/etc/ssl/virtualmin";
+
+$ssl_certificate_dir = "$ssl_certificate_parent/\${ID}";
+
 @cert_attributes = ('cn', 'o', 'issuer_cn', 'issuer_o', 'notafter',
 		    'type', 'alt', 'modulus', 'exponent');
 
@@ -339,6 +352,8 @@ $home_virtualmin_backup = $config{'home_backup'} || "virtualmin-backup";
 $public_dns_suffix_file = "$module_root_directory/public_suffix_list.dat";
 $public_dns_suffix_cache = "$module_var_directory/public_suffix_list.dat";
 $public_dns_suffix_url = "https://publicsuffix.org/list/public_suffix_list.dat";
+
+$lookup_domain_port = 11000;
 
 # generate_plugins_list([list])
 # Creates the confplugins, plugins and other arrays based on the module config

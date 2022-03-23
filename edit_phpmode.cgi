@@ -26,9 +26,16 @@ if ($can) {
 	    ($p eq 'web' || &plugin_defined($p, "feature_get_web_php_mode"))) {
 		# PHP execution mode
 		push(@modes, $mode) if ($mode && &indexof($mode, @modes) < 0);
+		my $dmode = sub {
+			my ($mode) = @_;
+			if ($mode eq 'mod_php') {
+				return &ui_text_color($text{'phpmode_'.$mode}, 'danger');
+				}
+			return $text{'phpmode_'.$mode};
+			};
 		print &ui_table_row(&hlink($text{'phpmode_mode'}, "phpmode"),
 				    &ui_radio_table("mode", $mode,
-				      [ map { [ $_, $text{'phpmode_'.$_} ] }
+				      [ map { [ $_, &$dmode($_) ] }
 					    @modes ]));
 		}
 
@@ -45,7 +52,7 @@ if ($can) {
 		}
 
 	# PHP max execution time, for fcgi mode
-	if (!$d->{'alias'} &&
+	if ($mode ne 'none' && !$d->{'alias'} &&
 	    (&indexof("fcgid", @modes) >= 0 || &indexof("fpm", @modes) >= 0) &&
 	    ($p eq 'web' ||
 	     &plugin_defined($p, "feature_get_fcgid_max_execution_time"))) {
@@ -63,6 +70,14 @@ if ($can) {
 if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 	# Build versions list
 	my @avail = &list_available_php_versions($d, $mode);
+	my $get_php_info_bubble = sub {
+		my ($placement_type, $subdir) = @_;
+		$placement_type ||= 'cell';
+		return "&nbsp;&nbsp;" .
+		       &ui_link("showphpinfo.cgi?dom=$in{'dom'}&dir=$subdir",
+		       	&ui_help(&text('phpmode_phpinfo_show' . ($subdir ? '_dir' : ''), $subdir)),
+		       	          undef, "target=_blank data-placement=\"$placement_type\"");
+	};
 	my @vlist = ( );
 	foreach my $v (@avail) {
 		if ($v->[1]) {
@@ -82,13 +97,14 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 		# System has only one version
 		$fullver = $avail[0]->[1] ? &get_php_version($avail[0]->[1], $d)
 					  : $avail[0]->[0];
-		print &ui_table_row($text{'phpmode_version'}, $fullver);
+		print &ui_table_row($text{'phpmode_version'}, $fullver . &$get_php_info_bubble('label'))
+		    if ($mode ne 'none');
 		}
 	elsif ($mode eq "fpm" && @dirs == 1) {
 		# Only one version can be set
 		print &ui_table_row(
 			&hlink($text{'phpmode_version'}, "phpmode_version"),
-			&ui_select("ver_0", $dirs[0]->{'version'}, \@vlist));
+			&ui_select("ver_0", $dirs[0]->{'version'}, \@vlist) . &$get_php_info_bubble('label'));
 		print &ui_hidden("dir_0", $dirs[0]->{'dir'});
 		print &ui_hidden("d", $dirs[0]->{'dir'});
 		}
@@ -109,17 +125,18 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 					  'value' => $i,
 					  'disabled' => 1,
 					  'checked' => 1, },
-					"<i>$text{'phpver_pub'}</i>",
+					"<i>$text{'phpver_pub'}</i>" . &$get_php_info_bubble(),
 					$sel
 					]);
 				}
 			elsif (substr($dir->{'dir'}, 0, length($pub)) eq $pub) {
 				# Show directory relative to public_html
+				my $subdir = substr($dir->{'dir'}, length($pub)+1);
 				push(@table, [
 					{ 'type' => 'checkbox', 'name' => 'd',
 					  'value' => $i,
 					  'checked' => 1, },
-					"<tt>".substr($dir->{'dir'}, length($pub)+1)."</tt>",
+					"<tt>$subdir</tt>" . &$get_php_info_bubble('cell', $subdir),
 					$sel
 					]);
 				$anydelete++;
@@ -161,7 +178,7 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 print &ui_hidden_table_end();
 
 # Show PHP information
-if (defined(&list_php_modules) && !$d->{'alias'}) {
+if ($mode ne 'none' && defined(&list_php_modules) && !$d->{'alias'}) {
 	print &ui_hidden_table_start($text{'phpmode_header2'}, "width=100%",
 				     2, "phpinfo", 0, [ "width=30%" ]);
 

@@ -15,16 +15,6 @@ if ($mode == 0) {
 	-r $src || &error($text{'migrate_efile'});
 	}
 
-# Validate other inputs
-if ($in{'dom_def'}) {
-	$domain = undef;
-	}
-else {
-	$in{'dom'} = lc(&parse_domain_name($in{'dom'}));
-	$err = &valid_domain_name($in{'dom'});
-	&error($err) if ($err);
-	$domain = $in{'dom'};
-	}
 if ($can < 3) {
 	if (!$in{'user_def'}) {
 		$in{'user'} =~ /^[a-z0-9\.\-\_]+$/i ||
@@ -74,8 +64,9 @@ if (!$in{'prefix_def'}) {
 	}
 $in{'email_def'} || $in{'email'} =~ /\S/ || &error($text{'setup_eemail'});
 
-&ui_print_unbuffered_header(undef, $text{'migrate_title'}, "");
+my @footer_action = &vui_footer_history_back();
 
+&ui_print_unbuffered_header(undef, $text{'migrate_title'}, "");
 # Download the file
 $oldsrc = $src;
 $nice = &nice_backup_url($oldsrc);
@@ -104,7 +95,7 @@ elsif ($mode > 0) {
 &$first_print($text{'migrate_validating'});
 $vfunc = "migration_$in{'type'}_validate";
 ($err, $domain, $user, $pass) =
-	&$vfunc($src, $domain, $user, $parent, $prefix, $pass);
+	&$vfunc($src, undef, $user, $parent, $prefix, $pass);
 if ($err) {
 	&$second_print(&text('migrate_evalidate', $err));
 	goto DONE;
@@ -113,6 +104,8 @@ elsif (&domain_name_clash($domain)) {
 	&$second_print($text{'migrate_eclash'});
 	goto DONE;
 	}
+
+@footer_action = ("", $text{'index_return'});
 &$second_print($text{'setup_done'});
 
 # Call the migration function
@@ -142,17 +135,19 @@ if (&reseller_admin()) {
 
 if (@doms) {
 	$d = $doms[0];
-	&$second_print(&text('migrate_ok', "edit_domain.cgi?dom=$d->{'id'}", scalar(@doms)));
+	&$second_print(&text('migrate_ok', "edit_domain.cgi?dom=$d->{'id'}",
+	                                   "<tt>".&html_escape($in->{'dom'} || $d->{'dom'})."</tt>"));
 
 	# Call any theme post command
 	if (defined(&theme_post_save_domain)) {
-		&theme_post_save_domain(\%dom, 'create');
+		&theme_post_save_domain($d, 'create');
 		}
 	}
 else {
+	@footer_action = &vui_footer_history_back();
 	&$second_print(&text('migrate_failed'));
 	}
 
 DONE:
-&ui_print_footer("", $text{'index_return'});
+&ui_print_footer(@footer_action);
 

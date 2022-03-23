@@ -265,8 +265,21 @@ $opts->{'skip'} = $skip;
 $desturls = [ $desturls ] if (!ref($desturls));
 local $backupdir;
 local $transferred_sz;
-$compression = $config{'compression'}
-	if (!defined($compression) || $compression eq '');
+
+# Work out the compression format
+if (!$dirfmt && !$homefmt) {
+	# If backing up to a single file, use the extension to determine the
+	# compression format
+	my $c = &suffix_to_compression($desturls->[0]);
+	if ($c >= 0) {
+		$compression = $c;
+		}
+	}
+if (!defined($compression) || $compression eq '') {
+	# Use global config option for compression format
+	$compression = $config{'compression'}
+	}
+$opts->{'dir'}->{'compression'} = $compression;
 
 # Check if the limit on running backups has been hit
 local $err = &check_backup_limits($asowner, $onsched, $desturl);
@@ -510,12 +523,11 @@ foreach my $desturl (@$desturls) {
 		}
 	elsif ($mode == 10) {
 		# Connect to Backblaze and create the bucket
-		local $buckets = &list_bb_buckets();
-		if (!ref($buckets)) {
-			&$first_print($buckets);
+		local $already = &get_bb_bucket($server);
+		if ($already && !ref($already)) {
+			&$first_print($already);
 			next;
 			}
-		my ($already) = grep { $_->{'name'} eq $server } @$buckets;
 		if (!$already) {
 			local $err = &create_bb_bucket($server);
 			if ($err) {
@@ -854,6 +866,13 @@ DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
 			}
 		}
 
+	# At this point the .backup directory is in a tar file, so we can 
+	# remove it to save disk space
+	if ($homefmt && $backupdir &&
+	    &is_under_directory($d->{'home'}, $backupdir)) {
+		&execute_command("rm -rf ".quotemeta($backupdir));
+		}
+
 	DOMAINFAILED:
 	&enable_quotas($d);
 	DOMAINFAILED_NOQUOTAS:
@@ -1133,13 +1152,11 @@ if ($ok) {
 			local $comp = "cat";
 			if ($compression == 0) {
 				$destfile .= ".gz";
-				$comp = &get_gzip_command().
-					" -c $config{'zip_args'}";
+				$comp = &get_gzip_command();
 				}
 			elsif ($compression == 1) {
 				$destfile .= ".bz2";
-				$comp = &get_bzip2_command().
-					" -c $config{'zip_args'}";
+				$comp = &get_bzip2_command();
 				}
 			elsif ($compression == 3) {
 				$destfile =~ s/\.tar$/\.zip/;
@@ -1168,18 +1185,20 @@ if ($ok) {
 			&execute_command($toucher);
 
 			# Start the tar command
+			my @dfiles = &expand_glob_to_files(
+				$backupdir, "$d->{'dom'}_*");
 			if ($compression == 3) {
 				# ZIP does both archiving and compression
 				&execute_command("cd $backupdir && ".
-					 "zip -r - $d->{'dom'}_* | ".
-					 $writer,
-					 undef, \$out, \$err);
+				    &make_zip_command("", "-", @dfiles)." | ".
+				    $writer,
+				    undef, \$out, \$err);
 				}
 			else {
 				&execute_command(
 					"cd $backupdir && ".
 					"(".&make_tar_command(
-					    "cf", "-", "$d->{'dom'}_*")." | ".
+					    "cf", "-", @dfiles)." | ".
 					"$comp) 2>&1 | $writer",
 					undef, \$out, \$err);
 				}
@@ -1200,12 +1219,10 @@ if ($ok) {
 		# Tar up the directory into the final file
 		local $comp = "cat";
 		if ($dest =~ /\.(gz|tgz)$/i) {
-			$comp = &get_gzip_command().
-				" -c $config{'zip_args'}";
+			$comp = &get_gzip_command();
 			}
 		elsif ($dest =~ /\.(bz2|tbz2)$/i) {
-			$comp = &get_bzip2_command().
-				" -c $config{'zip_args'}";
+			$comp = &get_bzip2_command();
 			}
 
 		# Create writer command, which may run as the domain user
@@ -1234,14 +1251,14 @@ if ($ok) {
 		if ($dest =~ /\.zip$/i) {
 			# Use zip command to archive and compress
 			&execute_command("cd $backupdir && ".
-					 "zip -r - . | $writer",
-					 undef, \$out, \$err);
+				 &make_zip_command("", "-", ".")." | $writer",
+				 undef, \$out, \$err);
 			}
 		else {
 			&execute_command("cd $backupdir && ".
-					 "(".&make_tar_command("cf", "-", ".").
-					 " | $comp) 2>&1 | $writer",
-					 undef, \$out, \$err);
+				 "(".&make_tar_command("cf", "-", ".").
+				 " | $comp) 2>&1 | $writer",
+				 undef, \$out, \$err);
 			}
 		if ($? || !-s $dest) {
 			$out ||= $err;
@@ -1262,7 +1279,7 @@ if (@$vbs && ($homefmt || $dirfmt)) {
 	local $vdestfile;
 	local ($out, $err);
 	if (&has_command("gzip")) {
-		$comp = &get_gzip_command()." -c $config{'zip_args'}";
+		$comp = &get_gzip_command();
 		$vdestfile = "virtualmin.tar.gz";
 		}
 	else {
@@ -1273,9 +1290,10 @@ if (@$vbs && ($homefmt || $dirfmt)) {
 	if ($key) {
 		$comp = $comp." | ".&backup_encryption_command($key);
 		}
+	my @vfiles = &expand_glob_to_files($backupdir, "virtualmin_*");
 	&execute_command(
 	    "cd $backupdir && ".
-	    "(".&make_tar_command("cf", "-", "virtualmin_*").
+	    "(".&make_tar_command("cf", "-", @vfiles).
 	    " | $comp > $dest/$vdestfile) 2>&1",
 	    undef, \$out, \$out);
 	&set_ownership_permissions(undef, undef, 0600,
@@ -2165,7 +2183,7 @@ if ($ok) {
 	}
 
 # Make sure any domains we need to re-create have a Virtualmin info file
-foreach $d (@{$_[1]}) {
+foreach $d (@$doms) {
 	if ($d->{'missing'}) {
 		if (!-r "$restoredir/$d->{'dom'}_virtualmin") {
 			&$second_print(&text('restore_missinginfo',
@@ -2419,6 +2437,25 @@ if ($ok) {
 				if (!$dnsparent) {
 					delete($d->{'dns_subof'});
 					delete($d->{'dns_submode'});
+					}
+				}
+
+			# If the domain had a custom ugroup before, make sure
+			# it exists on the new system
+			if (!$parentdom && $d->{'gid'} != $d->{'ugid'} &&
+			    !getgrnam($d->{'ugroup'})) {
+				if ($skipwarnings) {
+					&$second_print(&text('restore_eugroup2',
+							     $d->{'ugroup'}));
+					$d->{'ugroup'} = $d->{'group'};
+					$d->{'ugid'} = $d->{'gid'};
+					}
+				else {
+					&$second_print(&text('restore_eugroup',
+							     $d->{'ugroup'}));
+					$ok = 0;
+					if ($continue) { next DOMAIN; }
+					else { last DOMAIN; }
 					}
 				}
 
@@ -2797,27 +2834,32 @@ if ($ok) {
 				     $f eq "mail" &&
 				     &can_domain_have_users($d))) {
 					local $ffile;
-					local $p = "$backup/$d->{'dom'}.tar";
+					local $p = "$backup/$d->{'dom'}";
 					local $hft =
-					    $homeformat{"$p.gz"} ||
-					    $homeformat{"$p.bz2"}||
-					    $homeformat{$p} ||
+					    $homeformat{"$p.tar.gz"} ||
+					    $homeformat{"$p.tar.bz2"}||
+					    $homeformat{"$p.tar"} ||
+					    $homeformat{"$p.zip"} ||
 					    $homeformat{$backup};
+					local @fopts;
 					if ($hft && $f eq "dir") {
 						# For a home-format backup, the
 						# backup itself is the home
 						$ffile = $hft;
+						@fopts = ( $ffile );
 						}
 					else {
 						$ffile = $restoredir."/".
 							 $d->{'dom'}."_".$f;
+						@fopts = ( $ffile, glob("$ffile.*") );
 						}
 					if ($f eq "virtualmin") {
 						# If restoring the virtualmin
 						# info, keep old feature file
 						&read_file($ffile, \%oldd);
 						}
-					if (-r $ffile) {
+					my @fany = grep { -r $_ } @fopts;
+					if (@fany) {
 						# Call the restore function
 						$fok = &$rfunc($d, $ffile,
 						     $opts->{$f}, $opts, $hft,
@@ -3887,6 +3929,9 @@ elsif ($url =~ /^bb:\/\/([^\/]+)(\/(\S+))?$/) {
 elsif ($url eq "download:") {
 	@rv = (4, undef, undef, undef, undef, undef);
 	}
+elsif ($url eq "downloadlink:") {
+	@rv = (44, undef, undef, undef, undef, undef);
+	}
 elsif ($url eq "upload:") {
 	@rv = (5, undef, undef, undef, undef, undef);
 	}
@@ -3927,6 +3972,9 @@ elsif ($proto == 0) {
 	}
 elsif ($proto == 4) {
 	$rv = $text{'backup_nicedownload'};
+	}
+elsif ($proto == 44) {
+	$rv = $text{'backup_nicedownloadlink'};
 	}
 elsif ($proto == 5) {
 	$rv = $text{'backup_niceupload'};
@@ -4202,6 +4250,8 @@ if (!$nodownload) {
 	# Show mode to download in browser
 	push(@opts, [ 4, $text{'backup_mode4'},
 		      $text{'backup_mode4desc'}."<p>" ]);
+	push(@opts, [ 44, $text{'backup_mode44'},
+		      $text{'backup_mode44desc'}."<p>" ]);
 	}
 
 if (!$noupload) {
@@ -4316,6 +4366,10 @@ elsif ($mode == 3) {
 elsif ($mode == 4) {
 	# Just download
 	return "download:";
+	}
+elsif ($mode == 44) {
+	# Generate download link
+	return "downloadlink:";
 	}
 elsif ($mode == 5) {
 	# Uploaded file
@@ -4534,9 +4588,59 @@ if ($config{'tar_args'}) {
 		}
 	}
 $cmd .= " ".$flags;
-$cmd .= " ".$output;
-$cmd .= " ".join(" ", @files) if (@files);
+$cmd .= " ".quotemeta($output);
+$cmd .= " ".join(" ", map { quotemeta($_) } @files) if (@files);
+if (&has_no_file_changed()) {
+	# Don't fail if a file was changed while read
+	$cmd .= " --warning=no-file-changed";
+	}
 return $cmd;
+}
+
+# make_zip_command(flags, output, file, ...)
+# Returns a ZIP command using the given flags writing to the given output
+sub make_zip_command
+{
+my ($flags, $output, @files) = @_; 
+my $zip = &has_command("zip") || "zip";
+my $cmd = $zip." -r ".quotemeta($output).
+	  " ".join(" ", map { quotemeta($_) } @files);
+if ($flags) {
+	$cmd .= " ".$flags;
+	}
+return $cmd;
+}
+
+# make_archive_command(compression, directory, output, file, ...)
+# Returns a command to create an archive of the given files
+sub make_archive_command
+{
+my ($compression, $dir, $out, @files) = @_;
+if ($compression == 3) {
+	return "cd ".quotemeta($dir)." && ".
+	       &make_zip_command("", $out, @files);
+	}
+else {
+	return "cd ".quotemeta($dir)." && ".
+	       &make_tar_command("cf", $out, @files);
+	}
+}
+
+# make_unarchive_command(directory, input, [@files])
+# Returns a command to extract an archive, possibly for just some files
+sub make_unarchive_command
+{
+my ($dir, $out, @files) = @_;
+my $cf = &compression_format($out);
+if ($cf == 4) {
+	my $qfiles = join(" ", map { quotemeta($_) } @files);
+	return "cd ".quotemeta($dir)." && ".
+	       "unzip -o ".quotemeta($out)." ".$qfiles;
+	}
+else {
+	return "cd ".quotemeta($dir)." && ".
+	       &make_tar_command("xf", $out, @files);
+	}
 }
 
 # get_bzip2_command()
@@ -4544,7 +4648,9 @@ return $cmd;
 sub get_bzip2_command
 {
 local $cmd = $config{'pbzip2'} ? 'pbzip2' : 'bzip2';
-return &has_command($cmd) || $cmd;
+local $fullcmd = &has_command($cmd) || $cmd;
+$fullcmd .= " -c $config{'zip_args'}";
+return $fullcmd;
 }
 
 # get_bunzip2_command()
@@ -4568,7 +4674,9 @@ else {
 sub get_gzip_command
 {
 local $cmd = $config{'pigz'} ? 'pigz' : 'gzip';
-return &has_command($cmd) || $cmd;
+local $fullcmd = &has_command($cmd) || $cmd;
+$fullcmd .= " -c $config{'zip_args'}";
+return $fullcmd;
 }
 
 # get_gunzip_command()
@@ -5873,6 +5981,17 @@ return $c == 0 ? "tar.gz" :
        $c == 3 ? "zip" : "tar";
 }
 
+# suffix_to_compression(filename)
+# Use the suffix of a filename to determine the compression format number
+sub suffix_to_compression
+{
+my ($file) = @_;
+return $file =~ /\.zip$/i ? 3 :
+       $file =~ /\.tar\.gz$/i ? 0 :
+       $file =~ /\.tar\.bz2$/i ? 1 :
+       $file =~ /\.tar$/i ? 2 : -1;
+}
+
 # set_backup_envs(&backup, &doms, [ok|failed])
 # Set environment variables from a backup object
 sub set_backup_envs
@@ -5933,6 +6052,22 @@ return { 'host' => $server,
 	 'fast' => $already ? $already->{'fast'} : 1,
 	 'user' => $user,
 	 'pass' => $pass };
+}
+
+# expand_glob_to_files(directory, glob, ...)
+# Given a list of globs relative to some directory, return the actual files
+# also relative to that directory
+sub expand_glob_to_files
+{
+my ($dir, @globs) = @_;
+my @files;
+foreach my $g (@globs) {
+	push(@files, glob("$dir/$g"));
+	}
+foreach my $f (@files) {
+	$f =~ s/^\Q$dir\E\///;
+	}
+return @files;
 }
 
 1;

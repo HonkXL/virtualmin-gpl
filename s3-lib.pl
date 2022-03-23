@@ -7,16 +7,23 @@ $s3_groups_uri = "http://acs.amazonaws.com/groups/global/";
 # Returns an error message if S3 cannot be used
 sub check_s3
 {
+# Return no error if `aws_cmd` is set and installed
+if ($config{'aws_cmd'} && &has_command($config{'aws_cmd'})) {
+	return undef;
+	}
+my $s3_inbuilt_err;
+my $s3_official_err;
+my $s3_echeck_pre_err = "<i data-no-cloud-echeck></i>";
 foreach my $m ("XML::Simple", "Digest::HMAC_SHA1",
                "LWP::Protocol::https", @s3_perl_modules) {
 	eval "use $m";
 	if ($@ =~ /Can't locate/) {
-		return &text('s3_emodule', "<tt>$m</tt>") .
+		$s3_inbuilt_err = &text('s3_emodule', "<tt>$m</tt>") .
 			&vui_install_mod_perl_link(
 				$m, "list_buckets.cgi", $text{'index_buckets'});
 		}
 	elsif ($@) {
-		return &text('s3_emodule2', "<tt>$m</tt>", "$@");
+		$s3_inbuilt_err = &text('s3_emodule2', "<tt>$m</tt>", "$@");
 		}
 	}
 eval "use Crypt::SSLeay";
@@ -24,11 +31,38 @@ if ($@) {
 	eval "use Net::SSLeay";
 	}
 if ($@) {
-	return &text('s3_emodule3', "<tt>Crypt::SSLeay</tt>",
+	$s3_inbuilt_err = &text('s3_emodule3', "<tt>Crypt::SSLeay</tt>",
 				    "<tt>Net::SSLeay</tt>") .
 			&vui_install_mod_perl_link(
 				'Net::SSLeay', "list_buckets.cgi", $text{'index_buckets'});
 	}
+
+if ($config{'aws_cmd'} && !&has_command($config{'aws_cmd'})) {
+	my $install_link;
+	if (&foreign_available("software")) {
+		$install_link = " " . &text('cloud_s3_noawscli_install', 'install_awscli.cgi');
+		}
+	$s3_official_err =
+		&ui_alert_box(
+			$text{$s3_inbuilt_err ? 'cloud_s3_noawscli2' : 'cloud_s3_noawscli'} . $install_link,
+			$s3_inbuilt_err ? 'danger' : 'warn', undef, undef, $s3_inbuilt_err ? undef : "");
+	}
+# Return an error if `aws_cmd` is not set, and
+# required Perl modules not installed
+if (!$config{'aws_cmd'} && $s3_inbuilt_err) {
+	$s3_inbuilt_err = &ui_alert_box($s3_inbuilt_err, 'danger');
+	return "$s3_echeck_pre_err$s3_inbuilt_err";
+}
+# Return an error if `aws_cmd` is set, and 
+# netiher Perl modules or AWS CLI installed
+if (($config{'aws_cmd'} && $s3_inbuilt_err) && $s3_official_err) {
+	return "$s3_echeck_pre_err$s3_official_err";
+}
+# Just print a warning that it's better to use AWS CLI if 
+# Perl modules are the and `aws_cmd` is set
+if (($config{'aws_cmd'} && !$s3_inbuilt_err) && $s3_official_err) {
+	print "$s3_official_err";
+}
 return undef;
 }
 
@@ -281,7 +315,8 @@ for(my $i=0; $i<$tries; $i++) {
 			}
 		}
 	elsif ($line !~ /^HTTP\/1\..\s+(200|30[0-9])(\s+|$)/) {
-		$err = "Invalid HTTP response : $line";
+		my ($out1) = split(/\r?\n/, $out);
+		$err = "Invalid HTTP response : $line : $out1";
 		}
 	elsif ($1 >= 300 && $1 < 400) {
 		# Follow the SOAP redirect
@@ -1014,7 +1049,7 @@ return ("us-east-1", "us-east-2", "us-west-1", "us-west-2", "af-south-1",
 sub can_use_aws_s3_cmd
 {
 my ($akey, $skey, $zone) = @_;
-return &can_use_aws_cmd($akey, $akey, $zone, \&call_aws_s3_cmd, "ls");
+return &can_use_aws_cmd($akey, $skey, $zone, \&call_aws_s3_cmd, "ls");
 }
 
 # can_use_aws_cmd(access-key, secret-key, [default-zone], &testfunc, cmd, ...)
@@ -1024,7 +1059,7 @@ sub can_use_aws_cmd
 {
 my ($akey, $skey, $zone, $func, @cmd) = @_;
 if (!$config{'aws_cmd'} || !&has_command($config{'aws_cmd'})) {
-	return wantarray ? (0, "The aws command is not installed") : 0;
+	return wantarray ? (0, "The <tt>aws</tt> command is not installed") : 0;
 	}
 if (defined($can_use_aws_cmd_cache{$akey})) {
 	return wantarray ? @{$can_use_aws_cmd_cache{$akey}}

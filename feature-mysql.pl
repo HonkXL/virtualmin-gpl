@@ -220,12 +220,18 @@ if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0 ||
 		foreach my $ddb (&domain_databases($d, [ "mysql" ])) {
 			my $qddb = &quote_mysql_database($ddb->{'name'});
 			if ($qddb ne $qdb) {
-				&execute_dom_sql($d, $mysql::master_db, "grant all on `$qddb`.* to '$user'\@'$host' with grant option");
+				eval {
+					local $main::error_must_die = 1;
+					&execute_dom_sql($d, $mysql::master_db, "grant all on `$qddb`.* to '$user'\@'$host' with grant option");
+					}
 				}
 			}
 		}
 	# Update given database
-	&execute_dom_sql($d, $mysql::master_db, "grant all on `$qdb`.* to '$user'\@'$host' with grant option");
+	eval {
+		local $main::error_must_die = 1;
+		&execute_dom_sql($d, $mysql::master_db, "grant all on `$qdb`.* to '$user'\@'$host' with grant option");
+		}
 	}
 else {
 	# Can update the DB table directly
@@ -1048,6 +1054,7 @@ sub backup_mysql
 {
 local ($d, $file, $opts, $homefmt, $increment, $asd, $allopts, $key) = @_;
 &require_mysql();
+my $compression = $allopts->{'dir'}->{'compression'};
 
 # Find all domain's databases
 local $tmpl = &get_template($d->{'template'});
@@ -1103,10 +1110,10 @@ foreach $db (@dbs) {
 				     "<pre>$err</pre>"));
 		$ok = 0;
 		}
-	elsif ($config{'gzip_mysql'}) {
+	elsif ($config{'gzip_mysql'} && $compression == 2) {
 		# Backup worked .. gzip the file
 		unlink($dbfile.".gz");	# Prevent malicious symlink
-		my $out = &backquote_logged(
+		my $out = &run_as_domain_user($d, 
 			&get_gzip_command()." ".quotemeta($dbfile)." 2>&1");
 		if ($?) {
 			&$second_print(&text('backup_mysqlgzipfailed',
@@ -1248,7 +1255,7 @@ foreach my $db (@dbs) {
 	if ($db->[1] =~ /(.*)\.gz$/) {
 		# Need to uncompress first
 		unlink("$1");	# To prevent malicious link overwrite
-		local $out = &backquote_logged(
+		my $out = &run_as_domain_user($d, 
 			&get_gunzip_command()." ".quotemeta($db->[1])." 2>&1");
 		if ($?) {
 			&$second_print(&text('restore_mysqlgunzipfailed',
@@ -1715,9 +1722,9 @@ if (!@hosts) {
 	if ($always == 2 ||
 	    $myconfig{'host'} && $myconfig{'host'} ne 'localhost') {
 		# Add this host too, as we are talking to a remote server
-		push(@hosts, &get_system_hostname());
-		local $myip = &to_ipaddress(&get_system_hostname());
-		push(@hosts, $myip) if ($myip);
+		local $myhost = &get_system_hostname();
+		local $myip = &to_ipaddress($myhost);
+		push(@hosts, $myip || $myhost);
 		}
 	if (&indexof("%", @hosts) >= 0) {
 		# All hosts allowed - no need for other entries

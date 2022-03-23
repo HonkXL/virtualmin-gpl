@@ -292,8 +292,16 @@ sub restart_usermin
 local %miniserv;
 &usermin::get_usermin_miniserv_config(\%miniserv);
 if (&check_pid_file($miniserv{'pidfile'})) {
-	&usermin::restart_usermin_miniserv();
-	&$second_print($text{'setup_done'});
+	eval {
+		local $main::error_must_die = 1;
+		&usermin::restart_usermin_miniserv();
+		};
+	if ($@) {
+		&$second_print(&text('setup_usermindown2', "$@"));
+		}
+	else {
+		&$second_print($text{'setup_done'});
+		}
 	}
 else {
 	&$second_print($text{'setup_usermindown'});
@@ -778,22 +786,6 @@ else {
 	@mods = grep { $_ ne "mailboxes" } @mods;
 	}
 
-if ($extramods{'webminlog'} && $_[0]->{'webmin'}) {
-	# Can view own actions, and those of extra admins
-	local @users = ( $_[0]->{'user'} );
-	if ($virtualmin_pro) {
-		push(@users, map { $_->{'name'} } &list_extra_admins($_[0]));
-		}
-	local %acl = ( 'users' => join(" ", @users),
-		       'rollback' => 0 );
-	&save_module_acl_logged(\%acl, $_[1]->{'name'}, "webminlog")
-		if (!$hasmods{'webminlog'});
-	push(@mods, "webminlog");
-	}
-else {
-	@mods = grep { $_ ne "webminlog" } @mods;
-	}
-
 if ($extramods{'syslog'} && $_[0]->{'webmin'}) {
 	# Can view log files for Apache and ProFTPd
 	local @extras;
@@ -921,6 +913,24 @@ if (!$nofeatures) {
 				}
 			}
 		}
+	}
+
+if ($extramods{'webminlog'} && $_[0]->{'webmin'}) {
+	# Can view own actions, and those of extra admins. This has to be
+	# done last, to have access to the list of modules.
+	local @users = ( $_[0]->{'user'} );
+	if ($virtualmin_pro) {
+		push(@users, map { $_->{'name'} } &list_extra_admins($_[0]));
+		}
+	local %acl = ( 'users' => join(" ", @users),
+		       'mods' => join(" ", @mods),
+		       'rollback' => 0 );
+	&save_module_acl_logged(\%acl, $_[1]->{'name'}, "webminlog")
+		if (!$hasmods{'webminlog'});
+	push(@mods, "webminlog");
+	}
+else {
+	@mods = grep { $_ ne "webminlog" } @mods;
 	}
 
 # Finally, override in settings from template Webmin group
@@ -1115,7 +1125,9 @@ foreach my $admin (@admins) {
 # Create a tar file of all .acl files, for the server owner and extra admins
 sub backup_webmin
 {
-local ($d, $file, $opts) = @_;
+local ($d, $file, $opts, $homefmt, $increment, $asd, $allopts, $key) = @_;
+local $compression = $allopts->{'dir'}->{'compression'};
+local $destfile = $file.".".&compression_to_suffix($compression);
 &$first_print($text{'backup_webmin'});
 &require_acl();
 
@@ -1170,12 +1182,12 @@ if (!@files) {
 
 # Tar them all up
 local $temp = &transname();
-local $out = &backquote_command(
-	"cd $config_directory && ".
-	"tar cf ".quotemeta($temp)." ".join(" ", @files)." 2>&1");
+@files = &expand_glob_to_files($config_directory, @files);
+local $out = &backquote_command(&make_archive_command(
+		$compression, $config_directory, $temp, @files)." 2>&1");
 my $ex = $?;
 if (!$ex) {
-	&copy_write_as_domain_user($d, $temp, $file);
+	&copy_write_as_domain_user($d, $temp, $destfile);
 	}
 &unlink_file($temp);
 &unlink_file(@acltemp) if (@acltemp);
@@ -1194,12 +1206,16 @@ else {
 sub restore_webmin
 {
 local ($d, $file, $opts) = @_;
+local $srcfile = $file;
+if (!-r $srcfile) {
+	($srcfile) = glob("$file.*");
+	}
 &$first_print($text{'restore_webmin'});
 &require_acl();
 
 &obtain_lock_webmin($_[0]);
-local $out = &backquote_logged(
-	"cd $config_directory && tar xf ".quotemeta($file)." 2>&1");
+local $out = &backquote_command(
+	&make_unarchive_command($config_directory, $srcfile)." 2>&1");
 local $rv;
 if ($?) {
 	&$second_print(&text('backup_webminfailed', "<pre>$out</pre>"));
@@ -1237,11 +1253,18 @@ return $rv;
 # Returns a link to the Webmin Actions Log module
 sub links_webmin
 {
-local ($d) = @_;
+my ($d) = @_;
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+return ( ) if ($miniserv{'log'} eq '0');
+# If login name doesn't equal username in search, it's useless,
+# this is why we will search on currently selected domain name
+# in description, so it works fine for both master/reseller and
+# server owner
 return ( { 'mod' => 'webminlog',
-	   'desc' => $text{'links_webminlog'},
-	   'page' => "search.cgi?uall=0&user=".&urlize($d->{'user'}).
-		     "&mall=1&tall=2&fall=1",
+	   'desc' => $text{'links_webminlog_dom'},
+	   'page' => "search.cgi?uall=1&desc=".&urlize($d->{'dom'})."&search_sub_title=".&urlize(&domain_in($d)).
+		     "&mall=1&tall=1&fall=1&search_title=$text{'links_webminlog_dom'}&no_return=1",
 	   'cat' => 'logs',
 	 } );
 return ( );

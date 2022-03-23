@@ -20,9 +20,11 @@ return ( "intro",
 	 "db",
 	 $config{'mysql'} ? ( "mysql", "mysize" ) : ( ),
 	 $config{'dns'} ? ( "dns" ) : ( ),
+	 "done",
 	 "hashpass",
+	 "ssldir",
 	 "defdom",
-	 "done" );
+	 "alldone" );
 }
 
 sub wizard_show_intro
@@ -34,7 +36,7 @@ print &ui_table_row(undef,
 # Show a form to enable or disable pre-loading and lookup-domain-daemon
 sub wizard_show_memory
 {
-print &ui_table_row(undef, $text{'wizard_memory'}, 2);
+print &ui_table_row(undef, $text{'wizard_memory'}. "<p></p>", 2);
 
 local $mem = &get_uname_arch() =~ /64/ ? "40M" : "20M";
 print &ui_table_row($text{'wizard_memory_preload'},
@@ -94,7 +96,7 @@ return undef;
 # Show a form asking the user if he wants to run clamd
 sub wizard_show_virus
 {
-print &ui_table_row(undef, $text{'wizard_virusnew'}, 2);
+print &ui_table_row(undef, $text{'wizard_virusnew'} . "<p></p>", 2);
 local $cs = &check_clamd_status();
 if ($cs != -1) {
 	$cs = 2 if (!$cs && $config{'virus'});
@@ -105,7 +107,7 @@ if ($cs != -1) {
 			    [ 0, $text{'wizard_virus0'} ] ]));
 	}
 else {
-	print &ui_table_row($text{'wizard_clamdnone'});
+	print &ui_table_row(undef, "<b>$text{'wizard_clamdnone'}</b>");
 	}
 }
 
@@ -178,7 +180,7 @@ return undef;
 # Show a form asking the user if he wants to run spamd
 sub wizard_show_spam
 {
-print &ui_table_row(undef, $text{'wizard_spam'}, 2);
+print &ui_table_row(undef, $text{'wizard_spam'} . "<p></p>", 2);
 local $cs = &check_spamd_status();
 if ($cs != -1) {
 	print &ui_table_row($text{'wizard_spamd'},
@@ -226,15 +228,11 @@ return undef;
 # Ask the user if he wants to run MySQL and/or PostgreSQL
 sub wizard_show_db
 {
-print &ui_table_row(undef, $text{'wizard_db'}, 2);
+print &ui_table_row(undef, $text{'wizard_db'}. "<p></p>", 2);
 print &ui_table_row($text{'wizard_db_mysql'},
-	&ui_radio("mysql", $config{'mysql'} ? 1 : 0,
-		  [ [ 1, $text{'wizard_db_mysql1'}."<br>" ],
-		    [ 0, $text{'wizard_db_mysql0'} ] ]));
+                    &ui_yesno_radio("mysql", $config{'mysql'}));
 print &ui_table_row($text{'wizard_db_postgres'},
-	&ui_radio("postgres", $config{'postgres'} ? 1 : 0,
-		  [ [ 1, $text{'wizard_db_postgres1'}."<br>" ],
-		    [ 0, $text{'wizard_db_postgres0'} ] ]));
+                    &ui_yesno_radio("postgres", $config{'postgres'}));
 }
 
 # Enable or disable MySQL and PostgreSQL, depending on user's selections
@@ -319,7 +317,7 @@ else {
 	print &ui_hidden("needchange", 0);
 	print &ui_table_row(undef, $text{'wizard_mysql'} . " " .
 			   ($mysql::mysql_pass ? $text{'wizard_mysql3'}
-					       : $text{'wizard_mysql2'}), 2);
+					       : $text{'wizard_mysql2'}) . "<p></p>", 2);
 	if ($mysql::mysql_pass) {
 		print &ui_table_row($text{'wizard_mysql_pass'},
 			&ui_opt_textbox("mypass", undef, 20,
@@ -421,7 +419,7 @@ return undef;
 # Show a form to select the MySQL size configuration
 sub wizard_show_mysize
 {
-print &ui_table_row(undef, $text{'wizard_mysize'}, 2);
+print &ui_table_row(undef, $text{'wizard_mysize'} . "<p></p>", 2);
 
 &require_mysql();
 if (-r $mysql::config{'my_cnf'}) {
@@ -449,18 +447,24 @@ if (-r $mysql::config{'my_cnf'}) {
 				}
 			}
 		}
+	my $recom = 'wizard_myrec';
 	my $def_msg;
 	if ($currt) {
 		$def_msg = $text{"wizard_mysize_$currt"};
-		($def_msg) = $def_msg =~ /(.*?\(\d+.+?\S*\))/;
+		($def_msg) = $def_msg =~ /.*?(\(\d+.+?\S*\))/;
 		}
+	# Initial wizard run cannot have current
+	my $can_current = ($config{'wizard_run'} && $currt);
+	# All types like 'small' 'medium' 'large' and 'huge'
+	my @types_r = map { [ $_, $text{'wizard_mysize_'.$_}.
+			        ($_ eq $recsize ? " <span data-$recom>$text{$recom}</span>" : "") ] } @types;
+	# Default type (i.e. 'Leave default settings', and will not be displayed
+	# on initial wizard run (no current yet) but will be selected on re-run)
+	my $type_def = [ "", $text{'wizard_mysize_def'}. ($def_msg ? " $def_msg" : "") ];
+	# All types depend on if wizard runs the first time or not
+	my $types_all = $can_current ? [ $type_def,  @types_r ] : [ @types_r ];
 	print &ui_table_row($text{'wizard_mysize_type'},
-		    &ui_radio_table("mysize", $mysize,
-		      [ [ "", $text{'wizard_mysize_def'}.
-			      ($def_msg ? " - $def_msg" : "") ],
-			map { [ $_, $text{'wizard_mysize_'.$_}.
-			        ($_ eq $recsize ? " $text{'wizard_myrec'}" : "")
-			      ] } @types ]));
+		    &ui_radio_table("mysize", ($can_current ? undef : $recsize), $types_all));
 	}
 else {
 	print &ui_table_row(&text('wizard_mysize_ecnf',
@@ -551,7 +555,7 @@ return undef;
 sub wizard_show_dns
 {
 &require_bind();
-print &ui_table_row(undef, $text{'wizard_dns'}, 2);
+print &ui_table_row(undef, $text{'wizard_dns'} . "<p></p>", 2);
 
 # Primary nameserver
 local $tmpl = &get_template(0);
@@ -562,7 +566,8 @@ local $master = $tmaster ||
 		&get_system_hostname();
 print &ui_table_row($text{'wizard_dns_prins'},
 		    &ui_textbox("prins", $master, 40)." ".
-		    &ui_checkbox("prins_skip", 1, $text{'wizard_dns_skip'}, 0));
+		    &ui_checkbox("prins_skip", 1, $text{'wizard_dns_skip'},
+				 $config{'prins_skip'}));
 
 # Secondaries (optional)
 local @secns = split(/\s+/, $tmpl->{'dns_ns'});
@@ -605,11 +610,22 @@ foreach my $ns (split(/\s+/, $in->{'secns'})) {
 	}
 $tmpl->{'dns_ns'} = join(" ", @secns);
 &save_template($tmpl);
+
+# Save skip option
+$config{'prins_skip'} = $in{'prins_skip'};
+&save_module_config();
 }
 
 sub wizard_show_done
 {
-print &ui_table_row(undef, &text('wizard_done'), 2);
+print &ui_table_row(undef, $text{'wizard_done'}, 2);
+
+print &ui_table_row(undef, $text{'wizard_done2'}, 2);
+}
+
+sub wizard_show_alldone
+{
+print &ui_table_row(undef, &text('wizard_alldone'), 2);
 
 # If user sets up a default domain, refresh navigation menu with it
 if (defined(&theme_post_save_domain) && $in{'refresh'}) {
@@ -618,7 +634,7 @@ if (defined(&theme_post_save_domain) && $in{'refresh'}) {
 	}
 }
 
-sub wizard_parse_done
+sub wizard_parse_alldone
 {
 return undef;	# Always works
 }
@@ -627,14 +643,13 @@ return undef;	# Always works
 # Ask the user if he wants to enable storage of hashed passwords only
 sub wizard_show_hashpass
 {
-print &ui_table_row(undef, $text{'wizard_hashpass'}, 2);
+print &ui_table_row(undef, "$text{'wizard_hashpass'} $text{'wizard_hashpass_warn'}<br><br>", 2);
 
 local $tmpl = &get_template(0);
 print &ui_table_row($text{'wizard_hashpass_mode'},
 	&ui_radio("hashpass", $tmpl->{'hashpass'} ? 1 : 0,
 		  [ [ 0, $text{'wizard_hashpass_mode0'}."<br>" ],
 		    [ 1, $text{'wizard_hashpass_mode1'} ] ]));
-print &ui_table_row(undef, "<b>$text{'wizard_hashpass_warn'}</b>", 2);
 }
 
 # wizard_parse_hashpass(&in)
@@ -682,6 +697,87 @@ if ($in->{'hashpass'} && &foreign_check("usermin")) {
 return undef;
 }
 
+sub wizard_show_ssldir
+{
+print &ui_table_row(undef, $text{'wizard_ssldir'} . "<p></p>", 2);
+
+my $tmpl = &get_template(0);
+my $mode;
+if ($tmpl->{'cert_key_tmpl'} &&
+    $tmpl->{'cert_cert_tmpl'} eq 'auto' &&
+    $tmpl->{'cert_ca_tmpl'} eq 'auto' &&
+    $tmpl->{'cert_combined_tmpl'} eq 'auto' &&
+    $tmpl->{'cert_everything_tmpl'} eq 'auto') {
+	# Some custom dir
+	if ($tmpl->{'cert_key_tmpl'} eq $ssl_certificate_dir."/ssl.key") {
+		# Standard dir
+		$mode = 1;
+		}
+	else {
+		$mode = 2;
+		}
+	}
+elsif (!$tmpl->{'cert_key_tmpl'} &&
+       !$tmpl->{'cert_cert_tmpl'} &&
+       !$tmpl->{'cert_ca_tmpl'} &&
+       !$tmpl->{'cert_combined_tmpl'} &&
+       !$tmpl->{'cert_everything_tmpl'}) {
+	# Default which uses home dir
+	$mode = 0;
+	}
+else {
+	# Some other setting
+	$mode = 3;
+	}
+my @opts = ( [ 0, $text{'wizard_ssldir_mode0'} ],
+	     [ 1, &text('wizard_ssldir_mode1',
+			"<tt>$ssl_certificate_parent</tt>&nbsp;") ] );
+if ($mode == 2) {
+	push(@opts, [ 2, $text{'wizard_ssldir_mode2'},
+			 &ui_textbox("ssldir_custom",
+				$tmpl->{'cert_key_tmpl'}, 40) ]);
+	}
+if ($mode == 3) {
+	push(@opts, [ 3, $text{'wizard_ssldir_mode3'} ]);
+	}
+print &ui_table_row($text{'wizard_ssldir_mode'},
+	&ui_radio_table("ssldir", $mode, \@opts));
+}
+
+# wizard_parse_ssldir(&in)
+# Save SSL cert directory options
+sub wizard_parse_ssldir
+{
+my ($in) = @_;
+my @tmpls = &list_templates();
+my ($tmpl) = grep { $_->{'id'} eq '0' } @tmpls;
+if ($in->{'ssldir'} == 0) {
+	# Fall back to the default
+	delete($tmpl->{'cert_key_tmpl'});
+	delete($tmpl->{'cert_cert_tmpl'});
+	delete($tmpl->{'cert_ca_tmpl'});
+	delete($tmpl->{'cert_combined_tmpl'});
+	delete($tmpl->{'cert_everything_tmpl'});
+	}
+elsif ($in->{'ssldir'} == 1 || $in->{'ssldir'} == 2) {
+	if ($in->{'ssldir'} == 1) {
+		# Standard key dir
+		$tmpl->{'cert_key_tmpl'} = $ssl_certificate_dir."/ssl.key";
+		}
+	else {
+		# Custom key template
+		$in{'ssldir_custom'} =~ /\S/ || &error($text{'wizard_essldir'});
+		}
+	$tmpl->{'cert_cert_tmpl'} = 'auto';
+	$tmpl->{'cert_ca_tmpl'} = 'auto';
+	$tmpl->{'cert_combined_tmpl'} = 'auto';
+	$tmpl->{'cert_everything_tmpl'} = 'auto';
+	}
+if ($in->{'ssldir'} != 3) {
+	&save_template($tmpl);
+	}
+}
+
 # wizard_show_defdom()
 # Show a form asking if the user wants to create a default virtual server
 sub wizard_show_defdom
@@ -693,7 +789,7 @@ if ($already) {
 		&text('wizard_defdom_exists', "<b><tt>@{[show_domain_name($already)]}</tt></b>"), 2);
 	}
 else {
-	print &ui_table_row(undef, $text{'wizard_defdom'}, 2);
+	print &ui_table_row(undef, $text{'wizard_defdom'} . "<p></p>", 2);
 	my $def = $ENV{'SERVER_NAME'};
 	if (&check_ipaddress($def) || &check_ip6address($def)) {
 		# Try hostname instead

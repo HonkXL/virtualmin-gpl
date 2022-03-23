@@ -454,11 +454,12 @@ foreach my $f (@files) {
 			# format, or is Perl or PHP.
 			local $fmt = &compression_format($temp);
 			local $cont;
-			if (!$fmt && $temp =~ /\.(pl|php)$/i) {
+			if (!$fmt && $temp =~ /\.(pl|php|phar)$/i) {
 				$cont = &read_file_contents($temp);
 				}
 			if (!$fmt &&
 			    $cont !~ /^\#\!\s*\S+(perl|php)/i &&
+			    $cont !~ /^\#\!\/usr\/bin\/env\s+(perl|php)/i &&
 			    $cont !~ /^\s*<\?php/i) {
 				$firsterror ||=
 					&text('scripts_edownload2', $url);
@@ -764,11 +765,11 @@ foreach my $script (@domain_scripts) {
 								$script_config_file_path = "$sdir/$sproject/$script_config_file";
 								}
 							}
-						if (-r $script_config_file_path) {
-							my $script_config_file_lines = read_file_lines_as_domain_user($d, $script_config_file_path);
+						if (-w $script_config_file_path) {
+							my $script_config_file_lines = &read_file_lines($script_config_file_path);
 							if ($replace_target && $replace_with) {
 								foreach my $config_file_line (@{$script_config_file_lines}) {
-									if ($config_file_line =~ /(?<spaces>\s*)(?<replace_target>$replace_target)/) {
+									if ($config_file_line =~ /(?<before>.*)(?<replace_target>$replace_target)/) {
 										if ($script_option_multi) {
 											# Construct replacement first
 											foreach my $option_multi (keys %options_multi) {
@@ -780,17 +781,17 @@ foreach my $script (@domain_scripts) {
 												$replace_with =~ s/\$\$$option_multi/$option_multi_value/;
 												}
 											# Perform complex replacement (multi)
-											$config_file_line = "$+{spaces}$+{replace_target}$replace_with";
+											$config_file_line = "$+{before}$+{replace_target}$replace_with";
 											}
 										else {
 											# Perform simple replacement
-											$config_file_line = "$+{spaces}$replace_with";
+											$config_file_line = "$+{before}$replace_with";
 											}
 										$success++;
 										}
 									}
 								}
-							flush_file_lines_as_domain_user($d, $script_config_file_path);
+							&flush_file_lines($script_config_file_path);
 							if ($success) {
 								$success = 
 									$script_config_files_count > 1 ?
@@ -1149,6 +1150,8 @@ if (defined(&$optmodfunc)) {
 	@optmods = &$optmodfunc($d, $ver, $phpver, $opts);
 	push(@mods, @optmods);
 	}
+
+my $installing;
 foreach my $m (@mods) {
 	if ($phpver >= 7 && $m eq "mysql") {
 		# PHP 7 only supports mysqli, but that's OK because most scripts
@@ -1156,10 +1159,13 @@ foreach my $m (@mods) {
 		$m = "mysqli";
 		}
 	next if (&check_php_module($m, $phpver, $d) == 1);
+	if(!$installing++) {
+		&$first_print($text{'scripts_install_phpmods_check'});
+		&$indent_print();
+		}
 	local $opt = &indexof($m, @optmods) >= 0 ? 1 : 0;
 	&$first_print(&text($opt ? 'scripts_optmod' : 'scripts_needmod',
 			    "<tt>$m</tt>"));
-	&$indent_print();
 
 	# Find the php.ini file
 	&foreign_require("phpini");
@@ -1169,7 +1175,6 @@ foreach my $m (@mods) {
 			&get_domain_php_ini($d, $phpver);
 	if (!$inifile) {
 		# Could not find php.ini
-		&$outdent_print();
 		&$second_print($mode eq "mod_php" || $mode eq "fpm" ?
 			$text{'scripts_noini'} : $text{'scripts_noini2'});
 		if ($opt) { next; }
@@ -1218,14 +1223,12 @@ foreach my $m (@mods) {
 
 	# Make sure the software module is installed and can do updates
 	if (!&foreign_installed("software")) {
-		&$outdent_print();
 		&$second_print($text{'scripts_esoftware'});
 		if ($opt) { next; }
 		else { return 0; }
 		}
 	&foreign_require("software");
 	if (!defined(&software::update_system_install)) {
-		&$outdent_print();
 		&$second_print($text{'scripts_eupdate'});
 		if ($opt) { next; }
 		else { return 0; }
@@ -1287,7 +1290,7 @@ foreach my $m (@mods) {
 		}
 	@poss = sort { $a cmp $b } &unique(@poss);
 	my @newpkgs;
-	&$first_print($text{'scripts_phpmodinst'});
+	# &$first_print($text{'scripts_phpmodinst'});
 	foreach my $pkg (@poss) {
 		my @pinfo = &software::package_info($pkg);
 		my $nodotverpkg = $pkg;
@@ -1316,14 +1319,8 @@ foreach my $m (@mods) {
 			}
 		}
 	push(@$installed, @newpkgs) if ($installed);
-	if ($iok) {
-		&$second_print(&text('scripts_phpmoddone',
-			       "<tt>".join(" ", @newpkgs)."</tt>"));
-		&$outdent_print();
-		}
-	else {
+	if (!$iok) {
 		&$second_print(&text('scripts_phpmodfailed', scalar(@poss)));
-		&$outdent_print();
 		&copy_source_dest($backupinifile, $inifile) if ($backupinifile);
 		if ($opt) { next; }
 		else { return 0; }
@@ -1332,7 +1329,6 @@ foreach my $m (@mods) {
 	# Finally re-check to make sure it worked
 	GOTMODULE:
 	undef(%main::php_modules);
-	&$outdent_print();
 	if (&check_php_module($m, $phpver, $d) != 1) {
 		&$second_print($text{'scripts_einstallmod'});
 		&copy_source_dest($backupinifile, $inifile) if ($backupinifile);
@@ -1340,7 +1336,7 @@ foreach my $m (@mods) {
 		else { return 0; }
 		}
 	else {
-		&$second_print(&text('scripts_gotmod', $m));
+		&$second_print(&text('setup_done', $m));
 		}
 
 	# If we are running via mod_php or fcgid, an Apache reload is needed
@@ -1358,6 +1354,10 @@ foreach my $m (@mods) {
 	if ($mode eq "fpm") {
 		&register_post_action(\&restart_php_fpm_server);
 		}
+	}
+if ($installing) {
+	&$outdent_print();
+	&$second_print($text{'scripts_install_phpmods_check_done'});
 	}
 return 1;
 }
@@ -1934,7 +1934,8 @@ my $port = $usessl ? $d->{'web_sslport'} : $d->{'web_port'};
 
 local $oldproxy = $gconfig{'http_proxy'};	# Proxies mess up connection
 $gconfig{'http_proxy'} = '';			# to the IP explicitly
-local $h = &make_http_connection($ip, $port, $usessl, "POST", $page);
+local $h = &make_http_connection($ip, $port, $usessl, "POST", $page,
+			 undef, undef, { 'host' => $host, 'nocheckhost' => 1 });
 $gconfig{'http_proxy'} = $oldproxy;
 if (!ref($h)) {
 	$$err = $h;
@@ -1942,9 +1943,16 @@ if (!ref($h)) {
 	}
 &write_http_connection($h, "Host: $host\r\n");
 &write_http_connection($h, "User-agent: Webmin\r\n");
+my $gotcookie = 0;
 if ($headers) {
 	foreach my $hd (keys %$headers) {
 		&write_http_connection($h, "$hd: $headers->{$hd}\r\n");
+		$gotcookie++ if (lc($hd) eq 'cookie');
+		}
+	}
+if (!$gotcookie) {
+	foreach my $hd (&http_connection_cookies($d)) {
+		&write_http_connection($h, "$hd->[0]: $hd->[1]\r\n");
 		}
 	}
 if ($formdata) {
@@ -1978,7 +1986,7 @@ $post_http_headers = undef;
 $post_http_headers_array = undef;
 local $SIG{'ALRM'} = 'IGNORE';		# Let complete function run forever
 &complete_http_connection($d, $h, $out, $err, \&capture_http_headers, 0,
-			  $host, $port, $headers);
+			  $host, $port, $page, $headers);
 if ($returnheaders && $post_http_headers) {
 	%$returnheaders = %$post_http_headers;
 	}
@@ -2020,15 +2028,21 @@ if ($user) {
 	$auth =~ tr/\r\n//d;
 	push(@headers, [ "Authorization", "Basic $auth" ]);
 	}
+my $gotcookie = 0;
 foreach my $hname (keys %$headers) {
 	push(@headers, [ $hname, $headers->{$hname} ]);
+	$gotcookie++ if (lc($hname) eq 'cookie');
+	}
+if (!$gotcookie) {
+	push(@headers, &http_connection_cookies($d));
 	}
 
 # Actually download it
 $main::download_timed_out = undef;
 local $SIG{ALRM} = \&download_timeout;
 alarm($timeout || 60);
-local $h = &make_http_connection($ip, $port, $ssl, "GET", $page, \@headers);
+local $h = &make_http_connection($ip, $port, $ssl, "GET", $page, \@headers,
+			 undef, { 'host' => $host, 'nocheckhost' => 1 });
 alarm(0);
 $h = $main::download_timed_out if ($main::download_timed_out);
 if (!ref($h)) {
@@ -2036,16 +2050,16 @@ if (!ref($h)) {
 	else { &error($h); }
 	}
 &complete_http_connection($d, $h, $dest, $error, $cbfunc, $osdn, $host, $port,
-			  $headers);
+			  $page, $headers);
 }
 
 # complete_http_connection(&domain, &handle, dest, &error, &callback, osdn,
-# 			   [host], [port], &headers)
+# 			   [host], [port], [page], &headers)
 # Once an HTTP connection is active, complete the download
 sub complete_http_connection
 {
 local ($d, $h, $dest, $error, $cbfunc, $osdn, $oldhost,
-       $oldport, $headers) = @_;
+       $oldport, $oldpage, $headers) = @_;
 
 # Kept local so that callback funcs can access them.
 local (%WebminCore::header, @WebminCore::headers);
@@ -2069,6 +2083,18 @@ while(1) {
 	$WebminCore::header{lc($1)} = $2;
 	push(@WebminCore::headers, [ lc($1), $2 ]);
 	}
+
+# Parse out cookies set in the response
+foreach my $h (grep { $_->[0] eq 'set-cookie' } @WebminCore::headers) {
+	my @w = split(/;\s*/, $h->[1]);
+	if (@w && $w[0] =~ /^\S+=/) {
+		my ($cn, $cv) = split(/=/, $w[0], 2);
+		$http_connection_cookies{$d->{'id'}} ||= [ ];
+		push(@{$http_connection_cookies{$d->{'id'}}}, [ $cn, $cv ]);
+		}
+	}
+
+# Complete the download, and possibly follow a redirect
 alarm(0);
 if ($main::download_timed_out) {
 	if ($error) { $$error = $main::download_timed_out; return 0; }
@@ -2095,13 +2121,16 @@ if ($rcode >= 300 && $rcode < 400) {
 		# Relative to same server
 		$host = $oldhost;
 		$port = $oldport;
-		$ssl = 0;
+		$ssl = 0;	# ???
 		$page = $WebminCore::header{'location'};
 		}
-	elsif ($WebminCore::header{'location'}) {
-		# Assume relative to same dir .. not handled
-		if ($error) { $$error = "Invalid Location header $WebminCore::header{'location'}"; return; }
-		else { &error("Invalid Location header $WebminCore::header{'location'}"); }
+	elsif ($WebminCore::header{'location'} && $oldhost && $oldpage) {
+		# Assume relative to same dir
+		$host = $oldhost;
+		$port = $oldport;
+		$page = $oldpage;
+		$page =~ s/\/[^\/]+$/\//;
+		$page .= $WebminCore::header{'location'};
 		}
 	else {
 		if ($error) { $$error = "Missing Location header"; return; }
@@ -2157,6 +2186,20 @@ else {
 	&$cbfunc(4) if ($cbfunc);
 	}
 &close_http_connection($h);
+}
+
+# http_connection_cookies(&domain)
+# Returns a list of array refs of Cookie headers saved from past requests
+sub http_connection_cookies
+{
+my ($d) = @_;
+my @rv;
+if ($http_connection_cookies{$d->{'id'}}) {
+	foreach my $c (@{$http_connection_cookies{$d->{'id'}}}) {
+		push(@rv, [ 'Cookie', $c->[0]."=".$c->[1] ]);
+		}
+	}
+return @rv;
 }
 
 # make_file_php_writable(&domain, file, [dir-only], [owner-too])
@@ -2581,7 +2624,7 @@ elsif ($fmt == 4) {
 	$cmd = "unzip $qfile";
 	}
 elsif ($fmt == 5) {
-	$cmd = &make_tar_command("xf", $qfile);
+	$cmd = &make_tar_command("xf", $file);
 	}
 else {
 	return "Unknown compression format";
@@ -2603,7 +2646,10 @@ if ($copydir && -e $copydir) {
 # Copy to a target dir, if requested
 if ($copydir) {
 	local $path = "$dir/$subdir";
-	($path) = glob("$dir/$subdir") if (!-e $path);
+	if (!-e $path) {
+		# Subdir might be a glob
+		($path) = glob(quotemeta($dir)."/$subdir")
+		}
 
 	# Remove files to skip copying
 	if ($skip) {
@@ -3301,6 +3347,20 @@ return &has_command($config{'python_cmd'}) ||
        "python";
 }
 
+# list_used_tcp_ports()
+# Returns an array of TCP ports in use by lsof
+sub list_used_tcp_ports
+{
+my @rv;
+my $out = &backquote_command("lsof -i tcp -n -l -P");
+foreach my $l (split(/\r?\n/, $out)) {
+	if ($l =~ /\s+([^:]+):(\d+)\s+\(LISTEN\)/) {
+		push(@rv, $2);
+		}
+	}
+return @rv;
+}
+
 # allocate_free_tcp_port(&used-ports-map, starting-port)
 # Returns a free port number starting at the base and not in the used ports
 # map, by making probing TCP connections
@@ -3308,11 +3368,8 @@ sub allocate_free_tcp_port
 {
 my ($used, $rport) = @_;
 my $lsof = { };
-my $out = &backquote_command("lsof -i tcp -n -l -P");
-foreach my $l (split(/\r?\n/, $out)) {
-	if ($l =~ /\s+([^:]+):(\d+)\s+\(LISTEN\)/) {
-		$lsof->{$2} = 1;
-		}
+foreach my $p (&list_used_tcp_ports()) {
+	$lsof->{$p} = 1;
 	}
 while($rport < 65536) {
 	if (!$used->{$rport} &&
@@ -3360,6 +3417,29 @@ return script_migrated_disallowed($script->{'migrated'}) ?
            $text{'scripts_gpl_to_pro'.($can_upgrade ? "_upgrade" : "").''}, 
              ($can_upgrade ? " text-warning" : ""), " target=_blank") :
            $status;
+}
+
+# check_script_quota(&domain, &script-info, version)
+# Returns 1 if a domain has enough quota, or 0 and the amount of quota needed
+sub check_script_quota
+{
+my ($d, $script, $ver) = @_;
+my $qfunc = "script_".$script->{'name'}."_required_quota";
+if (defined(&$qfunc)) {
+	my ($need, $units) = &$qfunc($ver);
+	if ($units) {
+		$units = lc($units);
+		my $f = $units eq 'k' ? 1024 :
+			$units eq 'm' ? 1024*1024 :
+			$units eq 'g' ? 1024*1024*1024 : 1;
+		$need *= $f;
+		}
+	my ($usage) = &get_domain_quota($d);
+	my $bsize = &quota_bsize("home");
+	my $ok = $usage*$bsize + $need <= $d->{'quota'}*$bsize;
+	return ($ok, $need, $usage*$bsize, $d->{'quota'}*$bsize);
+	}
+return (1, undef, undef, undef);
 }
 
 1;

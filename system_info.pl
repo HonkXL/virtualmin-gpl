@@ -52,7 +52,7 @@ if (&need_config_check() && &can_check_config()) {
 	push(@rv, { 'type' => 'warning',
 		    'level' => 'info',
 		    'warning' => &ui_form_start('/'.$module_name.'/check.cgi').
-				 "<b>$text{'index_needcheck'}</b><p>\n".
+				 "$text{'index_needcheck'}<p>\n".
 				 &ui_submit($text{'index_srefresh'}).
 				 &ui_form_end(),
 		  });
@@ -64,7 +64,7 @@ if (!$virtualmin_pro &&
 	# Do not show dashboard alert within first seven days, until things settle down
 	&foreign_require("webmin");
 	my $uptime = &webmin::get_system_uptime();
-	if (!$uptime || $uptime > 60*60*24 * 7) {
+	if (!$uptime || $uptime > 60*60*24 * 5) {
 		push(@rv, { 'type' => 'warning',
 			    'level' => 'info',
 			    'warning' => { 'alert' => &alert_pro_tip('dashboard', {

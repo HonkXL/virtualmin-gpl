@@ -1,6 +1,7 @@
 
 use Time::Local;
 use POSIX;
+use feature 'state';
 
 ## Work out where our extra -lib.pl files are, and load them
 $virtual_server_root = $module_root_directory;
@@ -1415,7 +1416,7 @@ if ($_[1] && !$_[0]->{'domainowner'}) {
 			# Create in core database
 			local $crfunc = "create_${dt}_database_user";
 			&$crfunc($_[1], \@dbs, $_[0]->{'user'},
-				 $_[0]->{'plainpass'}, $_[0]->{$dt.'_pass'});
+				 $_[0]->{'plainpass'}, $_[0]->{$dt.'_pass'}, 1);
 			}
 		elsif (@dbs && &indexof($dt, &list_database_plugins()) >= 0) {
 			# Create in plugin database
@@ -2812,7 +2813,7 @@ sub can_delete_domain
 {
 local ($d) = @_;
 return &can_edit_domain($d) &&
-       (&master_admin() || &reseller_admin() ||
+       (&master_admin() || &reseller_admin() && !$access{'nodelete'} ||
 	$_[0]->{'parent'} && $access{'edit_delete'});
 }
 
@@ -3089,7 +3090,9 @@ sub can_edit_admins
 {
 local ($d) = @_;
 return $d->{'webmin'} &&
-       (&master_admin() || &reseller_admin() || $access{'edit_admins'});
+       (&master_admin() ||
+	&reseller_admin() && !$access{'noadmins'} ||
+	$access{'edit_admins'});
 }
 
 sub can_edit_spam
@@ -3140,7 +3143,9 @@ return &master_admin();
 
 sub can_edit_forward
 {
-return &master_admin() || &reseller_admin() || $access{'edit_forward'};
+return &master_admin() ||
+       &reseller_admin() && !$access{'noproxy'} ||
+       $access{'edit_forward'};
 }
 
 sub can_edit_redirect
@@ -5762,7 +5767,7 @@ if (-d "$extra_admins_dir/$_[0]->{'id'}") {
 	# Extra admin details
 	&execute_command(
 	    "cd ".quotemeta("$extra_admins_dir/$_[0]->{'id'}").
-	    " && ".&make_tar_command("cf", quotemeta($_[1]."_admins"), "."));
+	    " && ".&make_tar_command("cf", $_[1]."_admins", "."));
 	}
 if ($config{'bw_active'}) {
 	# Bandwidth logs
@@ -5779,7 +5784,7 @@ if ($config{'bw_active'}) {
 if (-d "$script_log_directory/$_[0]->{'id'}") {
 	&execute_command(
 	    "cd ".quotemeta("$script_log_directory/$_[0]->{'id'}").
-	    " && ".&make_tar_command("cf", quotemeta($_[1]."_scripts"), "."));
+	    " && ".&make_tar_command("cf", $_[1]."_scripts", "."));
 	}
 else {
 	# Create an empty file to indicate that we have no scripts
@@ -5879,7 +5884,7 @@ foreach my $tmpl (&list_templates()) {
 # Save template scripts
 &execute_command("cp $template_scripts_dir/* $temp");
 &execute_command("cd ".quotemeta($temp)." && ".
-		 &make_tar_command("cf", quotemeta($file), "."));
+		 &make_tar_command("cf", $file, "."));
 &unlink_file($temp);
 
 # Save global variables file
@@ -5901,7 +5906,7 @@ foreach my $tmpl (&list_templates()) {
 		local $skelfile = $file.'_skel_'.$tmpl->{'id'};
 		&execute_command(
 		    "cd ".quotemeta($tmpl->{'skel'}).
-		    " && ".&make_tar_command("cf", quotemeta($skelfile), "."));
+		    " && ".&make_tar_command("cf", $skelfile, "."));
 		}
 	}
 
@@ -5909,7 +5914,7 @@ foreach my $tmpl (&list_templates()) {
 &make_dir($plans_dir, 0700);
 &execute_command(
     "cd ".quotemeta($plans_dir).
-    " && ".&make_tar_command("cf", quotemeta($file."_plans"), "."));
+    " && ".&make_tar_command("cf", $file."_plans", "."));
 &$second_print($text{'setup_done'});
 }
 
@@ -5924,7 +5929,7 @@ local ($file, $vbs) = @_;
 local $temp = &transname();
 mkdir($temp, 0700);
 &execute_command("cd ".quotemeta($temp)." && ".
-		 &make_tar_command("xf", quotemeta($file)));
+		 &make_tar_command("xf", $file));
 
 # Copy templates from backup across
 opendir(DIR, $temp);
@@ -5982,7 +5987,7 @@ foreach my $tmpl (&list_templates()) {
 if (-r $file."_plans") {
 	&execute_command(
 	    "cd ".quotemeta($plans_dir)." && ".
-	    &make_tar_command("xf", quotemeta($file."_plans")));
+	    &make_tar_command("xf", $file."_plans"));
 	}
 
 &$second_print($text{'setup_done'});
@@ -6005,13 +6010,13 @@ foreach my $sched (&list_scheduled_backups()) {
 	&write_file("$temp/$sched->{'id'}", $sched);
 	}
 &execute_command("cd ".quotemeta($temp)." && ".
-		 &make_tar_command("cf", quotemeta($file), "."));
+		 &make_tar_command("cf", $file, "."));
 &unlink_file($temp);
 
 # Also tar up keys dir
 if ($dokeys) {
 	&execute_command("cd ".quotemeta($backup_keys_dir)." && ".
-			 &make_tar_command("cf", quotemeta($file."_keys"),"."));
+			 &make_tar_command("cf", $file."_keys", "."));
 	}
 
 &$second_print($text{'setup_done'});
@@ -6031,7 +6036,7 @@ local $dokeys = -r $file."_keys" && defined(&list_backup_keys);
 local $temp = &transname();
 mkdir($temp, 0700);
 &execute_command("cd ".quotemeta($temp)." && ".
-		 &make_tar_command("xf", quotemeta($file)));
+		 &make_tar_command("xf", $file));
 
 # Delete all current non-default schedules
 foreach my $sched (&list_scheduled_backups()) {
@@ -6056,7 +6061,7 @@ if ($dokeys) {
 	local %oldkeys = map { $_->{'id'}, 1 } &list_backup_keys();
 	&make_dir($backup_keys_dir, 0700) if (!-d $backup_keys_dir);
 	&execute_command("cd ".quotemeta($backup_keys_dir)." && ".
-			 &make_tar_command("xf", quotemeta($file."_keys")));
+			 &make_tar_command("xf", $file."_keys"));
 	foreach my $key (&list_backup_keys()) {
 		if (!$oldkey{$key->{'id'}}) {
 			eval {
@@ -6093,7 +6098,7 @@ foreach my $resel (&list_resellers()) {
 		}
 	}
 &execute_command("cd ".quotemeta($temp)." && ".
-		 &make_tar_command("cf", quotemeta($file), "."));
+		 &make_tar_command("cf", $file, "."));
 &execute_command("rm -rf ".quotemeta($temp));
 &$second_print($text{'setup_done'});
 return 1;
@@ -6110,7 +6115,7 @@ local $temp = &transname();
 mkdir($temp, 0700);
 &require_acl();
 &execute_command("cd ".quotemeta($temp)." && ".
-		 &make_tar_command("xf", quotemeta($file)));
+		 &make_tar_command("xf", $file));
 foreach my $resel (&list_resellers()) {
 	&acl::delete_user($resel->{'name'});
 	&delete_reseller_unix_user($resel);
@@ -6150,7 +6155,7 @@ local ($file, $vbs) = @_;
 &$first_print($text{'backup_vemail_doing'});
 &execute_command(
 	"cd $module_config_directory && ".
-	&make_tar_command("cf", quotemeta($file), @all_template_files));
+	&make_tar_command("cf", $file, @all_template_files));
 &$second_print($text{'setup_done'});
 return 1;
 }
@@ -6162,7 +6167,7 @@ sub virtualmin_restore_email
 local ($file, $vbs) = @_;
 &$first_print($text{'restore_vemail_doing'});
 &execute_command("cd $module_config_directory && ".
-		 &make_tar_command("xf", quotemeta($file)));
+		 &make_tar_command("xf", $file));
 &$second_print($text{'setup_done'});
 return 1;
 }
@@ -6223,7 +6228,7 @@ local ($file, $vbs) = @_;
 &$first_print($text{'backup_vscripts_doing'});
 &make_dir("$module_config_directory/scripts", 0755);
 &execute_command("cd $module_config_directory/scripts && ".
-		 &make_tar_command("cf", quotemeta($file), "."));
+		 &make_tar_command("cf", $file, "."));
 &copy_source_dest($scripts_unavail_file, $file."_unavail");
 &$second_print($text{'setup_done'});
 return 1;
@@ -6237,7 +6242,7 @@ local ($file, $vbs) = @_;
 &$first_print($text{'restore_vscripts_doing'});
 &make_dir("$module_config_directory/scripts", 0755);
 &execute_command("cd $module_config_directory/scripts && ".
-		 &make_tar_command("xf", quotemeta($file)));
+		 &make_tar_command("xf", $file));
 if (-r $file."_unavail") {
 	&copy_source_dest($file."_unavail", $scripts_unavail_file);
 	}
@@ -6383,7 +6388,7 @@ elsif ($config{'mail_system'} == 1) {
 elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
 	# Save Qmail dir
 	&execute_command("cd $qmailadmin::config{'qmail_dir'} && ".
-			 &make_tar_command("cf", quotemeta($file), "."));
+			 &make_tar_command("cf", $file, "."));
 	&$second_print($text{'setup_done'});
 	}
 else {
@@ -6595,7 +6600,7 @@ if ($bms eq $config{'mail_system'}) {
 	elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
 		# Un-tar qmail dir
 		&execute_command("cd $qmailadmin::config{'qmail_dir'} && ".
-				 &make_tar_command("xf", quotemeta($file)));
+				 &make_tar_command("xf", $file));
 		&$second_print($text{'setup_done'});
 		}
 	else {
@@ -6668,7 +6673,7 @@ if (!$_[3]->{'fix'}) {
 		&make_dir("$extra_admins_dir/$_[0]->{'id'}", 0755);
 		&execute_command(
 		    "cd ".quotemeta("$extra_admins_dir/$_[0]->{'id'}")." && ".
-		    &make_tar_command("xf", quotemeta($_[1]."_admins"), "."));
+		    &make_tar_command("xf", $_[1]."_admins", "."));
 		}
 	if ($config{'bw_active'} && -r $_[1]."_bw" &&
 	    !-r "$bandwidth_dir/$_[0]->{'id'}") {
@@ -6690,7 +6695,7 @@ if (!$_[3]->{'fix'}) {
 			 "cd ".quotemeta("$script_log_directory/$_[0]->{'id'}").
 			 " && ".
 			 &make_tar_command("xf",
-				quotemeta($_[1]."_scripts"), "."));
+				$_[1]."_scripts", "."));
 			}
 
 		# Fix up home dir on scripts
@@ -7328,20 +7333,54 @@ else {
 	}
 }
 
+# generate_random_available_user(pattern)
+# Generates free user available to be used as
+# Unix user, group, and virtual server user
+sub generate_random_available_user
+{
+my ($pattern) = @_;
+$pattern ||= 'u-[0-9]{4}';
+state $user;
+if (!defined($user)) {
+	for (;;) {
+		my $rand_name = &substitute_pattern($pattern,
+			              {'filter' => '[^A-Za-z0-9\\-_]',
+			               'substitute-datetime' => 1});
+		my $uname_clash = defined(getpwnam($rand_name)) ||
+		                  defined(getgrnam($rand_name)) ||
+		                  &get_domain_by("prefix", $rand_name);
+		if (!$uname_clash) {
+			$user = $rand_name;
+			last;
+			}
+		}
+	}
+return $user;
+}
+
 # unixuser_name(domainname)
 # Returns a Unix username for some domain, or undef if none can be found
 sub unixuser_name
 {
-local ($dname) = @_;
-$dname =~ s/^xn(-+)//;
-$dname = &remove_numeric_prefix($dname);
-$dname =~ /^([^\.]+)/;
-local ($try1, $user) = ($1, $1);
-if (defined(getpwnam($try1)) || $config{'longname'}) {
-	$user = &remove_numeric_prefix($_[0]);
-	$try2 = $user;
-	if (defined(getpwnam($try2))) {
-		return (undef, $try1, $try2);
+my ($dname) = @_;
+my ($dname_, $config_longname, $try1, $user) = ($dname, $config{'longname'});
+
+# Extract random username based on the user pattern
+if ($config_longname && $config_longname !~ /^[0-9]$/) {
+	$user = &generate_random_available_user($config_longname);
+	}
+# Use one based on actual domain name
+else {
+	$dname =~ s/^xn(-+)//;
+	$dname = &remove_numeric_prefix($dname);
+	$dname =~ /^([^\.]+)/;
+	($try1, $user) = ($1, $1);
+	if (defined(getpwnam($try1)) || $config_longname) {
+		$user = &remove_numeric_prefix($dname_);
+		$try2 = $user;
+		if (defined(getpwnam($try2))) {
+			return (undef, $try1, $try2);
+			}
 		}
 	}
 if ($config{'username_length'} && length($user) > $config{'username_length'}) {
@@ -7358,7 +7397,9 @@ return ($user);
 # Returns a Unix group name for some domain, or undef if none can be found
 sub unixgroup_name
 {
-local ($dname, $user) = @_;
+my ($dname, $user) = @_;
+my ($dname_, $config_longname, $try1, $group) = ($dname, $config{'longname'});
+
 if ($user && $config{'groupsame'}) {
 	# Same as username where possible
 	if (!defined(getgrnam($user))) {
@@ -7366,14 +7407,21 @@ if ($user && $config{'groupsame'}) {
 		}
 	return (undef, $user, $user);
 	}
-$dname =~ s/^xn(-+)//;
-$dname =~ /^([^\.]+)/;
-local ($try1, $group) = ($1, $1);
-if (defined(getgrnam($try1)) || $config{'longname'}) {
-	$group = $_[0];
-	$try2 = $group;
-	if (defined(getpwnam($try))) {
-		return (undef, $try1, $try2);
+# Extract random group based on the user pattern
+if ($config_longname && $config_longname !~ /^[0-9]$/) {
+	$group = &generate_random_available_user($config_longname);
+	}
+# Use one based on actual domain name
+else {
+	$dname =~ s/^xn(-+)//;
+	$dname =~ /^([^\.]+)/;
+	($try1, $group) = ($1, $1);
+	if (defined(getgrnam($try1)) || $config{'longname'}) {
+		$group = $dname_;
+		$try2 = $group;
+		if (defined(getpwnam($try))) {
+			return (undef, $try1, $try2);
+			}
 		}
 	}
 return ($group);
@@ -8347,6 +8395,26 @@ foreach my $dd (@alldoms) {
 			}
 		}
 
+	# Delete SSL key files outside the home dir
+	if (!$dd->{'ssl_same'}) {
+		foreach my $k ('ssl_cert', 'ssl_key', 'ssl_chain',
+			       'ssl_combined', 'ssl_everything') {
+			if ($dd->{$k} &&
+			    !&is_under_directory($dd->{'home'}, $dd->{$k}) &&
+			    -f $dd->{$k}) {
+				&unlink_logged($dd->{$k});
+				}
+			}
+		foreach my $dir (&ssl_certificate_directories($dd, 1)) {
+			if (!&is_under_directory($dd->{'home'}, $dir) &&
+			    -d $dir &&
+			    $dir =~ /\/[^\/]*(\Q$dd->{'dom'}\E|\Q$dd->{'id'}\E)[^\/]*$/ &&
+			    &is_empty_directory($dir)) {
+				&unlink_logged($dir);
+				}
+			}
+		}
+
 	# Delete domain file
 	&$first_print(&text('delete_domain', &show_domain_name($dd)));
 	&delete_domain($dd);
@@ -9053,6 +9121,11 @@ push(@rv, { 'id' => 0,
 				$config{'tmpl_owners'},
 	    'autoconfig' => $config{'tmpl_autoconfig'} || "none",
 	    'outlook_autoconfig' => $config{'tmpl_outlook_autoconfig'} || "none",
+	    'cert_key_tmpl' => $config{'key_tmpl'},
+	    'cert_cert_tmpl' => $config{'cert_tmpl'},
+	    'cert_ca_tmpl' => $config{'ca_tmpl'},
+	    'cert_combined_tmpl' => $config{'combined_tmpl'},
+	    'cert_everything_tmpl' => $config{'everything_tmpl'},
 	  } );
 foreach my $w (&list_php_wrapper_templates()) {
 	$rv[0]->{$w} = $config{$w} || 'none';
@@ -9384,6 +9457,11 @@ if ($tmpl->{'id'} == 0) {
 	$config{'domalias_type'} = $tmpl->{'domalias_type'};
 	$config{'tmpl_autoconfig'} = $tmpl->{'autoconfig'};
 	$config{'tmpl_outlook_autoconfig'} = $tmpl->{'outlook_autoconfig'};
+	$config{'key_tmpl'} = $tmpl->{'cert_key_tmpl'};
+	$config{'cert_tmpl'} = $tmpl->{'cert_cert_tmpl'};
+	$config{'ca_tmpl'} = $tmpl->{'cert_ca_tmpl'};
+	$config{'combined_tmpl'} = $tmpl->{'cert_combined_tmpl'};
+	$config{'everything_tmpl'} = $tmpl->{'cert_everything_tmpl'};
 	foreach my $w (&list_php_wrapper_templates()) {
 		$config{$w} = $tmpl->{$w};
 		}
@@ -9484,7 +9562,8 @@ if (!$tmpl->{'default'}) {
 		    "php_fpm", "php", "status", "extra_prefix", "capabilities",
 		    "webmin_group", "spamclear", "spamtrap", "namedconf",
 		    "nodbname", "norename", "forceunder", "safeunder",
-		    "ipfollow", "exclude",
+		    "ipfollow", "exclude", "cert_key_tmpl", "cert_cert_tmpl",
+		    "cert_ca_tmpl", "cert_combined_tmpl","cert_everything_tmpl",
 		    "aliascopy", "bccto", "resources", "dnssec", "avail",
 		    @plugins,
 		    &list_php_wrapper_templates(),
@@ -10003,7 +10082,8 @@ return @rv;
 # Returns a structure for a new mailbox user
 sub create_initial_user
 {
-local $user;
+my ($d, $notmpl, $forweb) = @_;
+my $user;
 if ($config{'mail_system'} == 5) {
 	# VPOPMail user
 	$user = { 'vpopmail' => 1,
@@ -10019,27 +10099,27 @@ else {
 	$user = { 'unix' => 1,
 		  'person' => 1 };
 	}
-if ($_[0] && !$_[1]) {
+if ($d && !$notmpl) {
 	# Initial aliases and quota come from template
-	local $tmpl = &get_template($_[0]->{'template'});
+	local $tmpl = &get_template($d->{'template'});
 	if ($tmpl->{'user_aliases'} ne 'none') {
-		$user->{'to'} = [ map { &substitute_domain_template($_, $_[0]) }
+		$user->{'to'} = [ map { &substitute_domain_template($_, $d) }
 				      split(/\t+/, $tmpl->{'user_aliases'}) ];
 		}
 	$user->{'quota'} = $tmpl->{'defmquota'};
 	$user->{'mquota'} = $tmpl->{'defmquota'};
 	}
 if (!$user->{'noprimary'}) {
-	$user->{'email'} = !$_[0] ? "newuser\@".&get_system_hostname() :
-			   $_[0]->{'mail'} ? "newuser\@$_[0]->{'dom'}" : undef;
+	$user->{'email'} = !$d ? "newuser\@".&get_system_hostname() :
+			   $d->{'mail'} ? "newuser\@$d->{'dom'}" : undef;
 	}
 $user->{'secs'} = [ ];
 $user->{'shell'} = &default_available_shell('mailbox');
 
 # Merge in configurable initial user settings
-if ($_[0]) {
+if ($d) {
 	local %init;
-	&read_file("$initial_users_dir/$_[0]->{'id'}", \%init);
+	&read_file("$initial_users_dir/$d->{'id'}", \%init);
 	foreach my $a ("email", "quota", "mquota", "qquota", "shell") {
 		$user->{$a} = $init{$a} if (defined($init{$a}));
 		}
@@ -10060,13 +10140,13 @@ if ($_[0]) {
 		}
 	}
 
-if ($_[2] && $user->{'unix'}) {
+if ($forweb && $user->{'unix'}) {
 	# This is a website management user
 	local (undef, $ftp_shell, undef, $def_shell) =
 		&get_common_available_shells();
 	$user->{'webowner'} = 1;
 	$user->{'fixedhome'} = 0;
-	$user->{'home'} = &public_html_dir($_[0]);
+	$user->{'home'} = &public_html_dir($d);
 	$user->{'noquota'} = 1;
 	$user->{'mailquota'} = 0;
 	$user->{'noprimary'} = 1;
@@ -10965,7 +11045,9 @@ if ($status != 0) {
 	# Not valid .. show message
 	$alert_text .= "<b>".$text{'licence_err'}."</b><br>\n";
 	$alert_text .= $err."\n";
-	$alert_text .= &text('licence_renew', $virtualmin_renewal_url),"\n";
+	$alert_text .= &text('licence_renew', $virtualmin_renewal_url),"\n"
+		if ($alert_text !~ /$virtualmin_renewal_url/);
+	$alert_text =~ s/>\Q$virtualmin_renewal_url\E</>$text{'license_shop_name'}</;
 	if (&can_recheck_licence()) {
 		$alert_text .= &ui_form_start("@{[&get_webprefix_safe()]}/$module_name/licence.cgi");
 		$alert_text .= &ui_submit($text{'licence_recheck'});
@@ -11088,6 +11170,7 @@ my (@expired, @nearly);
 my $now = time();
 foreach my $d (&list_domains()) {
 	next if (!$d->{'ssl_cert_expiry'});
+	next if ($d->{'disabled'});
 
 	# Check if cached cert file time is valid
 	my @st = stat($d->{'ssl_cert'});
@@ -11113,13 +11196,16 @@ foreach my $d (&list_domains()) {
 		}
 	}
 if (@expired || @nearly) {
+	my $exp;
 	my $cert_text = "<b>$text{'index_certwarn'}</b><p>\n";
 	if (@expired) {
 		$cert_text .= &text('index_certexpired',
 				    &domain_ssl_page_links(\@expired));
+		$exp++;
 		}
 	if (@nearly) {
-		$cert_text .= &text('index_certnearly',
+		my $nl = $exp ? "<br>" : "";
+		$cert_text .= $nl . &text('index_certnearly',
 				    &domain_ssl_page_links(\@nearly));
 		}
 	push(@rv, $cert_text);
@@ -11141,26 +11227,52 @@ foreach my $d (&list_domains()) {
 		}
 	}
 
-# Check for impending DNS registrar expiry
+# Check for impending domain registrar expiry
 my (@expired, @nearly);
 foreach my $d (&list_domains()) {
 	next if (!$d->{'whois_expiry'} || !$d->{'dns'});
+
+	# If status collection is disabled and last
+	# config check was done a long time ago or if
+	# already expired and next hasn't been updated
+	# for the passed half an hour, then skip it
+	# considering current records to be stale	
+	if ($d->{'whois_next'}) {
+		if(($config{'collect_interval'} eq 'none' && $now > $d->{'whois_next'}) ||
+		   ($config{'collect_interval'} eq 'none' && $config{'last_check'} > $d->{'whois_next'}) ||
+		   ($config{'whois_expiry'} < $now && $now > $d->{'whois_next'} + 1800)) {
+			next;
+			}
+		}
+
+	# Tell if domain is already expired
 	if ($d->{'whois_expiry'} < $now) {
 		push(@expired, $d);
 		}
-	elsif ($d->{'whois_expiry'} < $now + 24*60*60) {
+	# Warn 7 days before domain expiry
+	elsif ($d->{'whois_expiry'} < $now + 7*24*60*60) {
 		push(@nearly, $d);
 		}
 	}
 if (@expired || @nearly) {
-	my $expiry_text = "<b>$text{'index_expirywarn'}</b><p>\n";
+	my $exp;
 	if (@expired) {
+		my $gluechar = ", ";
+		if (scalar(@expired) == 1) {
+			$gluechar = "";
+			}
 		$expiry_text .= &text('index_expiryexpired',
-			join(" ", map { &show_domain_name($_) } @expired));
+			join($gluechar, map { "<a href=\"@{[&get_webprefix_safe()]}/$module_name/summary_domain.cgi?dom=$_->{'id'}\">@{[&show_domain_name($_)]}</a>" } @expired));
+		$exp++;
 		}
 	if (@nearly) {
-		$expiry_text .= &text('index_expirynearly',
-			join(" ", map { &show_domain_name($_) } @nearly));
+		my $gluechar = ", ";
+		if (scalar(@nearly) == 1) {
+			$gluechar = "";
+			}
+		my $nl = $exp ? "<br>" : "";
+		$expiry_text .= $nl . &text('index_expirynearly',
+			join($gluechar, map { "<a href=\"@{[&get_webprefix_safe()]}/$module_name/summary_domain.cgi?dom=$_->{'id'}\">@{[&show_domain_name($_)]}</a>" } @nearly));
 		}
 	push(@rv, $expiry_text);
 	}
@@ -11241,7 +11353,7 @@ return ($homequota, $mailquota, $duserrv, $dbquota, $dbquota_home);
 # For a domain, returns the group quota used on home and mail filesystems.
 # If the db flag is set, also returns the sum of all disk space used by
 # databases on this and sub-servers. If database usage is already included
-# in the group quota for home, it is subtracted.
+# in the group quota for home, it is subtracted. All quotas are in blocks.
 sub get_domain_quota
 {
 local ($d, $dbtoo) = @_;
@@ -11313,14 +11425,15 @@ return undef;
 sub compute_prefix
 {
 local ($name, $group, $parent, $creating) = @_;
-if ($config{'longname'} != 1) {
+my $config_longname = $config{'longname'};
+if ($config_longname != 1) {
 	$name =~ s/^xn(-+)//;	# Strip IDN part
 	}
-if ($config{'longname'} == 1) {
+if ($config_longname == 1) {
 	# Prefix is same as domain name
 	return $name;
 	}
-elsif ($group && !$parent && $config{'longname'} == 0) {
+elsif ($group && !$parent && !$config_longname) {
 	# For top-level domains, prefix is same as group name (but append a
 	# number if there's a clash)
 	my $rv = $group;
@@ -11339,26 +11452,32 @@ else {
 	local @p = split(/\./, $name);
 	local $prefix;
 	if ($creating) {
-		# First try foo, then foo.com, then foo.com.au
-		for(my $i=0; $i<@p; $i++) {
-			local $testp = join("-", @p[0..$i]);
-			local $pclash = &get_domain_by("prefix", $testp);
-			if (!$pclash) {
-				$prefix = $testp;
-				last;
-				}
+		# Extract prefix based on the user pattern
+		if ($config_longname && $config_longname !~ /^[0-9]$/) {
+			$prefix = &generate_random_available_user($config_longname);
 			}
-		# If none of those worked, append a number
-		if (!$prefix) {
-			my $i = 1;
-			while(1) {
-				local $testp = $p[0].$i;
-				local $pclash = &get_domain_by("prefix",$testp);
+		else {
+			# First try foo, then foo.com, then foo.com.au
+			for(my $i=0; $i<@p; $i++) {
+				local $testp = join("-", @p[0..$i]);
+				local $pclash = &get_domain_by("prefix", $testp);
 				if (!$pclash) {
 					$prefix = $testp;
 					last;
 					}
-				$i++;
+				}
+			# If none of those worked, append a number
+			if (!$prefix) {
+				my $i = 1;
+				while(1) {
+					local $testp = $p[0].$i;
+					local $pclash = &get_domain_by("prefix",$testp);
+					if (!$pclash) {
+						$prefix = $testp;
+						last;
+						}
+					$i++;
+					}
 				}
 			}
 		}
@@ -11514,19 +11633,6 @@ sub sysinfo_virtualmin
 my @sysinfo_virtualmin;
 
 # OS and Perl info
-@sysinfo_virtualmin = 
-	( [ $text{'sysinfo_os'}, "$gconfig{'real_os_type'} $gconfig{'real_os_version'}" ],
-      [ $text{'sysinfo_perl'}, $] ],
-      [ $text{'sysinfo_perlpath'}, &get_perl_path() ] );
-
-# Python, if exists
-my $python_version = &get_python_version();
-if ($python_version) {
-	push(@sysinfo_virtualmin,
-         [ $text{'sysinfo_python'}, $python_version ],
-         [ $text{'sysinfo_pythonpath'}, &get_python_path() ]);
-	}
-
 if ($main::sysinfo_virtualmin_self) {
 
 	# Add Webmin version; add Usermin version, if installed
@@ -11554,9 +11660,27 @@ if ($main::sysinfo_virtualmin_self) {
 				    [ $cmtext{'right_vm2'}, $cm_ver ] );
 				}
 			}
+		}
 	}
-}
+my @basic_info;
+if (!&master_admin() && !$main::sysinfo_virtualmin_self) {
+	push(@basic_info,
+	    ( [ $text{'sysinfo_os'}, "$gconfig{'real_os_type'} $gconfig{'real_os_version'}" ] ) );
+	}
 
+push(@basic_info,
+    ( [ $text{'sysinfo_perl'}, $] ],
+      [ $text{'sysinfo_perlpath'}, &get_perl_path() ] ) );
+
+push(@sysinfo_virtualmin, @basic_info);
+
+# Python, if exists
+my $python_version = &get_python_version();
+if ($python_version) {
+	push(@sysinfo_virtualmin,
+         [ $text{'sysinfo_python'}, $python_version ],
+         [ $text{'sysinfo_pythonpath'}, &get_python_path() ]);
+	}
 return @sysinfo_virtualmin;
 }
 
@@ -11841,7 +11965,7 @@ if ($dir) {
 		    &make_tar_command("xf", "-"),
 		  "cd $qdir && unzip $qfile",
 		  "cd $qdir && ".
-		    &make_tar_command("xf", $qfile),
+		    &make_tar_command("xf", $file),
 		  );
 	}
 else {
@@ -11854,7 +11978,7 @@ else {
 		  "$bunzip2 -c $qfile | ".
 		    &make_tar_command("tf", "-"),
 		  "unzip -l $qfile",
-		  &make_tar_command("tf", $qfile),
+		  &make_tar_command("tf", $file),
 		  );
 	}
 $cmds[$format] || return "Unknown compression format";
@@ -12956,16 +13080,26 @@ if (!-d $links_cache_dir) {
 &close_tempfile(CACHEDATA);
 }
 
-# clear_links_cache([&domain])
+# clear_links_cache([&domain|user])
 # Delete all cached information for some or all domains
 sub clear_links_cache
 {
 local ($d) = @_;
 opendir(CACHEDIR, $links_cache_dir);
 foreach my $f (readdir(CACHEDIR)) {
-	if ($d && $f =~ /^\Q$d->{'id'}\E\-/ || !$d) {
-		&unlink_file("$links_cache_dir/$f");
+	my $del;
+	if (ref($d)) {
+		# Belongs to domain?
+		$del = $f =~ /^\Q$d->{'id'}\E\-/ ? 1 : 0;
 		}
+	elsif ($d) {
+		# Belongs to user?
+		$del = $f =~ /\-\Q$d\E$/ ? 1 : 0;
+		}
+	else {
+		$del = 1;
+		}
+	&unlink_file("$links_cache_dir/$f") if ($del);
 	}
 closedir(CACHEDIR);
 }
@@ -13969,16 +14103,20 @@ return &text('rename_emaking', "<tt>$merr</tt>") if (defined($merr));
 
 if ($dom) {
 	&$first_print(&text('rename_doingdom', "<tt>$dom</tt>"));
+	&$second_print($text{'setup_done'});
 	}
 if ($user) {
 	&$first_print(&text('rename_doinguser', "<tt>$user</tt>"));
+	&$second_print($text{'setup_done'});
 	}
 if ($home eq 'auto') {
 	&$first_print(&text('rename_doinghome',
 		"<tt>".&server_home_directory($d, $parentdom)."</tt>"));
+	&$second_print($text{'setup_done'});
 	}
 elsif ($home) {
 	&$first_print(&text('rename_doinghome', "<tt>$home</tt>"));
+	&$second_print($text{'setup_done'});
 	}
 
 # Build the list of domains being changed
@@ -14445,12 +14583,21 @@ if ($config{'web'}) {
 	my $tmpl = &get_template(0);
 	my $mode = &template_to_php_mode($tmpl);
 	my @supp = &supported_php_modes();
+	my $modupd;
 	if (&indexof($mode, @supp) < 0) {
 		my $mmap = &php_mode_numbers_map();
-		$tmpl->{'web_php_suexec'} = $mmap->{$supp[0]};
+		my ($best) = grep { $_ ne "none" } @supp;
+		$best ||= $supp[0];
+		$tmpl->{'web_php_suexec'} = $mmap->{$best};
 		&$second_print(
 			&text('check_ewebdefphpmode2', $mode, $supp[0]));
 		&save_template($tmpl);
+		$modupd++
+		}
+
+	# Complain if mod_php is the default mode, unless force reset above 
+	if ($mode eq "mod_php" && !$modupd) {
+		&$second_print(&ui_alert_box(&text('check_ewebmod_php', $mode), 'warn', undef, undef, "", 'fa-spam'));
 		}
 
 	# Run Apache config check
@@ -14919,6 +15066,19 @@ if ($config{'spam'}) {
 			# Not setuid and setgid
 			return &text('check_spamwrapperperms', $mbc[0],
 				     sprintf("%o", $st[2]));
+			}
+		# Check for safe flags
+		if ($mbc[0] =~ /\/procmail-wrapper$/) {
+			my @safe = ("-o", "-a", "\$DOMAIN", "-d", "\$LOGNAME");
+			my $ok = 1;
+			for(my $i=0; $i<@safe; $i++) {
+				$ok = 0 if ($mbc[$i+1] ne $safe[$i]);
+				}
+			$ok = 0 if (@mbc != @safe+1);
+			if (!$ok) {
+				return &text('check_spamwrapperargs',
+					$mbc, join(" ", @safe));
+				}
 			}
 		}
 	}
@@ -16114,7 +16274,7 @@ local ($tmpl) = @_;
 local @rv = grep { $sfunc = "show_template_".$_;
                    defined(&$sfunc) &&
                     ($config{$_} || !$isfeature{$_} || $_ eq 'mail' ||
-		     $_ eq 'web' && &domain_has_website()) }
+		     $_ eq 'web' || $_ eq 'ssl') }
                  @template_features;
 if ($tmpl && $tmpl->{'id'} == 1) {
 	# For sub-servers only
@@ -16758,7 +16918,7 @@ local $want = $level == 0 ? "for_master" :
 	      $level == 1 ? "for_owner" : "for_reseller";
 local @rv;
 foreach my $p (@plugins) {
-        if (&plugin_defined($p, "theme_sections")) {
+		if (&plugin_defined($p, "theme_sections")) {
 		foreach my $s (&plugin_call($p, "theme_sections")) {
 			if ($s->{$want}) {
 				$s->{'plugin'} = $p;
@@ -16766,7 +16926,7 @@ foreach my $p (@plugins) {
 				}
 			}
 		}
-        }
+	}
 return @rv;
 }
 
@@ -17048,6 +17208,17 @@ sub create_empty_file
 local ($file) = @_;
 &open_tempfile(EMPTY, ">$file", 0, 1);
 &close_tempfile(EMPTY);
+}
+
+# is_empty_directory(path)
+# Returns 1 if a directory contains no files
+sub is_empty_directory
+{
+my ($dir) = @_;
+opendir(EMPTYDIR, $dir) || return 0;
+my @files = grep { $_ ne "." && $_ ne ".." } readdir(EMPTYDIR);
+closedir(EMPTYDIR);
+return @files ? 0 : 1;
 }
 
 # update_miniserv_preloads(mode)

@@ -141,15 +141,15 @@ if (&has_domain_user($d)) {
 	# Do creation as domain owner
 	if (!-d $path) {
 		&make_dir_as_domain_user($d, $path, oct($perm), 1);
+		&set_permissions_as_domain_user($d, oct($perm), $path);
 		}
-	&set_permissions_as_domain_user($d, oct($perm), $path);
 	}
 else {
 	# Need to run as root
 	if (!-d $path) {
 		&make_dir($path, oct($perm), 1);
+		&set_ownership_permissions(undef, undef, oct($perm), $path);
 		}
-	&set_ownership_permissions(undef, undef, oct($perm), $path);
 	if ($d->{'uid'} && ($d->{'unix'} || $d->{'parent'})) {
 		&set_ownership_permissions($d->{'uid'}, $d->{'gid'},
 					   undef, $path);
@@ -363,7 +363,7 @@ if ($d->{'mail'}) {
 	}
 local $err = &backquote_logged(
 	       "cd ".quotemeta($oldd->{'home'})." && ".
-	       "tar cfX - $xtemp . | ".
+	       "tar cfX - ".quotemeta($xtemp)." . | ".
 	       "(cd ".quotemeta($d->{'home'})." && ".
 	       " tar xpf -) 2>&1");
 if ($d->{'mail'}) {
@@ -471,14 +471,17 @@ return 0;
 sub backup_dir
 {
 local ($d, $file, $opts, $homefmt, $increment, $asd, $allopts, $key) = @_;
-local $compression = $opts->{'compression'} ne '' ? $opts->{'compression'}
-						  : $config{'compression'};
-&$first_print($homefmt && $compression == 3 ? $text{'backup_dirzip'} :
+local $compression = $opts->{'compression'};
+&$first_print($compression == 3 ? $text{'backup_dirzip'} :
 	      $increment == 1 ? $text{'backup_dirtarinc'}
 			      : $text{'backup_dirtar'});
 local $out;
 local $cmd;
 local $gzip = $homefmt && &has_command("gzip");
+local $destfile = $file;
+if (!$homefmt) {
+	$destfile .= ".".&compression_to_suffix($compression);
+	}
 
 # Create an indicator file in the home directory showing where this backup
 # came from. This can be used when replicating to know that the home directory
@@ -523,7 +526,7 @@ if ($gconfig{'os_type'} eq 'solaris') {
 	}
 &open_tempfile(XTEMP, ">$xtemp");
 foreach my $x (@xlist) {
-	if ($homefmt && $compression == 3) {
+	if ($compression == 3) {
 		&print_tempfile(XTEMP, "$x\n");
 		}
 	else {
@@ -560,7 +563,7 @@ if (&has_incremental_tar() && $increment != 2) {
 	}
 
 # Create the dest file with strict permissions
-local $qf = quotemeta($file);
+local $qf = quotemeta($destfile);
 local $toucher = "touch $qf && chmod 600 $qf";
 if ($asd && $homefmt) {
 	$toucher = &command_as_user($asd->{'user'}, 0, $toucher);
@@ -580,20 +583,22 @@ if ($key && $homefmt) {
 	$writer = &backup_encryption_command($key)." | ".$writer;
 	}
 
-# Do the backup
+# Do the backup, using a compressed format if this is the outermost archive
+# or if using ZIP. Otherwise just use tar, since there will be another level
+# of compression.
 if ($homefmt && $compression == 0) {
 	# With gzip
 	$cmd = &make_tar_command("cfX", "-", $xtemp, $iargs, ".").
-	       " | ".&get_gzip_command()." -c $config{'zip_args'}";
+	       " | ".&get_gzip_command();
 	}
 elsif ($homefmt && $compression == 1) {
 	# With bzip
 	$cmd = &make_tar_command("cfX", "-", $xtemp, $iargs, ".").
-	       " | ".&get_bzip2_command()." -c $config{'zip_args'}";
+	       " | ".&get_bzip2_command();
 	}
-elsif ($homefmt && $compression == 3) {
+elsif ($compression == 3) {
 	# ZIP archive
-	$cmd = "zip -r - . -x\@$xtemp";
+	$cmd = &make_zip_command("-x\@".quotemeta($xtemp), "-", ".");
 	}
 else {
 	# Plain tar
@@ -609,8 +614,8 @@ if (-r $ifile) {
 	&set_ownership_permissions($d->{'uid'}, $d->{'gid'},
 				   0700, $ifile);
 	}
-if ($ex || !-s $file) {
-	&unlink_file($file);
+if ($ex || !-s $destfile) {
+	&unlink_file($destfile);
 	&$second_print(&text($cmd =~ /^\S*zip/ ? 'backup_dirzipfailed'
 					       : 'backup_dirtarfailed',
 			     "<pre>".&html_escape($out)."</pre>"));
@@ -669,8 +674,14 @@ return { 'dirnohomes' => !$in{'dir_homes'},
 sub restore_dir
 {
 local ($d, $file, $opts, $allopts, $homefmt, $oldd, $asd, $key) = @_;
+local $srcfile = $file;
+if (!-r $srcfile) {
+	($srcfile) = glob("$file.*");
+	}
 
-&$first_print($text{'restore_dirtar'});
+local $cf = &compression_format($srcfile, $key);
+&$first_print($cf == 4 ? $text{'restore_dirzip'}
+	    	       : $text{'restore_dirtar'});
 
 # Check if in replication mode and restoring to the same NFS server
 my ($home_mtab, $home_fstab) = &mount_point($d->{'home'});
@@ -686,7 +697,7 @@ if ($allopts->{'repl'} && $src{'id'} && $src{'id'} eq $d->{'id'} &&
 	}
 
 # Check for free space, if possible
-my $osize = &get_compressed_file_size($file, $key);
+my $osize = &get_compressed_file_size($srcfile, $key);
 if ($osize && $config{'home_quotas'}) {
 	&foreign_require("mount");
 	my @space = &mount::disk_space(undef, $config{'home_quotas'});
@@ -745,8 +756,7 @@ if (!-e $d->{'home'}) {
 
 local $outfile = &transname();
 local $errfile = &transname();
-local $cf = &compression_format($file, $key);
-local $q = quotemeta($file);
+local $q = quotemeta($srcfile);
 local $qh = quotemeta($d->{'home'});
 local $catter;
 if ($key && $homefmt) {
@@ -989,7 +999,10 @@ push(@rv, [ $config{'homes_dir'}, '755', 'homes' ]);
 if (!$d->{'parent'}) {
 	push(@rv, [ $home_virtualmin_backup, '700', 'backup' ]);
 	}
-push(@rv, map { [ $_, '700', 'ssl' ] } &ssl_certificate_directories($d));
+if (!$d->{'ssl_same'}) {
+	push(@rv, map { [ $_, '700', 'ssl' ] }
+		      &ssl_certificate_directories($d));
+	}
 return @rv;
 }
 

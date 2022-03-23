@@ -27,6 +27,7 @@ index_return2=模塊索引
 index_list=列表..
 index_enet=在你的操作系統上，網絡配置模塊沒有被支持。Virtualmin需要該模塊來管理虛擬網絡接口。
 index_edefip=Virtualmin無法計算出你系統上虛擬服務器的缺省IP地址。你必須在<a href='$1'>模塊配置</a>頁面上更新<b>虛擬地址的網絡接口</b>或者<b>缺省虛擬服務器IP地址</b>。
+
 index_eapache=你的系統沒有安裝Apache web服務器，或者沒有在Webmin的<a href='$1'>Apache Web服務器</a>模塊中正確配置。如果你的系統不使用Apache，你必須在Virtualmin的<a href='$2'>模塊配置</a>頁面中禁用它。
 index_eproftpd=你的系統沒有安裝ProFTPd服務器，或者沒有在Webmin的<a href='$1'>ProFTPd 服務器</a>模塊中正確配置。如果你的系統不使用ProFTPd，你必須在Virtualmin的<a href='$2'>模塊配置</a>頁面中禁用它。
 index_ebind=你的系統沒有安裝BIND DNS服務器第8版或第9版，或者沒有在Webmin的<a href='$1'>BIND DNS服務器</a>模塊中正確配置。如果你的系統不使用BIND，你必須在Virtualmin的<a href='$2'>模塊配置</a>頁面中禁用它。
@@ -958,7 +959,6 @@ save_nopostgres=.. PostgreSQL用戶不存在！
 save_norename=.. 7.4版本以下不能重命名PostgreSQL用戶
 save_emaking=修改前命令失敗：$1
 save_rusure=你確定想保存域$1嗎？你選擇了刪除以下功能：
-save_dok=是，保存
 save_proftpd=正在修改FTP虛擬服務器的IP地址..
 save_proftpd2=正在修改FTP虛擬服務器中的域名..
 save_proftpd3=正在修改FTP虛擬服務器中的匿名訪問目錄..
@@ -1348,7 +1348,6 @@ losing_virus=該虛擬服務器用于病毒過濾的Procmail配置將被刪除�
 losing_status=該虛擬服務器網站的Webmin狀態監控將被刪除。
 
 check_title=正在檢查配置
-check_desc=正在檢查你系統的狀態以保証所有啟用的功能都可用，郵件服務器配置正常，以和限額可用 ..
 check_netok=Webmin的網絡配置模塊被安裝和支持。
 check_defip=虛擬服務器的缺省IP地址是$1。
 check_ewebactions=Apache的<tt>mod_suexec</tt>模塊沒有安裝或者沒有啟用。
@@ -1362,7 +1361,7 @@ check_sendmailok=郵件服務器Sendmail已安裝和配置。
 check_postfixok=郵件服務器Postfix已安裝和配置。
 check_qmailok=郵件服務器Qmail已安裝和配置。
 check_qmailmode6=郵件服務器Qmail已安裝和配置。但是，服務器模板中的用戶名格式被設置成<b>username@domain</b>，可能不能工作。
-check_postfixmode6=郵件服務器Postfix已安裝和配置。但是，服務器模板中的用戶名格式被設置成<b>username@domain</b>，Postfix不支持這樣的格式.
+check_postfixmode6=郵件服務器Postfix已安裝和配置。但是，服務器模板中的用戶名格式被設置成<b>username@domain</b>，Postfix不支持這樣的格式
 check_vpopmailok=使用VPOPMail擴展的郵件服務器Qmail已安裝和配置。
 check_done=.. 你的系統可以通過Virtualmin使用。
 check_failed=.. 你的系統不能通過Virtualmin使用。
@@ -1382,7 +1381,6 @@ check_history=在Webalizer的全局配置中，<b>Webalizer歷史文件</b>被�
 check_proftpd=在ProFTPd配置模板中發現一個錯誤：$1。必須通過編輯服務器模板頁面中的缺省設置來修複。
 check_enamevirt=<b>所有Apache虛擬服務器都基于名字</b>和<b>DNS記錄使用缺省IP地址</b>不能在<a href='$1'>模塊配置</a>頁面中同時啟用。
 check_logrotateok=Logrotate已安裝。
-check_plugin=插件$1安裝成功。
 check_eldap=連接LDAP服務器時發生一個錯誤：$1。LDAP必須在<a href='$2'>模塊配置</a>頁面中禁用，或者正確配置<a href='$3'>LDAP用戶和用戶組</a>模塊。
 check_eldap2=LDAP用戶和用戶組模塊版本太舊，Virtualmin不能用它來管理用戶。LDAP必須在<a href='$1'>模塊配置</a>頁面中禁用，或者升級該模塊至版本$2。
 check_ldap=LDAP用戶和用戶組模塊配置正常。
@@ -2109,7 +2107,6 @@ tmpl_extra_prefix=其他管理員前綴
 tmpl_scripts=編輯缺省安裝腳本
 tmpl_dbs=編輯缺省數據庫
 tmpl_return=模板
-tmpl_ephpsuexec=如果suexec沒有啟用，PHP腳本不能以域所有者運行。
 tmpl_ephpcmd=如果沒有安裝<tt>php</tt>命令，PHP腳本不能作為域所有者運行
 tmpl_erubycmd=如果沒有安裝<tt>ruby</tt>命令，Ruby腳本不能作為域所有者運行
 tmpl_editmode=編輯模板項：
@@ -2427,7 +2424,7 @@ scripts_uptitle=升級腳本
 scripts_intitle=安裝腳本
 scripts_eavail=該腳本不可用
 scripts_apache=正在配置Apache PHP設置 ..
-scripts_aalready=.. 已完成。
+scripts_aalready=.. 已完成
 scripts_tabexisting=已安裝的腳本
 scripts_tabnew=可用的腳本
 scripts_name=腳本
@@ -2437,12 +2434,9 @@ scripts_uninstalls=卸載選中的腳本
 scripts_newdb=$1 （$2，新數據庫）
 scripts_nocat=其他
 scripts_enosel=沒有選中
-scripts_needmod=需要PHP模塊$1..
 scripts_softwaremod=正在安裝軟件包$1 ..
 scripts_esoftwaremod=..安裝失敗！
 scripts_esoftware=.. 軟件包Webmin模塊沒有安裝！
-scripts_eupdate=..你的系統不支持自動模塊安裝。
-scripts_einstallmod=安裝後模塊仍然不可用！
 scripts_gotmod=.. PHP模塊$1現在已可用。
 scripts_nopearmod=需要PHP Pear模塊$1，但是Webmin的Pear模塊現在無法安裝這些PHP Pear模塊 - 無論如何繼續。
 scripts_nopearcmd=需要PHP Pear模塊$1，但是PHP版本$2的Pear沒有安裝 - 無論如何繼續。
@@ -2497,7 +2491,6 @@ migrate_file1=服務器$1上的文件
 migrate_type=備份文件類型
 migrate_cpanel=cPanel備份
 migrate_ensim=Ensim備份
-migrate_dom=要遷移的域名
 migrate_user=域的用戶名
 migrate_pass=管理員密碼
 migrate_webmin=創建Webmin用戶？
@@ -2513,7 +2506,6 @@ migrate_eclash=指定域已經被Virtualmin管理
 migrate_euser=缺少或無效用戶名
 migrate_euserclash=指定的管理員用戶已存在
 migrate_doing1=正在從$2遷移$1 ..
-migrate_ok=成功遷移了$2個服務器。<a href='$1'>點這里</a>來管理新服務器。
 migrate_failed=遷移服務器失敗！
 migrate_parent=被服務器所有者所擁有
 migrate_parent1=新用戶
@@ -2662,7 +2654,6 @@ links_ssl=配置網站為SSL網站
 links_webalizer=Webalizer報告
 links_webalizer2=查看Webalizer報告
 links_spam=SpamAssassin
-links_webminlog=已記入日志的Webmin操作
 links_alog=Apache訪問日志
 links_elog=Apache錯誤日志
 links_flog=ProFTPd日志
@@ -2823,7 +2814,6 @@ newvalidate_ok=立即驗証
 newvalidate_err=驗証服務器失敗
 newvalidate_edoms=沒有選擇虛擬服務器
 newvalidate_efeats=沒有選擇功能
-newvalidate_good=所有功能正常
 newvalidate_all=所有功能
 newvalidate_sel=僅選擇了 ..
 newvalidate_doing=正在開始驗証選中擇的虛擬服務器。所有發現的問題都顯示為紅色 ..
@@ -3271,7 +3261,6 @@ upgrade_schedok=..已完成。更新文件將自動安裝。
 upgrade_schednot=.. 已完成，但沒有啟用自動更新安裝。使用<a href='$1'>$2</a>模塊打開自動更新安裝。
 upgrade_file=正在創建Virtualmin許可証文件..
 upgrade_problems=將你的系統升級到Virtualmin Pro時出現錯誤。錯誤原因請查看上面的信息。
-upgrade_complete=你的系統已成功升級到Virtualmin Pro！
 upgrade_theme=正在啟用主題 <i>$1</i> ..
 upgrade_esharedroot=你的Webmin根目錄$1被多個系統共享，不允許更新模塊。
 

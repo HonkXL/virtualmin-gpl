@@ -2962,7 +2962,8 @@ return undef;
 # Saves all mail aliases and mailbox users for this domain
 sub backup_mail
 {
-local ($d, $file, $opts) = @_;
+local ($d, $file, $opts, $homefmt, $increment, $asd, $allopts, $key) = @_;
+local $compression = $allopts->{'dir'}->{'compression'};
 &require_mail();
 
 # Create dummy file
@@ -3106,19 +3107,10 @@ if (!&mail_under_home()) {
 		&$second_print($text{'backup_mailfilesnone'});
 		}
 	else {
-		local $mfiles = join(" ", map { quotemeta($_) } @mfiles);
 		local $out;
 		local $temp = &transname();
-		local @flags;
-		push(@flags, "--ignore-failed-read")
-			if (&has_failed_reads_tar());
-		push(@flags, "--warning=no-file-changed")
-			if (&has_no_file_changed());
-		&execute_command("cd ".quotemeta($mbase)." && ".
-				 &get_tar_command()." cf ".
-				 quotemeta($temp)." ".$mfiles." ".
-				 join(" ", @flags),
-				 undef, \$out, \$out);
+		local $out = &backquote_command(&make_archive_command(
+			$compression, $mbase, $temp, @mfiles));
 		if ($?) {
 			&$second_print(&text('backup_mailfilesfailed',
 					     "<pre>$out</pre>"));
@@ -3176,10 +3168,8 @@ if (&foreign_check("dovecot") && &foreign_installed("dovecot")) {
 		if (@names) {
 			local $out;
 			local $temp = &transname();
-			&execute_command("cd ".quotemeta($control)." && ".
-					 "tar cf ".quotemeta($temp).
-					 " ".join(" ", @names),
-					 undef, \$out, \$out);
+			local $out = &backquote_command(&make_archive_command(
+				$compression, $control, $temp, @names)." 2>&1");
 			if ($?) {
 				&$second_print(&text('backup_emailcontrol',
 						     $out));
@@ -3211,9 +3201,8 @@ if (@homeless) {
 		local $file = $file."_homes_".$u->{'user'};
 		local $out;
 		local $temp = &transname();
-		&execute_command("cd ".quotemeta($u->{'home'})." && ".
-				 "tar cf ".quotemeta($temp)." .",
-				 undef, \$out, \$out);
+		local $out = &backquote_command(&make_archive_command(
+			$compression, $u->{'home'}, $temp, ".")." 2>&1");
 		if ($?) {
 			&$second_print(&text('backup_mailhomefailed',
 					     "<pre>$out</pre>"));
@@ -3427,11 +3416,8 @@ while(<UFILE>) {
 			if (!-d $uinfo->{'home'}) {
 				&create_user_home($uinfo, $d);
 				}
-			local $out;
-			&execute_command(
-				"cd ".quotemeta($uinfo->{'home'})." && ".
-				"tar xf ".quotemeta($file)." .",
-				undef, \$out, \$out);
+			local $out = &backquote_command(&make_unarchive_command(
+				$uinfo->{'home'}, $file)." 2>&1");
 			}
 		}
 	}
@@ -3596,13 +3582,14 @@ if (-r $file."_files" &&
 	if ($_[2]->{'mailuser'}) {
 		# Just do one user
 		&$first_print(&text('restore_mailfiles3', $_[2]->{'mailuser'}));
-		&execute_command("cd '$xtract' && tar xf '${file}_files' '$foundmailuser' 2>&1", undef, \$out, \$out);
+		$out = &backquote_command(&make_unarchive_command(
+			$xtract, $file."_files", $foundmailuser)." 2>&1");
 		}
 	else {
 		# Do all users
 		&$first_print($text{'restore_mailfiles'});
-		&execute_command("cd '$xtract' && tar xf '${file}_files' 2>&1",
-				 undef, \$out, \$out);
+		$out = &backquote_command(&make_unarchive_command(
+			$xtract, $file."_files")." 2>&1");
 		}
 	if ($?) {
 		&$second_print(&text('backup_mailfilesfailed',
@@ -3749,18 +3736,17 @@ if (-r $file."_control" && &foreign_check("dovecot") &&
 		# Local dovecot specifies a control file location
 		local $control = $1;
 		&$first_print($text{'restore_mailcontrol'});
-		local $cmd = "cd ".quotemeta($control)." && ".
-                             "tar xf ".quotemeta($file."_control");
-		if ($_[2]->{'mailuser'}) {
+		local @onefiles;
+		if ($opts->{'mailuser'}) {
 			# Limit extract to one user
-			$cmd .= " ".quotemeta($_[2]->{'mailuser'});
-			local $at = &replace_atsign($_[2]->{'mailuser'});
-			if ($at ne $_[2]->{'mailuser'}) {
-				$cmd .= " ".quotemeta($at);
+			push(@onefiles, $opts->{'mailuser'});
+			local $at = &replace_atsign($opts->{'mailuser'});
+			if ($at ne $opts->{'mailuser'}) {
+				push(@onefiles, $at);
 				}
 			}
-		local $out;
-		&execute_command($cmd, undef, \$out, \$out);
+		local $out = &backquote_command(&make_unarchive_command(
+			$control, $file."_control", @onefiles)." 2>&1");
 		if ($?) {
 			&$second_print(&text('restore_emailcontrol', $out));
 			}

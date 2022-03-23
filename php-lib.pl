@@ -1732,6 +1732,59 @@ if (defined(&get_domain_php_mode) &&
 return $rv;
 }
 
+# fix_php_fpm_pool_file(&domain, &fixes)
+# Updates values in PHP FPM config file
+sub fix_php_fpm_pool_file
+{
+my ($d, $fixes) = @_;
+my ($mode, $rv, $conf, $file);
+if (defined(&get_domain_php_mode) &&
+    ($mode = &get_domain_php_mode($d)) &&
+    $mode eq "fpm" &&
+    &foreign_check("phpini")) {
+	&foreign_require("phpini");
+	$conf = &get_php_fpm_config($d);
+	if ($conf) {
+		$file = $conf->{'dir'}."/".$d->{'id'}.".conf";
+		}
+	if (-r $file) {
+		&$first_print($text{'save_apache12'});
+		&unflush_file_lines($file);	# In case cached
+		undef($phpini::get_config_cache{$file});
+		my $fpmconf = &phpini::get_config($file);
+		foreach my $f (@{$fixes}) {
+			my $ov = &phpini::find_value($f->[0], $fpmconf);
+			my $nv = $ov;
+			if (!defined($f->[1])) {
+				# Always change
+				$nv = $f->[2];
+				}
+			elsif ($f->[3] && $ov =~ /\Q$f->[1]\E/) {
+				# Regexp change
+				$nv =~ s/\Q$f->[1]\E/$f->[2]/;
+				}
+			elsif (!$f->[3] && $ov eq $f->[1]) {
+				# Exact match change
+				$nv = $f->[2];
+				}
+			if ($nv ne $ov) {
+				# Update in file
+				&phpini::save_directive($fpmconf, $f->[0], $nv);
+				&flush_file_lines($file);
+				$rv++;
+				}
+			}
+		if ($rv) {
+			&$second_print($text{'setup_done'});
+			}
+		else {
+			&$second_print($text{'setup_failed'});
+			}
+		}
+	}
+return $rv;
+}
+
 # fix_php_extension_dir(&domain)
 # If the extension_dir in a domain's php.ini file is invalid, try to fix it
 sub fix_php_extension_dir
@@ -1821,25 +1874,44 @@ return ( ) if (!&foreign_installed("software"));
 return ( ) if (!defined(&software::package_info));
 my @rv;
 my %donever;
-foreach my $pname ("php-fpm",
-		   (map { "php${_}-fpm" } @all_possible_short_php_versions),
-		   (map { my $v = $_; $v =~ s/\.//g;
-			  ("php${v}-php-fpm", "php${v}-fpm", "php${v}w-fpm",
+
+# Get all interesting packages
+my @pkgnames = ("php-fpm",
+		(map { "php${_}-fpm" } @all_possible_short_php_versions),
+		(map { my $v = $_; $v =~ s/\.//g;
+		     ("php${v}-php-fpm", "php${v}-fpm", "php${v}w-fpm",
 			   "rh-php${v}-php-fpm", "php${_}-fpm",
-			   "php${v}u-fpm") }
-		        @all_possible_php_versions)) {
-	my @pinfo = &software::package_info($pname);
-	next if (!@pinfo || !$pinfo[0]);
+			   "php${v}u-fpm") } @all_possible_php_versions));
+if (&get_webmin_version() >= 1.985 ||
+    $software::config{'package_system'} eq 'debian') {
+	&software::list_packages(@pkgnames);
+	}
+else {
+	&software::list_packages();
+	}
+my %pkgs;
+for(my $i=0; $software::packages{$i,'name'}; $i++) {
+	$pkgs{$software::packages{$i,'name'}} = [
+		$software::packages{$i,'name'},
+		$software::packages{$i,'class'},
+		$software::packages{$i,'desc'},
+		$software::packages{$i,'arch'},
+		$software::packages{$i,'version'} ];
+	}
+
+foreach my $pname (@pkgnames) {
+	my $pinfo = $pkgs{$pname};
+	next if (!$pinfo);
 
 	# The php-fpm package on Ubuntu is just a meta-package
-	if ($pname eq "php-fpm" && $pinfo[3] eq "all" &&
+	if ($pname eq "php-fpm" && $pinfo->[3] eq "all" &&
 	    $gconfig{'os_type'} eq 'debian-linux') {
 		next;
 		}
 
 	# Normalize the version
 	my $rv = { 'package' => $pname };
-	$rv->{'version'} = $pinfo[4];
+	$rv->{'version'} = $pinfo->[4];
 	$rv->{'version'} =~ s/\-.*$//;
 	$rv->{'version'} =~ s/\+.*$//;
 	$rv->{'version'} =~ s/^\d+://;
@@ -2131,7 +2203,7 @@ else {
 	$mode = $tmpl->{'php_sock'};
 	}
 my $port = $mode ? &get_php_fpm_socket_file($d) : &get_php_fpm_socket_port($d);
-$port = "localhost:".$port if ($port =~ /^\d+$/);
+$port = "127.0.0.1:".$port if ($port =~ /^\d+$/);
 &lock_file($file);
 if (-r $file) {
 	# Fix up existing one, in case user or group changed
@@ -2212,13 +2284,7 @@ $conf ||= &get_php_fpm_config();
 &$first_print($text{'php_fpmrestart'});
 if ($conf->{'init'}) {
 	&foreign_require("init");
-	my ($ok, $err) = (0);
-	if (defined(&init::reload_action)) {
-		($ok, $err) = &init::reload_action($conf->{'init'});
-		}
-	if (!$ok) {
-		($ok, $err) = &init::restart_action($conf->{'init'});
-		}
+	my ($ok, $err) = &init::restart_action($conf->{'init'});
 	if ($ok) {
 		&$second_print($text{'setup_done'});
 		return 1;

@@ -910,6 +910,7 @@ else {
 		  [ "upload_tmp_dir", $oldd->{'home'}, $d->{'home'}, 1 ],
 		  );
 		&fix_php_ini_files($d, \@fixes);
+		&fix_php_fpm_pool_file($d, \@fixes);
 		}
 	&release_lock_web($d);
 	&create_framefwd_file($d);
@@ -1768,6 +1769,7 @@ if ($virt) {
 			push(@fixes, [ "mysql.default_socket", undef, $sock ]);
 			}
 		&fix_php_ini_files($d, \@fixes);
+		&fix_php_fpm_pool_file($d, \@fixes);
 		}
 
 	# Fix broken PHP extension_dir directives
@@ -2408,7 +2410,8 @@ foreach my $log ([ 0, $text{'links_alog'} ],
 					       : "extra";
 		push(@rv, { 'mod' => 'syslog',
 			    'desc' => $log->[1],
-			    'page' => "save_log.cgi?view=1&".
+			    'page' => "save_log.cgi?view=1&nonavlinks=1".
+				      "&linktitle=".&urlize($log->[1])."&".
 				      "$param=".&urlize($lf),
 			    'cat' => 'logs',
 			  });
@@ -2552,7 +2555,7 @@ return $ok ? undef : $err;
 }
 
 # show_template_web(&tmpl)
-# Outputs HTML for editing apache related template options
+# Outputs HTML for editing webserver related template options
 sub show_template_web
 {
 local ($tmpl) = @_;
@@ -2718,28 +2721,6 @@ if ($config{'web'} && $config{'webalizer'}) {
 	print &ui_table_hr();
 	}
 
-# Setup matching Webmin/Usermin SSL certs
-print &ui_table_row(&hlink($text{'newweb_webmin'},
-			   "template_web_webmin_ssl"),
-	&ui_radio("web_webmin_ssl",
-		  $tmpl->{'web_webmin_ssl'} ? 1 : 0,
-		  [ [ 1, $text{'yes'} ], [ 0, $text{'no'} ] ]));
-
-print &ui_table_row(&hlink($text{'newweb_usermin'},
-			   "template_web_usermin_ssl"),
-	&ui_radio("web_usermin_ssl",
-		  $tmpl->{'web_usermin_ssl'} ? 1 : 0,
-		  [ [ 1, $text{'yes'} ], [ 0, $text{'no'} ] ]));
-
-# Setup Dovecot and Postfix SSL certs
-print &ui_table_row(&hlink($text{'newweb_dovecot'},
-			   "template_web_dovecot_ssl"),
-	&ui_yesno_radio("web_dovecot_ssl", $tmpl->{'web_dovecot_ssl'}));
-
-print &ui_table_row(&hlink($text{'newweb_postfix'},
-			   "template_web_postfix_ssl"),
-	&ui_yesno_radio("web_postfix_ssl", $tmpl->{'web_postfix_ssl'}));
-
 # Add redirects for webmail and admin
 print &ui_table_hr();
 foreach my $r ('webmail', 'admin') {
@@ -2795,7 +2776,7 @@ print &ui_table_row(&hlink($text{'newweb_http2'}, 'template_web_http2'),
 }
 
 # parse_template_web(&tmpl)
-# Updates apache related template options from %in
+# Updates webserver related template options from %in
 sub parse_template_web
 {
 local ($tmpl) = @_;
@@ -2906,12 +2887,6 @@ if ($config{'web'} && $config{'webalizer'}) {
 		}
 	}
 
-# Save options to setup per-service SSL certs
-$tmpl->{'web_webmin_ssl'} = $in{'web_webmin_ssl'};
-$tmpl->{'web_usermin_ssl'} = $in{'web_usermin_ssl'};
-$tmpl->{'web_postfix_ssl'} = $in{'web_postfix_ssl'};
-$tmpl->{'web_dovecot_ssl'} = $in{'web_dovecot_ssl'};
-		
 # Parse webmail redirect
 foreach my $r ('webmail', 'admin') {
 	$tmpl->{'web_'.$r} = $in{$r};
@@ -2969,7 +2944,7 @@ my %cannums = map { $mmap->{$_}, 1 } &supported_php_modes();
 $cannums{int($tmpl->{'web_php_suexec'})} = 1;
 my @opts = grep { $cannums{$_->[0]} }
 		([ 4, $text{'phpmode_none'} ],
-		 [ 0, $text{'phpmode_mod_php'} ],
+		 [ 0, &ui_text_color($text{'phpmode_mod_php'}, 'danger') ],
 	         [ 1, $text{'phpmode_cgi'} ],
 	         [ 2, $text{'phpmode_fcgid'} ],
 	         [ 3, $text{'phpmode_fpm'} ]);
@@ -3933,6 +3908,13 @@ else {
 	}
 }
 
+sub supports_check_peer_name
+{
+&require_apache();
+return $apache::site{'fullversion'} &&
+       &compare_versions($apache::site{'fullversion'}, "2.4.30") >= 0;
+}
+
 # supports_http2()
 # Returns 1 if HTTPv2 is supported by Apache on this system
 sub supports_http2
@@ -3940,10 +3922,10 @@ sub supports_http2
 &require_apache();
 my $err;
 if (!$apache::httpd_modules{'mod_http2'}) {
-	$err = "Missing Apache module mod_http2";
+	$err = "Missing Apache <tt>mod_http2</tt> module";
 	}
 elsif ($apache::httpd_modules{'mod_prefork'}) {
-	$err = "Incompatible Apache module mod_prefork is enabled";
+	$err = "Incompatible Apache <tt>mpm_prefork</tt> module is enabled";
 	}
 elsif (!$apache::site{'fullversion'} ||
        &compare_versions($apache::site{'fullversion'}, "2.4.17") < 0) {

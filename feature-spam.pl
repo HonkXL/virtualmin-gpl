@@ -619,15 +619,16 @@ return 0;
 # Also saves the auto-spam clearing settings.
 sub backup_spam
 {
-local ($d, $file) = @_;
+local ($d, $file, $opts, $homefmt, $increment, $asd, $allopts, $key) = @_;
+local $compression = $allopts->{'dir'}->{'compression'};
 &$first_print($text{'backup_spamcp'});
 local $spamrc = "$procmail_spam_dir/$d->{'id'}";
 local $spamdir = "$spam_config_dir/$d->{'id'}";
 if (-r $spamrc) {
 	&copy_write_as_domain_user($d, $spamrc, $file);
 	local $temp = &transname();
-	&execute_command("cd ".quotemeta($spamdir)." && tar cf ".
-			       quotemeta($temp)." . 2>/dev/null ");
+	&execute_command(&make_archive_command(
+		$compression, $spamdir, $temp, ".")." 2>&1");
 	&copy_write_as_domain_user($d, $temp, $file."_cf");
 	&unlink_file($temp);
 
@@ -649,14 +650,13 @@ else {
 # Also restores auto-clearing setting, if in backup.
 sub restore_spam
 {
+local ($d, $file) = @_;
 &$first_print($text{'restore_spamcp'});
-&obtain_lock_spam($_[0]);
-local $spamrc = "$procmail_spam_dir/$_[0]->{'id'}";
-local $spamdir = "$spam_config_dir/$_[0]->{'id'}";
-&execute_command("cp ".quotemeta($_[1])." ".
-		       quotemeta($spamrc));
-&execute_command("cd ".quotemeta($spamdir)." && tar xf ".
-		       quotemeta($_[1]."_cf"));
+&obtain_lock_spam($d);
+local $spamrc = "$procmail_spam_dir/$d->{'id'}";
+local $spamdir = "$spam_config_dir/$d->{'id'}";
+&copy_source_dest($file, $spamrc);
+&execute_command(&make_unarchive_command($spamdir, $file."_cf")." 2>&1");
 
 # Fix any incorrect /etc/webmin references
 my $lref = &read_file_lines($spamrc);
@@ -670,27 +670,27 @@ foreach my $l (@$lref) {
 	}
 &flush_file_lines($spamrc);
 
-if (-r $_[1]."_auto") {
+if (-r $file."_auto") {
 	# Replace auto-clearing setting
-	&save_domain_spam_autoclear($_[0], undef);
+	&save_domain_spam_autoclear($d, undef);
 	local %auto;
-	&read_file($_[1]."_auto", \%auto);
+	&read_file($file."_auto", \%auto);
 	if (%auto) {
-		&save_domain_spam_autoclear($_[0], \%auto);
+		&save_domain_spam_autoclear($d, \%auto);
 		}
 	}
 
 # If spamtrap aliases exist, make sure the files and cron job do
-local $st = &get_spamtrap_aliases($_[0]);
+local $st = &get_spamtrap_aliases($d);
 if ($st > 0) {
-	&setup_spamtrap_directories($_[0]);
+	&setup_spamtrap_directories($d);
 	&setup_spamtrap_cron();
 	}
 
 # Re-create all spam links
-&create_spam_config_links($_[0]);
+&create_spam_config_links($d);
 
-&release_lock_spam($_[0]);
+&release_lock_spam($d);
 &$second_print($text{'setup_done'});
 return 1;
 }
@@ -1029,7 +1029,7 @@ sub get_global_quota_exitcode
 &require_spam();
 local @recipes = &procmail::get_procmailrc();
 foreach my $r (@recipes) {
-	if ($r->{'action'} =~ /\Q$domain_lookup_cmd\E\s+\-\-exitcode\s+(\d+)/) {
+	if ($r->{'action'} =~ /\Q$domain_lookup_cmd\E.*\s+\-\-exitcode\s+(\d+)/) {
 		return $1;
 		}
 	}
@@ -1046,9 +1046,12 @@ local ($code) = @_;
 local @recipes = &procmail::get_procmailrc();
 local $changed = 0;
 foreach my $r (@recipes) {
-	if ($r->{'action'} =~ /\Q$domain_lookup_cmd\E\s+/) {
+	if ($r->{'action'} =~ /\Q$domain_lookup_cmd\E(.*?)\s+\$LOGNAME/) {
 		# Fix call to lookup-domain to return correct exit code
-		$r->{'action'} = "VIRTUALMIN=|$domain_lookup_cmd --exitcode $code \$LOGNAME";
+		my $flags = $1;
+		$flags =~ s/\s+--exitcode\s+\d+//;
+		$flags .= " --exitcode $code";
+		$r->{'action'} = "VIRTUALMIN=|$domain_lookup_cmd".$flags." \$LOGNAME";
 		&procmail::modify_recipe($r);
 		$changed++;
 		}
@@ -1063,6 +1066,38 @@ foreach my $r (@recipes) {
 	}
 &unlock_file($procmail::procmailrc);
 return $changed ? undef : "No receipes found";
+}
+
+# save_lookup_domain_port(port)
+# Update the procmail config and the lookup domain server port
+sub save_lookup_domain_port
+{
+my ($port) = @_;
+
+# Update the procmail config
+&require_spam();
+&lock_file($procmail::procmailrc);
+my @recipes = &procmail::get_procmailrc();
+foreach my $r (@recipes) {
+	if ($r->{'action'} =~ /\Q$domain_lookup_cmd\E(.*?)\s+\$LOGNAME/) {
+		my $flags = $1;
+		$flags =~ s/\s+--port\s+\d+//;
+		if ($port) {
+			$flags .= " --port $port";
+			}
+		$r->{'action'} = "VIRTUALMIN=|$domain_lookup_cmd".$flags." \$LOGNAME";
+		&procmail::modify_recipe($r);
+		}
+	}
+&unlock_file($procmail::procmailrc);
+
+# Update the server
+&lock_file($module_config_file);
+$config{'lookup_domain_port'} = $port;
+&save_module_config();
+&unlock_file($module_config_file);
+&foreign_require("init");
+&init::restart_action("lookup-domain");
 }
 
 # update_spam_whitelist(&domain)

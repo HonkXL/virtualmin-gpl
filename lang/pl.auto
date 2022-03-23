@@ -156,11 +156,11 @@ index_themeswitchnot=Nie pytaj mnie ponownie
 index_certwarn=Ostrzeżenie o certyfikacie SSL
 index_certexpired=Ważność niektórych certyfikatów SSL serwerów wirtualnych : $1 
 index_certnearly=Ważność niektórych certyfikatów SSL serwerów wirtualnych : $1 
-index_expirywarn=Ostrzeżenie o rejestracji DNS
 index_expiryexpired=Rejestracja niektórych serwerów wirtualnych wygasła : $1 
 index_expirynearly=Wygaśnięcia rejestracji DNS niektórych serwerów wirtualnych : $1 
 index_certinvalid=Plik certyfikatu SSL $2 dla $1 jest nieprawidłowy : $3 
 index_keyinvalid=Plik kluczy SSL $2 dla $1 jest nieprawidłowy : $3 
+index_global_eg=np.
 
 form_rmysql=Serwer bazy danych MySQL
 form_web=Skonfigurować witrynę Apache?
@@ -324,7 +324,7 @@ setup_ewebalias=.. nie udało się znaleźć docelowej wirtualnej strony!
 setup_ewebpost=.. konfiguracja nie powiodła się : $1 
 setup_ewebphpmode=Tryb wykonywania PHP $1 został wybrany, ale nie jest obsługiwany w tym systemie!
 setup_openssl=Tworzenie certyfikatu SSL i klucza prywatnego ..
-setup_fcgiwrap=Uruchamiam serwer fcgiwrap ..
+setup_fcgiwrap=Uruchamiam serwer FCGIwrap ..
 setup_efcgiwrap=.. nie powiodło się : $1 
 setup_ssl=Dodanie nowej wirtualnej strony SSL.
 setup_esslportclash=Adres IP $1 i port $2 są używane przez $3 
@@ -339,6 +339,7 @@ setup_ftpuser=Dodanie użytkownika ProFTPD $1 do grupy serwerów.
 setup_bind_cloud=Dodawanie nowej strefy DNS przy użyciu $1 ..
 setup_ebind_ecloud=.. nieobsługiwane : $1 
 setup_ebind_cloud=.. nie powiodło się : $1 
+setup_ebind_cloud2=.. gotowe, ale niektóre rekordy nie zostały utworzone : $1 
 setup_ebindslaveip2=.. nie udało się określić adresu IP dla tego systemu. Będziesz musiał ustawić adres IP w module serwera BIND DNS.
 setup_ebindslaveip=.. nie udało się określić prawidłowego adresu IP dla tego systemu (pobrano $1). Będziesz musiał ustawić adres IP w module serwera BIND DNS.
 setup_eslaves=.. niektóre serwery podrzędne uległy awarii :
@@ -355,6 +356,7 @@ setup_postgresdbimport=Importowanie bazy danych PostgreSQL $1 ..
 setup_postgresuser=Tworzenie logowania do PostgreSQL ..
 setup_userminpid=Ponowne uruchamianie Usermin ..
 setup_usermindown=.. obecnie nie działa
+setup_usermindown2=.. nie udało się ponownie uruchomić Usermin  : $1 
 setup_save=Zapisywanie szczegółów serwera ..
 setup_virt=Dodawanie wirtualnego interfejsu IP dla $1 ..
 setup_virtdone=.. utworzono interfejs $1 
@@ -773,6 +775,8 @@ edit_prefix=Prefiks nazwy skrzynki pocztowej
 edit_suffix=Sufiks nazwy skrzynki pocztowej
 edit_noprefix=Używany przez $1 użytkowników
 edit_id=ID domeny
+edit_ssl_exp=Wygaśnięcie domeny SSL
+edit_whois_exp=Wygaśnięcie rejestracji domeny
 edit_applyplan=Zastosuj ograniczenia z nowego planu, jeśli zostaną zmienione
 edit_proxy1=Witryna proxy do
 edit_proxy2=Ramka do przodu do
@@ -891,6 +895,7 @@ edit_spamvirusdesc=Skonfiguruj metody dostarczania spamu i wirusów wykrytych w 
 edit_website=Opcje witryny
 edit_websitedesc=Skonfiguruj ustawienia związane z witryną tego serwera wirtualnego, takie jak rejestrowanie i katalog HTML
 edit_php=Opcje PHP
+edit_php_return=Szczegóły opcji PHP
 edit_phpdesc=Skonfiguruj ustawienia związane ze sposobem uruchamiania skryptów PHP dla tego serwera wirtualnego.
 edit_phpverdesc=Wybierz wersję PHP do użycia i skonfiguruj różne wersje dla różnych katalogów.
 edit_spfdesc=Skonfiguruj opcje związane z DNS dla tego serwera wirtualnego, takie jak rekord (Sender Policy Framework).
@@ -1052,6 +1057,7 @@ save_apache8=Aktualizowanie przekazywania ramek ..
 save_apache9=Aktualizowanie serwera proxy strony internetowej ..
 save_apache10=Aktualizowanie katalogu domowego w konfiguracji PHP ..
 save_apache11=Aktualizacja katalogu dokumentów w konfiguracji strony internetowej ..
+save_apache12=Aktualizacja konfiguracji PHP FPM ..
 save_dns=Zmiana adresu IP w domenie DNS ..
 save_dns2=Zmiana nazwy domeny DNS ..
 save_dns2_provision=Zmiana nazwy domeny DNS na hoście usług.
@@ -1074,6 +1080,7 @@ save_nopostgres=.. Użytkownik PostgreSQL nie istnieje!
 save_norename=.. Użytkownicy PostgreSQL nie mogą być zmieniani w wersjach poniżej 7.4
 save_emaking=Przed niepowodzeniem polecenia modyfikacji : $1 
 save_rusure=Czy na pewno chcesz zapisać domenę $1 ? Do usunięcia wybrano następujące funkcje :
+save_dok_rmfeatures=Tak, zapisz teraz
 save_proftpd=Zmiana adresu IP wirtualnego serwera FTP ..
 save_proftpd2=Zmiana nazwy domeny na serwerze wirtualnym FTP ..
 save_proftpd3=Zmienianie anonimowego katalogu na serwerze wirtualnym FTP ..
@@ -1131,6 +1138,7 @@ save_installed_scripts_dbpass_postgres=Aktualizacja hasła PostgreSQL dla zainst
 save_installed_scripts_db_postgres=Aktualizacja nazwy bazy danych PostgreSQL dla zainstalowanych skryptów ..
 save_installed_scripts_err_file=.. nie powiodło się: nie można odczytać pliku <tt>$1</tt>
 save_installed_scripts_err_file_lines=.. nie powiodło się: nie można znaleźć ciągów do zastąpienia w pliku <tt>$1</tt>
+save_installed_scripts_err_file_write=.. nie powiodło się: nie można zapisać pliku <tt>$1</tt>
 save_installed_scripts_done=.. zrobione dla pliku <tt>$1</tt>
 
 luser_err=Nie udało się zapisać lokalnego użytkownika
@@ -1374,6 +1382,15 @@ newweb_webmin=Skonfigurować Webmin, aby używał tego samego certyfikatu SSL?
 newweb_usermin=Skonfigurować Usermin, aby używał tego samego certyfikatu SSL?
 newweb_dovecot=Skonfigurować Dovecot, aby używał tego samego certyfikatu SSL?
 newweb_postfix=Skonfigurować Postfix, aby używał tego samego certyfikatu SSL?
+newweb_cert_key=Szablon ścieżki klucza prywatnego
+newweb_cert_cert=Szablon ścieżki certyfikatu
+newweb_cert_ca=Szablon ścieżki certyfikatu CA
+newweb_cert_combined=Szablon dla połączonej ścieżki certyfikatu
+newweb_cert_everything=Szablon ścieżki klucza i certyfikatów
+newweb_cert_def=Plik w katalogu domowym
+newweb_cert_auto=Ten sam katalog co plik klucza
+newweb_cert_file=Ścieżka niestandardowa
+newweb_cert_efile=Brakujący certyfikat lub szablon pliku klucza
 newweb_webmail=Przekierować <tt>webmail.${DOM}</tt>?
 newweb_webmaildom=Adres URL przekierowania <tt>webmail</tt>
 newweb_webmailsame=Użyj nazwy domeny
@@ -1505,85 +1522,88 @@ losing_spam=Konfiguracja SpamAssassin dla tego wirtualnego serwera zostanie usun
 losing_virus=Wpis Procmail do filtrowania wirusów dla tego serwera wirtualnego zostanie usunięty.
 losing_status=Monitor stanu Webmin dla strony internetowej tego wirtualnego serwera zostanie usunięty.
 
-check_netok=Moduł konfiguracji sieci Webmina jest zainstalowany i obsługiwany.
-check_lowgmemory=Twój system jest maszyną wirtualną z $1 pamięci, ale gwarantowany limit to tylko $2. Jest to mniej niż zalecane przez Virtualmin minimum $3 i może powodować przejściowe awarie alokacji pamięci.
-check_okgmemory=Twój system jest maszyną wirtualną z co najwyżej $1 pamięci, ale gwarantowanym limitem jest tylko $2. Oba są równe lub wyższe od zalecanej przez Virtualmin minimum $3.
-check_ednsip1=Zewnętrzny adres IP dla rekordów DNS jest ustawiony na $1, ale wykryty adres zewnętrzny to tak naprawdę $2. Może to spowodować, że rekordy DNS dla domen Virtualmin wskażą niewłaściwy system.
-check_ednsip2=Domyślny adres IP jest ustawiony na $1, ale wykryty adres zewnętrzny to tak naprawdę $2. Zazwyczaj jest to wynikiem zapory sieciowej NAT i należy ją poprawić na stronie <a href='$3'>konfiguracji modułu</a>.
-check_ewebsuexecbin=W twoim systemie nie znaleziono polecenia <tt>suexec</tt>.
-check_ewebsuexechome=Komenda Suexec w twoim systemie jest skonfigurowana do uruchamiania skryptów tylko w $2, ale katalog domowy serwera wirtualnego Virtualmin to $1. Skrypty CGI są uruchamiane, ponieważ właściciele domen nie będą wykonywani.
-check_ewebactions=Moduł Apache <tt>mod_actions</tt> nie jest zainstalowany lub nie jest włączony.
-check_ewebdefphpmode2=Tryb wykonywania PHP $1 został wybrany w domyślnym szablonie, ale nie jest obsługiwany w tym systemie. Zmiana wartości domyślnej na $2.
+check_desc=Sprawdzany jest stan Twojego systemu, aby upewnić się, że wszystkie włączone funkcje są dostępne i prawidłowo skonfigurowane ..
+check_netok=Moduł konfiguracji sieci Webmina jest zainstalowany i obsługiwany
+check_lowgmemory=Twój system jest maszyną wirtualną z $1 pamięci, ale gwarantowany limit to tylko $2. Jest to mniej niż zalecane przez Virtualmin minimum $3 i może powodować przejściowe awarie alokacji pamięci
+check_okgmemory=Twój system jest maszyną wirtualną z co najwyżej $1 pamięci, ale gwarantowanym limitem jest tylko $2. Oba są równe lub wyższe od zalecanej przez Virtualmin minimum $3
+check_ednsip1=Zewnętrzny adres IP dla rekordów DNS jest ustawiony na $1, ale wykryty adres zewnętrzny to tak naprawdę $2. Może to spowodować, że rekordy DNS dla domen Virtualmin wskażą niewłaściwy system
+check_ednsip2=Domyślny adres IP jest ustawiony na $1, ale wykryty adres zewnętrzny to tak naprawdę $2. Zazwyczaj jest to wynikiem zapory sieciowej NAT i należy ją poprawić na stronie <a href='$3'>konfiguracji modułu</a>
+check_ewebsuexecbin=W twoim systemie nie znaleziono polecenia <tt>suexec</tt>
+check_ewebsuexechome=Komenda <tt>suexec</tt> w twoim systemie jest skonfigurowana do uruchamiania skryptów tylko poniżej <tt>$2</tt>, ale katalog domowy wirtualnego serwera Virtualmin to <tt>$1</tt>. Skrypty CGI uruchomione jako właściciele domeny nie zostaną wykonane
+check_ewebactions=Moduł Apache <tt>mod_actions</tt> nie jest zainstalowany lub nie jest włączony
+check_ewebdefphpmode2=Tryb wykonywania PHP <tt>$1</tt> został wybrany w domyślnym szablonie, ale nie jest obsługiwany w tym systemie, a teraz zostanie zmieniony na <tt>$2</tt>
+check_ewebmod_php=Domyślnym trybem wykonania PHP jest <tt>$1</tt>, co nie jest zalecane
 check_ewebconfig=Znaleziono błędy konfiguracji Apache : $1 
 check_ewebapacheversion=Virtualmin nie mógł wypracować wersji Apache w twoim systemie
 check_ewebapacheversion2=W systemie jest uruchomiona wersja Apache $1, ale Virtualmin wymaga wersji $2 lub nowszej
-check_ewebphp=Plik konfiguracyjny Apache $1 zawiera $2 wiersze, które uniemożliwiają działanie PHP z uprawnieniami właściciela domeny. Te linie muszą zostać usunięte.
-check_suexecok2=Skrypty CGI mogą być wykonywane przy użyciu SuExec lub fcgiwrap.
-check_suexecok=Skrypty CGI można wykonywać za pomocą SuExec.
-check_fcgiwrapok=Skrypty CGI można wykonywać za pomocą fcgiwrap.
-check_http2ok=Apache obsługuje HTTPv2 w twoim systemie.
-check_http2err=Apache nie obsługuje HTTPv2  : $1 
+check_ewebphp=Plik konfiguracyjny Apache $1 zawiera $2 wiersze, które uniemożliwiają działanie PHP z uprawnieniami właściciela domeny. Te linie muszą zostać usunięte
+check_suexecok2=Skrypty CGI mogą być wykonywane przy użyciu suEXEC lub FCGIwrap
+check_suexecok=Skrypty CGI mogą być wykonywane przy użyciu suEXEC
+check_fcgiwrapok=Skrypty CGI można wykonywać za pomocą FCGIwrap
+check_http2ok=Apache obsługuje HTTP/2 w twoim systemie
+check_http2err=Apache nie obsługuje HTTP/2  : $1 
 check_webphpmodes=Dostępne są następujące tryby wykonywania PHP : $1 
 check_ewebphpmodes=Brak dostępnych trybów wykonywania PHP!
-check_webphpversinis=Wersje PHP zmieniły się na $1 od ostatniego sprawdzenia. Ponowne generowanie brakujących plików php.ini.
-check_webphpfpm=Obsługa PHP-FPM w wersji $1 jest dostępna w tym systemie.
+check_webphpversinis=Wersje PHP zmieniły się na $1 od ostatniego sprawdzenia. Ponowne generowanie brakujących plików <tt>php.ini</tt>
+check_webphpfpm=Obsługa PHP-FPM w wersji $1 jest dostępna w tym systemie
 check_webphpnofpm=Obsługa PHP-FPM nie została wykryta : $1 
 check_webphpfpm2=W tym systemie dostępne są następujące wersje PHP-FPM : $1 
 check_ewebphpfpm2=Nie można użyć następujących wersji PHP-FPM : $1 
-check_webphpnofpm2=W tym systemie nie znaleziono pakietów PHP-FPM.
+check_webphpnofpm2=W tym systemie nie znaleziono pakietów PHP-FPM
 check_webphpfpmport=Naprawianie kolizji portu $2 dla wersji $1 PHP-FPM
-check_webphpverfixed=Poprawiona wersja FPM dla $1 domen.
-check_webphplocalfixed=Ograniczona wersja serwera FPM $2 do localhost dla $1 domen.
-check_webadminfixed=Usunięto nieobsługiwaną dyrektywę $1 ze stron $2 Apache.
-check_dnsok3=Domeny BIND DNS będą hostowane na hoście usług.
-check_etlsa=W systemie nie można utworzyć rekordów TLSA DNS: $1.
-check_tlsaok=Rekordy DNS TLSA zostaną dodane do nowych domen.
-check_dnsmaster=Jednak domyślny główny serwer DNS $1 nie jest w pełni kwalifikowaną nazwą domeny.
-check_mysqlok=MySQL $1 jest zainstalowany i działa.
-check_mysqlok2=Programy klienckie MySQL są instalowane do użytku z hostem usług.
-check_mysqlnopass=MySQL jest zainstalowany i działa, ale nie ma ustawionego hasła <tt>root</tt>! <b>Należy to natychmiast zmienić w module<a href='$1'> MySQL Database </a></b>.
-check_postgresok=PostgreSQL jest zainstalowany i działa.
-check_postgresnopass=PostgreSQL jest zainstalowany i działa, ale nie ma ustawionego hasła <tt>$2</tt>! <b>Należy to natychmiast zmienić w module<a href='$1'> Baza danych PostgreSQL </a></b>.
+check_webphpverfixed=Poprawiona wersja FPM dla $1 domen
+check_webphplocalfixed=Ograniczona wersja serwera FPM $2 do localhost dla $1 domen
+check_webadminfixed=Usunięto nieobsługiwaną dyrektywę $1 ze stron $2 Apache
+check_dnsok3=Domeny BIND DNS będą hostowane na hoście usług
+check_etlsa=W systemie nie można utworzyć rekordów TLSA DNS: $1
+check_tlsaok=Rekordy DNS TLSA zostaną dodane do nowych domen
+check_dnsmaster=Jednak domyślny główny serwer DNS $1 nie jest w pełni kwalifikowaną nazwą domeny
+check_mysqlok=MySQL $1 jest zainstalowany i działa
+check_mysqlok2=Programy klienckie MySQL są instalowane do użytku z hostem usług
+check_mysqlnopass=MySQL jest zainstalowany i działa, ale nie ma ustawionego hasła <tt>root</tt>! <b>Należy to natychmiast zmienić w module<a href='$1'> MySQL Database </a></b>
+check_postgresok=PostgreSQL jest zainstalowany i działa
+check_postgresnopass=PostgreSQL jest zainstalowany i działa, ale nie ma ustawionego hasła <tt>$2</tt>! <b>Należy to natychmiast zmienić w module<a href='$1'> Baza danych PostgreSQL </a></b>
 check_enetmask6=Maska sieci IPv6 $1 jest nieprawidłowa - powinna być liczbą, na przykład 64
-check_ifacezone=Interfejs sieciowy zostanie wykryty automatycznie podczas tworzenia wirtualnego serwera.
-check_sendmailok=Serwer pocztowy Sendmail jest zainstalowany i skonfigurowany.
-check_postfixok=Serwer pocztowy Postfix jest zainstalowany i skonfigurowany.
-check_dependentok=Postfix jest skonfigurowany do obsługi wychodzących adresów IP dla poszczególnych domen.
-check_dependentever=Twoja wersja Postfix nie obsługuje wychodzących adresów IP dla poszczególnych domen.
-check_dependentesupport=Postfix może obsługiwać wychodzące adresy IP dla poszczególnych domen, ale nie jest obecnie skonfigurowany do tego. Można to ustawić w module <a href='$1'>Postfix Mailserver</a>.
-check_qmailok=Serwer pocztowy Qmail jest zainstalowany i skonfigurowany.
-check_qmailmode6=Serwer pocztowy Qmail jest zainstalowany i skonfigurowany. Jednak format nazwy użytkownika na stronie szablonów serwera jest ustawiony na <b>nazwa użytkownika @ domena</b>, co może nie działać.
-check_postfixmode6=Serwer pocztowy Postfix jest zainstalowany i skonfigurowany. Jednak format nazwy użytkownika na stronie szablonów serwera jest ustawiony na <b>nazwa użytkownika @ domena</b>, nie jest obsługiwany przez Postfix.
-check_vpopmailok=Serwer pocztowy Qmail z rozszerzeniami VPOPMail jest zainstalowany i skonfigurowany.
-check_nogroup=Przydziały użytkowników są włączone dla katalogów domowych i e-mailowych, ale przydziały grupowe nie. Całkowite kwoty serwerów wirtualnych nie będą egzekwowane.
-check_noquotas=Przydziały dysku zostały wyłączone w konfiguracji modułu.
-check_edepwebalizer=Webalizer nie może być włączony w konfiguracji modułu Virtualmin <a href='$1'></a>, chyba że jest to serwer WWW.
-check_edepssl=SSL nie może być włączone w konfiguracji modułu Virtualmin <a href='$1'></a>, chyba że jest to Apache.
-check_eshell=Powłoka $1 dla użytkowników innych niż FTP jest zawarta w $2, co może umożliwić dostęp FTP.
-check_emysqlsync=Synchronizacja między użytkownikami Uniksa i MySQL jest włączona w module <a href='$1'>MySQL Database</a>. Nie jest to konieczne, ponieważ Virtualmin tworzy konta MySQL dla właścicieli domen w razie potrzeby, dlatego należy je wyłączyć.
-check_equotasync=Domyślne przydziały dysku dla nowych użytkowników są włączone w systemach plików: $1. Nie jest to konieczne, ponieważ Virtualmin ustawia przydziały dla nowych użytkowników, dlatego należy je wyłączyć w module <a href='$2'>Przydziały dysku</a>.
-check_egquotasync=Domyślne przydziały dysku dla nowych grup są włączone w systemach plików: $1. Nie jest to konieczne, ponieważ Virtualmin ustawia przydziały dla nowych domen, dlatego należy je wyłączyć w module <a href='$2'>Przydziały dysku</a>.
-check_allwebmin=Aktualizowanie wszystkich użytkowników Webmin o nowe ustawienia.
+check_ifacezone=Interfejs sieciowy zostanie wykryty automatycznie podczas tworzenia wirtualnego serwera
+check_sendmailok=Serwer pocztowy Sendmail jest zainstalowany i skonfigurowany
+check_postfixok=Serwer pocztowy Postfix jest zainstalowany i skonfigurowany
+check_dependentok=Postfix jest skonfigurowany do obsługi wychodzących adresów IP dla poszczególnych domen
+check_dependentever=Twoja wersja Postfix nie obsługuje wychodzących adresów IP dla poszczególnych domen
+check_dependentesupport=Postfix może obsługiwać wychodzące adresy IP dla poszczególnych domen, ale nie jest obecnie skonfigurowany do tego. Można to ustawić w module <a href='$1'>Postfix Mailserver</a>
+check_qmailok=Serwer pocztowy Qmail jest zainstalowany i skonfigurowany
+check_qmailmode6=Serwer pocztowy Qmail jest zainstalowany i skonfigurowany. Jednak format nazwy użytkownika na stronie szablonów serwera jest ustawiony na <b>nazwa użytkownika @ domena</b>, co może nie działać
+check_postfixmode6=Serwer pocztowy Postfix jest zainstalowany i skonfigurowany. Jednak format nazwy użytkownika na stronie szablonów serwera jest ustawiony na <b>nazwa użytkownika @ domena</b>, nie jest obsługiwany przez Postfix
+check_vpopmailok=Serwer pocztowy Qmail z rozszerzeniami VPOPMail jest zainstalowany i skonfigurowany
+check_nogroup=Przydziały użytkowników są włączone dla katalogów domowych i e-mailowych, ale przydziały grupowe nie. Całkowite kwoty serwerów wirtualnych nie będą egzekwowane
+check_noquotas=Przydziały dysku zostały wyłączone w konfiguracji modułu
+check_edepwebalizer=Webalizer nie może być włączony w konfiguracji modułu Virtualmin <a href='$1'></a>, chyba że jest to serwer WWW
+check_edepssl=SSL nie może być włączone w konfiguracji modułu Virtualmin <a href='$1'></a>, chyba że jest to Apache
+check_eshell=Powłoka $1 dla użytkowników innych niż FTP jest zawarta w $2, co może umożliwić dostęp FTP
+check_emysqlsync=Synchronizacja między użytkownikami Uniksa i MySQL jest włączona w module <a href='$1'>MySQL Database</a>. Nie jest to konieczne, ponieważ Virtualmin tworzy konta MySQL dla właścicieli domen w razie potrzeby, dlatego należy je wyłączyć
+check_equotasync=Domyślne przydziały dysku dla nowych użytkowników są włączone w systemach plików: $1. Nie jest to konieczne, ponieważ Virtualmin ustawia przydziały dla nowych użytkowników, dlatego należy je wyłączyć w module <a href='$2'>Przydziały dysku</a>
+check_egquotasync=Domyślne przydziały dysku dla nowych grup są włączone w systemach plików: $1. Nie jest to konieczne, ponieważ Virtualmin ustawia przydziały dla nowych domen, dlatego należy je wyłączyć w module <a href='$2'>Przydziały dysku</a>
+check_allwebmin=Aktualizowanie wszystkich użytkowników Webmin o nowe ustawienia
 check_allresel=Aktualizowanie wszystkich sprzedawców o nowe ustawienia ..
-check_needupdate=Niektóre ustawienia konfiguracji modułów, które wpływają na moduły, do których użytkownicy Webmin mają dostęp, uległy zmianie. Kliknij przycisk poniżej, aby zaktualizować wszystkich użytkowników o nowe uprawnienia.
+check_needupdate=Niektóre ustawienia konfiguracji modułów, które wpływają na moduły, do których użytkownicy Webmin mają dostęp, uległy zmianie. Kliknij przycisk poniżej, aby zaktualizować wszystkich użytkowników o nowe uprawnienia
 check_updatenow=Zaktualizuj użytkowników Webmin
-check_current=W globalnej konfiguracji Webalizera <b>plik przyrostowy Webalizera</b> jest ustawiony na ścieżkę bezwzględną. Użyj modułu <a href='$1'>Webalizer</a>, aby zmienić go na ścieżkę względną, na przykład <tt>webalizer.current</tt>.
-check_history=W globalnej konfiguracji Webalizera <b>plik historii Webalizera</b> jest ustawiony na ścieżkę bezwzględną. Użyj modułu <a href='$1'>Webalizer</a>, aby zmienić go na ścieżkę względną, na przykład <tt>webalizer.hist</tt>.
-check_proftpd=W szablonie konfiguracji ProFTPD znaleziono błąd: $1. Należy to naprawić, edytując Ustawienia domyślne na stronie Szablony serwera.
-check_enamevirt=Opcje <b>Wszystkie serwery wirtualne Apache są oparte na nazwie</b> i <b>Domyślny adres IP dla rekordów DNS</b> nie mogą być włączone w <a href='$1'>Konfiguracja Virtualmin</a> strona.
-check_eldap=Wystąpił błąd podczas łączenia się z serwerem LDAP: $1. Albo LDAP musi być wyłączony na stronie <a href='$2'>konfiguracja modułu</a>, albo moduł <a href='$3'>Użytkownicy i grupy LDAP</a> musi być poprawnie skonfigurowany.
-check_eldap2=Moduł Użytkownicy i grupy LDAP jest zbyt stary, aby mógł być używany przez Virtualmin do zarządzania użytkownikami. Albo LDAP musi być wyłączony na stronie <a href='$1'>konfiguracji modułu</a>, albo moduł zaktualizowany do wersji $2.
-check_ldap=Zarządzanie użytkownikami i grupami LDAP jest poprawnie skonfigurowane.
-check_spamok=SpamAssassin i Procmail są zainstalowane i skonfigurowane do użytku.
-check_noprocmail=SpamAssassin i Procmail są zainstalowane. Jednak Twój serwer pocztowy nie jest skonfigurowany do dostarczania przy użyciu Procmail.
-check_spamglobal=SpamAssassin jest skonfigurowany do uruchamiania z globalnej konfiguracji Procmail $1, co nie jest potrzebne, ponieważ Virtualmin skonfiguruje go dla poszczególnych domen.
-check_spamwhite=Dodanie do białej listy wszystkich skrzynek pocztowych w każdej domenie jest włączone na stronie <a href='$1'>Konfiguracja Virtualmin</a>, ale jest to niezgodne z użyciem <a href='$2'>spamc</a> SpamAssassin program kliencki.
-check_virusok=ClamAV jest zainstalowany i działa.
-check_virusok2=ClamAV jest zainstalowany i zakłada się, że działa.
-check_emysqlplugin=Wtyczka użytkowników MySQL nie jest już potrzebna, ponieważ jej funkcjonalność została włączona do rdzenia Virtualmin.
-check_statusok=Moduł Status systemu i serwera jest zainstalowany i sprawdzany zgodnie z harmonogramem.
-check_statussched=Moduł Status systemu i serwera jest zainstalowany, ale nie jest skonfigurowany do sprawdzania serwerów w regularnych odstępach czasu. Należy to włączyć na stronie <a href='$1'>Zaplanowane monitorowanie</a>.
-check_ebcmd=Polecenie $1 potrzebne do utworzenia lub przywrócenia kopii zapasowych nie zostało zainstalowane.
+check_current=W globalnej konfiguracji Webalizera <b>plik przyrostowy Webalizera</b> jest ustawiony na ścieżkę bezwzględną. Użyj modułu <a href='$1'>Webalizer</a>, aby zmienić go na ścieżkę względną, na przykład <tt>webalizer.current</tt>
+check_history=W globalnej konfiguracji Webalizera <b>plik historii Webalizera</b> jest ustawiony na ścieżkę bezwzględną. Użyj modułu <a href='$1'>Webalizer</a>, aby zmienić go na ścieżkę względną, na przykład <tt>webalizer.hist</tt>
+check_proftpd=W szablonie konfiguracji ProFTPD znaleziono błąd: $1. Należy to naprawić, edytując Ustawienia domyślne na stronie Szablony serwera
+check_enamevirt=Opcje <b>Wszystkie serwery wirtualne Apache są oparte na nazwie</b> i <b>Domyślny adres IP dla rekordów DNS</b> nie mogą być włączone w <a href='$1'>Konfiguracja Virtualmin</a> strona
+check_plugin=Wtyczka $1 jest zainstalowana
+check_eldap=Wystąpił błąd podczas łączenia się z serwerem LDAP: $1. Albo LDAP musi być wyłączony na stronie <a href='$2'>konfiguracja modułu</a>, albo moduł <a href='$3'>Użytkownicy i grupy LDAP</a> musi być poprawnie skonfigurowany
+check_eldap2=Moduł Użytkownicy i grupy LDAP jest zbyt stary, aby mógł być używany przez Virtualmin do zarządzania użytkownikami. Albo LDAP musi być wyłączony na stronie <a href='$1'>konfiguracji modułu</a>, albo moduł zaktualizowany do wersji $2
+check_ldap=Zarządzanie użytkownikami i grupami LDAP jest poprawnie skonfigurowane
+check_spamok=SpamAssassin i Procmail są zainstalowane i skonfigurowane do użytku
+check_noprocmail=SpamAssassin i Procmail są zainstalowane. Jednak Twój serwer pocztowy nie jest skonfigurowany do dostarczania przy użyciu Procmail
+check_spamglobal=SpamAssassin jest skonfigurowany do uruchamiania z globalnej konfiguracji Procmail $1, co nie jest potrzebne, ponieważ Virtualmin skonfiguruje go dla poszczególnych domen
+check_spamwhite=Dodanie do białej listy wszystkich skrzynek pocztowych w każdej domenie jest włączone na stronie <a href='$1'>Konfiguracja Virtualmin</a>, ale jest to niezgodne z użyciem <a href='$2'>spamc</a> SpamAssassin program kliencki
+check_virusok=ClamAV jest zainstalowany i działa
+check_virusok2=ClamAV jest zainstalowany i zakłada się, że działa
+check_emysqlplugin=Wtyczka użytkowników MySQL nie jest już potrzebna, ponieważ jej funkcjonalność została włączona do rdzenia Virtualmin
+check_statusok=Moduł Status systemu i serwera jest zainstalowany i sprawdzany zgodnie z harmonogramem
+check_statussched=Moduł Status systemu i serwera jest zainstalowany, ale nie jest skonfigurowany do sprawdzania serwerów w regularnych odstępach czasu. Należy to włączyć na stronie <a href='$1'>Zaplanowane monitorowanie</a>
+check_ebcmd=Polecenie $1 potrzebne do utworzenia lub przywrócenia kopii zapasowych nie zostało zainstalowane
 check_epbzip2out=Wybrano równoległą kompresję bzip2, ale nie można określić numeru wersji <tt>pbzip2</tt> : $1 
 check_epbzip2ver=Wybrano równoległą kompresję bzip2, ale wymaga to <tt>pbzip2</tt> wersji $1 lub nowszej, a system ma wersję $2 
 check_eset_user=Zewnętrzne polecenia przydziału są włączone, ale polecenie ustawienia przydziału użytkownika nie jest zdefiniowane lub nie istnieje
@@ -1592,41 +1612,43 @@ check_elist_users=Zewnętrzne polecenia przydziału są włączone, ale poleceni
 check_elist_groups=Zewnętrzne polecenia przydziału są włączone, ale polecenie wyświetlenia przydziałów grup nie zostało zdefiniowane lub nie istnieje
 check_eget_user=Zewnętrzne polecenia przydziału są włączone, ale polecenie uzyskania przydziału dla jednego użytkownika nie istnieje
 check_eget_group=Zewnętrzne polecenia przydziału są włączone, ale polecenie uzyskania przydziału dla pojedynczej grupy nie istnieje
-check_quotacommands=Zewnętrzne polecenia przydziału będą używane dla serwerów wirtualnych i skrzynek pocztowych.
+check_quotacommands=Zewnętrzne polecenia przydziału będą używane dla serwerów wirtualnych i skrzynek pocztowych
 check_eclamd=Wybrano użycie <tt>clamdscan</tt> do skanowania w poszukiwaniu wirusów, ale serwer <tt>clamd</tt>, z którym mówi, nie działa
 check_evirusspam=Skanowania antywirusowego nie można włączyć bez filtrowania spamu
-check_preload=Aktualizowanie ustawień wstępnego ładowania biblioteki Virtualmin.
+check_preload=Aktualizowanie ustawień wstępnego ładowania biblioteki Virtualmin
 check_collect=Aktualizowanie zadania gromadzenia statusu ..
-check_collectoff=Wyłączam zadanie gromadzenia statusu.
-check_esendmailbccs=Automatyczne BCCing wychodzących wiadomości e-mail nie jest obsługiwane przez serwer pocztowy Sendmail, dlatego należy je wyłączyć na stronie <a href='$1'>konfiguracji modułu</a>.
-check_eqmailbccs=Automatyczne BCCing wychodzących wiadomości e-mail nie jest obsługiwane przez serwer poczty Qmail, dlatego należy je wyłączyć na stronie <a href='$1'>konfiguracji modułu</a>.
-check_epostfixbccs=Automatyczne BCCing wychodzących wiadomości e-mail nie może być włączone, chyba że mapa BCC jest zdefiniowana w module <a href='$1'>Postfix Mailserver</a> lub ręcznie w pliku konfiguracyjnym Postfix. W przeciwnym razie należy go wyłączyć na stronie <a href='$2'>konfiguracji modułu</a>.
-check_esendmailaddrs=Sendmail akceptuje połączenia SMTP tylko na następujących portach: $1. Wiadomości e-mail z innych systemów w Internecie nie będą akceptowane. Można to zmienić w module <a href='$2'>Sendmail Mail Server</a>.
+check_collectoff=Wyłączam zadanie gromadzenia statusu
+check_esendmailbccs=Automatyczne BCCing wychodzących wiadomości e-mail nie jest obsługiwane przez serwer pocztowy Sendmail, dlatego należy je wyłączyć na stronie <a href='$1'>konfiguracji modułu</a>
+check_eqmailbccs=Automatyczne BCCing wychodzących wiadomości e-mail nie jest obsługiwane przez serwer poczty Qmail, dlatego należy je wyłączyć na stronie <a href='$1'>konfiguracji modułu</a>
+check_epostfixbccs=Automatyczne BCCing wychodzących wiadomości e-mail nie może być włączone, chyba że mapa BCC jest zdefiniowana w module <a href='$1'>Postfix Mailserver</a> lub ręcznie w pliku konfiguracyjnym Postfix. W przeciwnym razie należy go wyłączyć na stronie <a href='$2'>konfiguracji modułu</a>
+check_esendmailaddrs=Sendmail akceptuje połączenia SMTP tylko na następujących portach: $1. Wiadomości e-mail z innych systemów w Internecie nie będą akceptowane. Można to zmienić w module <a href='$2'>Sendmail Mail Server</a>
 check_ealias_maps=Znaleziono problem z twoimi mapami aliasów Postfix : $1 
 check_evirtual_maps=Znaleziono problem z Twoimi wirtualnymi mapami Postfix : $1 
 check_ecanonical_maps=Znaleziono problem z twoimi mapami kanonicznymi Postfix, używanymi do mapowania adresów wychodzących : $1 
 check_ebcc_maps=Znaleziono problem z mapami BCC nadawcy Postfix : $1 
-check_evad=Twoja konfiguracja Postfix ma opcję <tt>virtual_alias_domains</tt> ustawioną na <tt>$1</tt>. To zastępuje listę domen z opcji <tt>virtual_alias_maps</tt> i należy je usunąć.
-check_emydest=W konfiguracji Postfix brakuje systemowej nazwy hosta poczty <tt>$1</tt> z linii <tt>mydestination</tt>, co spowoduje odesłanie poczty. Obecna wartość to <tt>$2</tt>.
-check_elogrotateconf=Obecna konfiguracja logrotate jest nieprawidłowa: $1. Należy to naprawić, w przeciwnym razie rotacja pliku dziennika nie zostanie wykonana.
-check_espamsiteconfig=Komenda <tt>spamassassin</tt> nie obsługuje parametru <tt>--siteconfigpath</tt>, który jest wymagany przez Virtualmin. Zainstalowana wersja to $1 - zalecana jest wersja 3.0 lub nowsza.
+check_evad=Twoja konfiguracja Postfix ma opcję <tt>virtual_alias_domains</tt> ustawioną na <tt>$1</tt>. To zastępuje listę domen z opcji <tt>virtual_alias_maps</tt> i należy je usunąć
+check_emydest=W konfiguracji Postfix brakuje systemowej nazwy hosta poczty <tt>$1</tt> z linii <tt>mydestination</tt>, co spowoduje odesłanie poczty. Obecna wartość to <tt>$2</tt>
+check_elogrotateconf=Obecna konfiguracja logrotate jest nieprawidłowa: $1. Należy to naprawić, w przeciwnym razie rotacja pliku dziennika nie zostanie wykonana
+check_espamsiteconfig=Komenda <tt>spamassassin</tt> nie obsługuje parametru <tt>--siteconfigpath</tt>, który jest wymagany przez Virtualmin. Zainstalowana wersja to $1 - zalecana jest wersja 3.0 lub nowsza
 check_reserr=Limity zasobów nie są obsługiwane w systemie : $1 
 check_reswarn=Limity zasobów są obsługiwane, ale nie w pełni skonfigurowane : $1 
-check_resok=Limity zasobów są obsługiwane i poprawnie skonfigurowane.
+check_resok=Limity zasobów są obsługiwane i poprawnie skonfigurowane
 check_updateerr=Nie można użyć wybranego systemu aktualizacji pakietu : $1 
-check_apicmd=Tworzenie polecenia pomocnika API.
+check_packageok=Zainstalowane są wybrane systemy zarządzania pakietami i aktualizacji
+check_apicmd=Tworzenie polecenia pomocnika API
 check_spamlockon=Dodanie pliku blokującego do wszystkich wywołań spamassassin wszystkich domen ..
 check_spamlockoff=Usuwanie pliku blokady z wszystkich wywołań spamassassin wszystkich domen ..
-check_spamwrappercmd=Komenda procmail <tt>$1</tt> w konfiguracji Postfix nie istnieje.
-check_spamwrapperuser=Polecenie procmail <tt>$1</tt> jest własnością użytkownika $2, kiedy powinno być własnością <tt>root</tt>. Wiadomość e-mail może nie zostać poprawnie dostarczona lub sprawdzona pod kątem spamu.
-check_spamwrappergroup=Polecenie procmail <tt>$1</tt> jest własnością grupy $2, kiedy powinno być własnością <tt>root</tt>. Wiadomość e-mail może nie zostać poprawnie dostarczona lub sprawdzona pod kątem spamu.
-check_spamwrapperperms=Polecenie procmail <tt>$1</tt> ma uprawnienia $2, kiedy powinno być ustawione jako setuid i ustawione na root. Wiadomość e-mail może nie zostać poprawnie dostarczona lub sprawdzona pod kątem spamu.
+check_spamwrappercmd=Komenda procmail <tt>$1</tt> w konfiguracji Postfix nie istnieje
+check_spamwrapperargs=Polecenie procmaila <tt>$1</tt> w konfiguracji Postfixa nie ma oczekiwanych flag <tt>$2</tt>
+check_spamwrapperuser=Polecenie procmail <tt>$1</tt> jest własnością użytkownika $2, kiedy powinno być własnością <tt>root</tt>. Wiadomość e-mail może nie zostać poprawnie dostarczona lub sprawdzona pod kątem spamu
+check_spamwrappergroup=Polecenie procmail <tt>$1</tt> jest własnością grupy $2, kiedy powinno być własnością <tt>root</tt>. Wiadomość e-mail może nie zostać poprawnie dostarczona lub sprawdzona pod kątem spamu
+check_spamwrapperperms=Polecenie procmail <tt>$1</tt> ma uprawnienia $2, kiedy powinno być ustawione jako setuid i ustawione na root. Wiadomość e-mail może nie zostać poprawnie dostarczona lub sprawdzona pod kątem spamu
 check_lostfeature=Funkcji <i>$1</i> nie można wyłączyć, ponieważ jest używana przez następujące serwery wirtualne : $2 
 check_lostplugin=Wtyczki <i>$1</i> nie można wyłączyć, ponieważ jest używana przez następujące serwery wirtualne : $2 
-check_ehomebase=Domowy katalog podstawowy $1 nie jest ścieżką bezwzględną. Można to poprawić na stronie <a href='$2'>Konfiguracja Virtualmin</a>.
-check_ehomebase2=Domowy katalog podstawowy $1 nie jest ścieżką bezwzględną. Można to poprawić na stronie <a href='$2'>Konfiguracja modułu Użytkownicy i grupy</a>.
-check_ehomeformat=Format katalogu domowego $1 nie zawiera nazwy użytkownika ani nazwy domeny. Można to poprawić na stronie <a href='$2'>Konfiguracja Virtualmin</a>.
-check_ehomestyle=Styl katalogu domowego jest ustawiony na „Po prostu katalog podstawowy”, co nie jest możliwe w Virtualmin. Można to poprawić na stronie <a href='$2'>Konfiguracja modułu Użytkownicy i grupy</a>.
+check_ehomebase=Domowy katalog podstawowy $1 nie jest ścieżką bezwzględną. Można to poprawić na stronie <a href='$2'>Konfiguracja Virtualmin</a>
+check_ehomebase2=Domowy katalog podstawowy $1 nie jest ścieżką bezwzględną. Można to poprawić na stronie <a href='$2'>Konfiguracja modułu Użytkownicy i grupy</a>
+check_ehomeformat=Format katalogu domowego $1 nie zawiera nazwy użytkownika ani nazwy domeny. Można to poprawić na stronie <a href='$2'>Konfiguracja Virtualmin</a>
+check_ehomestyle=Styl katalogu domowego jest ustawiony na „Po prostu katalog podstawowy”, co nie jest możliwe w Virtualmin. Można to poprawić na stronie <a href='$2'>Konfiguracja modułu Użytkownicy i grupy</a>
 check_jailkitok=W tym systemie dostępne są więzienia Chroot
 check_jailkiterr=Więzienia Chroot są niedostępne : $1 
 check_eyumrepofile=Plik konfiguracyjny repozytorium Virtualmin $1 nie istnieje!
@@ -1925,6 +1947,7 @@ backup_mode1=serwer FTP
 backup_mode2=Serwer SSH
 backup_mode3=Wiadro Amazon S3
 backup_mode4=Pobierz w przeglądarce
+backup_mode44=Pobierz przez link
 backup_mode5=Prześlij na serwer
 backup_mode6=Pliki Rackspace Cloud
 backup_mode7=Google Cloud Storage
@@ -1932,6 +1955,7 @@ backup_mode8=Dropbox
 backup_mode9=Serwer Webmin
 backup_mode10=Backblaze
 backup_mode4desc=Wynikowy plik kopii zapasowej Virtualmin zostanie pobrany w przeglądarce w celu zapisania na komputerze.
+backup_mode44desc=Zostanie wygenerowane łącze do pobrania wynikowej kopii zapasowej Virtualmin.
 backup_akey=Identyfikator klucza dostępu
 backup_skey=Identyfikator tajnego klucza
 backup_nos3path=Na najwyższym poziomie
@@ -1986,12 +2010,21 @@ backup_nicedbp=$2 w folderze Dropbox $1
 backup_nicebb=Zasobnik Backblaze $1 
 backup_nicebbp=$2 w zasobniku Backblaze $1 
 backup_nicedownload=pobrany plik
+backup_nicedownloadlink=link do pobrania
 backup_niceupload=przesłany plik
 backup_senabled1=Zaplanowana kopia zapasowa Virtualmin została włączona dla wszystkich serwerów wirtualnych.
 backup_senabled0=Zaplanowana kopia zapasowa Virtualmin została włączona dla $1 serwerów wirtualnych.
 backup_sdisabled=Zaplanowana kopia zapasowa Virtualmin została wyłączona.
 backup_key=Zaszyfruj kopię zapasową za pomocą klucza
 backup_nokey=Nie podpisuj ani nie szyfruj
+backup_downloadfile=Pobierz plik kopii zapasowej $1 
+backup_edownloadfile=Brakujący plik kopii zapasowej do pobrania
+backup_edownloadfile2=Plik kopii zapasowej do pobrania nie jest ścieżką bezwzględną
+backup_edownloadfile7=Plik kopii zapasowej do pobrania zawiera nieprawidłowe znaki
+backup_edownloadfile6=Plik kopii zapasowej do pobrania znajduje się w złym katalogu
+backup_edownloadfile5=Plik kopii zapasowej do pobrania nie istnieje
+backup_edownloadfile3=Plik kopii zapasowej do pobrania nie jest poprawnie sformatowany
+backup_edownloadfile4=Plik kopii zapasowej do pobrania jest własnością innego użytkownika
 
 backup_err=Tworzenie kopii zapasowej nie powiodło się
 backup_err2=Nie udało się zapisać zaplanowanej kopii zapasowej
@@ -2287,6 +2320,8 @@ restore_epardom=.. oryginalny nadrzędny serwer wirtualny <tt>$1</tt> nie istnie
 restore_etemplate=.. szablon serwera $1 określony w kopii zapasowej nie istnieje
 restore_eresel=.. sprzedawca $1 określony w kopii zapasowej nie istnieje
 restore_eresel2=.. odsprzedawca $1 określony w kopii zapasowej nie istnieje - usunięcie go z domeny
+restore_eugroup=.. właściciel domeny grupa Unix $1 nie istnieje
+restore_eugroup2=.. grupa uniksowa $1 właściciela domeny nie istnieje - przełączenie z powrotem do własnej grupy domeny
 restore_edefip=.. nie udało się wypracować domyślnego adresu IP
 restore_eclash=.. wykryto zderzenie : $1 
 restore_erecreate=.. utworzenie brakującego serwera nie powiodło się : $1 
@@ -2316,6 +2351,7 @@ restore_egid=GID $1 jest już używany w tym systemie
 restore_unixuser=Aktualizowanie hasła administracyjnego i limitów ..
 restore_unixsame=.. pomijanie przywracania do oryginalnego serwera LDAP $1 w trybie replikacji
 restore_dirtar=Wyodrębnianie pliku TAR katalogu domowego ..
+restore_dirzip=Rozpakowywanie pliku ZIP katalogu domowego ..
 restore_dirsame=.. pomijanie przywracania do oryginalnego serwera NFS $1 w trybie replikacji
 restore_edirspace=.. ostrzeżenie - ta kopia zapasowa zawiera $1 plików, ale twój system ma tylko $2 wolnych ..
 restore_dirtarfailed=.. nie powiodło się! $1 
@@ -2374,7 +2410,7 @@ restore_headerfeatures=Funkcje i ustawienia
 restore_headeropts=Inne opcje przywracania
 restore_allfeatures=Przywróć wszystkie funkcje
 restore_checkmode=Sprawdzanie przywróconego trybu wykonywania PHP ..
-restore_okmode=.. tryb $1 OK dla tego systemu
+restore_okmode=.. tryb $1 działa na tym systemie
 restore_badmode=.. nie można użyć trybu $1, przejście do $2.
 restore_evirt6=Adres IPv6 dla serwera wirtualnego
 restore_vconfig_doing=Przywracanie konfiguracji Virtualmin ..
@@ -2710,8 +2746,8 @@ tmpl_framebelow=HTML poniżej ..
 tmpl_web=Dyrektywy i ustawienia dla nowych stron internetowych
 tmpl_web_ssl=Dodatkowe wytyczne dla stron SSL
 tmpl_web_fcgiwrap=Uruchom skrypty CGI za pomocą
-tmpl_web_fcgiwrap1=Serwer Fcgiwrap
-tmpl_web_fcgiwrap0=SuExec jeśli to możliwe, fcgiwrap inaczej
+tmpl_web_fcgiwrap1=Serwer do owijania FCGI
+tmpl_web_fcgiwrap0=suEXEC jeśli to możliwe, FCGIwrap inaczej
 tmpl_ftp=Dyrektywy ProFTPD dla nowych serwerów
 tmpl_ftpbelow=Dyrektywy poniżej. ..
 tmpl_webbelow=Dyrektywy Apache poniżej. ..
@@ -2982,7 +3018,7 @@ tmpl_extra_prefix=Prefiks dla dodatkowych administratorów
 tmpl_scripts=Edytuj domyślne instalatory skryptów
 tmpl_dbs=Edytuj domyślne bazy danych
 tmpl_return=szablon
-tmpl_ephpsuexec=Skrypty PHP nie mogą być uruchamiane jako właściciel domeny, chyba że suexec jest włączony
+tmpl_ephpsuexec=Skrypty PHP nie mogą być uruchamiane jako właściciel domeny, chyba że włączony jest suEXEC
 tmpl_ephpcmd=Skrypty PHP nie mogą być uruchamiane jako właściciel domeny, chyba że zainstalowana jest komenda <tt>php</tt>
 tmpl_erubycmd=Skrypty Ruby nie mogą być uruchamiane jako właściciel domeny, chyba że zainstalowana jest komenda <tt>ruby</tt>
 tmpl_editmode=Edytuj sekcję szablonów:
@@ -3349,7 +3385,13 @@ resel_backups=Czy można tworzyć kopie zapasowe serwerów wirtualnych?
 resel_backups2=Zaplanuj i wykonaj kopie zapasowe
 resel_backups1=Twórz tylko kopie zapasowe
 resel_backups0=Ani
+resel_admins=Czy można tworzyć dodatkowych administratorów i zarządzać nimi?
+resel_rename=Czy można zmienić nazwy domen?
+resel_createdoms=Czy można tworzyć domeny?
+resel_deletedoms=Czy można usuwać domeny?
+resel_editdoms=Czy można modyfikować domeny?
 resel_plans=Czy mogę tworzyć i edytować plany?
+resel_proxy=Czy można skonfigurować proxy?
 resel_migrate=Czy można migrować kopie zapasowe?
 resel_create=Czy można tworzyć i edytować sprzedawców?
 resel_demo=Ograniczasz się do trybu demo tylko do odczytu?
@@ -3389,6 +3431,7 @@ licence_err=Wykryto problem z licencją Virtualmin :
 licence_soon=Uwaga - Twoja licencja Virtualmin wygaśnie za $1 dni.
 licence_soon2=Uwaga - Twoja licencja Virtualmin wygaśnie za $1 godzin.
 licence_renew=Przedłużenie można kupić w <a target=_blank href='$1'>$1</a>
+license_shop_name=Sklep Virtualmin
 licence_recheck=Ponownie sprawdź stan licencji
 licence_title=Sprawdź ponownie licencję
 licence_ok2=.. licencja jest <i>ważna</i>. Jest ważny dla domen Virtualmin $1 i do użytku w systemach $2.
@@ -3455,17 +3498,22 @@ scripts_idbname=<a href='$1'>$2 baza danych $3</a>
 scripts_idbname2=<a href='$1'>$2 $3</a>
 scripts_idbtbpref=z przedrostkiem tabeli
 scripts_deregistering=Teraz wyrejestrowuję wersję $1 w wersji $2 ..
+scripts_equota=Ten skrypt wymaga $1 wolnego miejsca na dysku, ale dostępny jest tylko $2
 scripts_eversion=Brakujący lub nieprawidłowo wyglądający numer wersji
 scripts_eversion2=Określona wersja nie jest dostępna
 scripts_apache=Konfigurowanie ustawień PHP serwera WWW.
 scripts_cats=Kategorie
+scripts_needmod=Instalowanie wymaganego modułu PHP $1 ..
+scripts_optmod=Instalowanie zalecanego modułu PHP $1 ..
 scripts_esoftwaremod=.. instalacja nie powiodła się!
 scripts_phpmodinst=Instalacja modułu z pakietów oprogramowania ..
 scripts_phpmoddone=.. pomyślnie zainstalowano moduł z pakietu $1 
-scripts_phpmodfailed=.. nie udało się zainstalować modułu z $1 możliwych pakietów
+scripts_phpmodfailed=.. niedostępne w repozytoriach
 scripts_esoftware=.. moduł Webmin pakietów oprogramowania nie jest zainstalowany!
-scripts_eupdate=.. automatyczna instalacja modułu nie jest dostępna w twoim systemie.
-scripts_einstallmod=Moduł nie jest dostępny nawet po instalacji!
+scripts_eupdate=.. automatyczna instalacja modułu nie jest dostępna w Twoim systemie
+scripts_einstallmod=.. moduł został zainstalowany, ale nie można go załadować
+scripts_install_phpmods_check=Sprawdzanie modułów PHP ..
+scripts_install_phpmods_check_done=.. sprawdzanie zrobione
 scripts_gotmod=.. Moduł PHP $1 jest już dostępny.
 scripts_nopearmod=Wymagane są moduły PHP 1 Gruszka $1, ale moduł Gruszki Webmina nie jest dostępny do ich zainstalowania - i tak dalej.
 scripts_nopearcmd=Wymagane są moduły PHP Pear $1, ale Pear dla PHP w wersji $2 nie jest zainstalowany - i tak dalej.
@@ -3481,7 +3529,6 @@ scripts_epythoninst=.. automatyczna instalacja modułu Python nie powiodła się
 scripts_installgem=Instalowanie pakietu Ruby Gems ..
 scripts_mmax=(Maksymalnie $1)
 scripts_sitelink=Więcej informacji na temat używania tego skryptu można znaleźć na stronie <a href='$1' target=_blank>$1</a>.
-
 scripts_userpass=Początkowy login administratora to $1 z hasłem $2.
 scripts_passmode4=Początkowe hasło do skryptu
 scripts_epassmodeuser=Niepoprawny login do skryptu - tylko litery, cyfry i znaki. - _ może być użyty
@@ -3578,7 +3625,6 @@ migrate_plesk9=Kopia zapasowa Plesk 9+
 migrate_plesk=Kopia zapasowa Plesk 8
 migrate_psa=Kopia zapasowa Plesk 7
 migrate_lxadmin=LXadmin (beta)
-migrate_dom=Nazwa domeny do migracji
 migrate_user=Nazwa użytkownika dla domeny
 migrate_pass=Hasło dla administratora
 migrate_template=Szablon dla nowego serwera?
@@ -3597,7 +3643,7 @@ migrate_eclash=Określona domena jest już hostowana przez Virtualmin
 migrate_euser=Brakująca lub nieprawidłowa nazwa użytkownika
 migrate_euserclash=Określony użytkownik administracyjny już istnieje
 migrate_doing1=Rozpoczęcie migracji $1 z $2 ..
-migrate_ok=Pomyślnie migrowano $2 serwerów. <a href='$1'>Kliknij tutaj</a>, aby zarządzać nowym serwerem.
+migrate_ok=Pomyślnie przeprowadzono migrację serwera wirtualnego $2, <a href='$1'>kliknij tutaj</a>, aby nim zarządzać.
 migrate_failed=Nie udało się przeprowadzić migracji żadnych serwerów!
 migrate_parent=Należy do właściciela serwera
 migrate_parent1=Nowy użytkownik
@@ -3752,6 +3798,7 @@ defaults_emquota=Brakujący lub nieprawidłowy przydział pliku poczty
 defaults_eqquota=Brakujący lub nieprawidłowy limit serwera pocztowego
 defaults_below=Zdefiniowane poniżej ..
 
+links_webminlog_dom=Zarejestrowane działania domeny
 links_phpini3=Konfiguracja PHP-FPM
 
 massscript_err=Nie udało się zaktualizować skryptów
@@ -3954,7 +4001,7 @@ newvalidate_ok=Sprawdź teraz
 newvalidate_err=Nie udało się sprawdzić poprawności serwerów
 newvalidate_edoms=Nie wybrano serwerów wirtualnych
 newvalidate_efeats=Nie wybrano żadnych funkcji
-newvalidate_good=Wszystkie funkcje OK
+newvalidate_good=Wszystkie funkcje są dobre
 newvalidate_all=Wszystkie funkcje
 newvalidate_sel=Tylko wybrane ..
 newvalidate_doing=Rozpoczęcie sprawdzania poprawności wybranych serwerów wirtualnych. Wszelkie znalezione problemy zostaną wyświetlone na czerwono.
@@ -4018,11 +4065,11 @@ validate_ecloud=Nie znaleziono domeny DNS u dostawcy chmury $1
 validate_eweb=Nie znaleziono hosta wirtualnego Apache dla $1 
 validate_ewebconfig=Znaleziono błąd w konfiguracji hosta wirtualnego : $1
 validate_ewebphp=Brak skryptu opakowania dla PHP $1 - $2 
-validate_ewebphpsuexec=PHP jest skonfigurowany do działania jako właściciel domeny, ale SuExec nie jest włączony!
+validate_ewebphpsuexec=PHP jest skonfigurowany do działania jako właściciel domeny, ale suEXEC nie jest włączony!
 validate_ewebphpconfig=Znaleziono błędy konfiguracji PHP w wersji $1 : $2 
 validate_ewebphpfpmport=Znaleziono błąd konfiguracji PHP FPM : $1 
-validate_ewebuid=Użytkownik SuExec jest ustawiony na $1, ale identyfikator UID serwera wirtualnego to $2 
-validate_ewebgid=Grupa SuExec jest ustawiona na $1, ale GID serwera wirtualnego to $2 
+validate_ewebuid=Użytkownik suEXEC jest ustawiony na $1, ale UID wirtualnego serwera to $2 
+validate_ewebgid=Grupa suEXEC jest ustawiona na $1, ale GID wirtualnego serwera to $2 
 validate_ewebdir=Brakujący blok &lt;Directory&gt; Apache dla katalogu HTML $1 
 validate_ewebroot=Apache DocumentRoot nie jest ustawiony na katalog HTML $1 
 validate_ewebipv6=Istnieje rekord DNS IPv6 $2 o adresie $1, ale na tym serwerze wirtualnym nie włączono protokołu IPv6
@@ -4141,6 +4188,9 @@ spam_prov=System usług Cloudmin $1
 spam_exitcode=Gdy użytkownik o przekroczonym limicie otrzyma e-mail
 spam_bounce=Odeślij się do nadawcy
 spam_queue=Kolejka do późniejszej dostawy
+spam_lookup_port=Port demona wyszukiwania domeny
+spam_elookup_port=Numer portu demona wyszukiwania może być liczbą
+spam_elookup_port2=Port demona wyszukiwania jest już w użyciu!
 
 cat_objects=Obiekty serwera
 
@@ -4328,6 +4378,10 @@ phpmode_http2=Włączyć obsługę protokołu HTTP2?
 phpmode_http2on=Włączenie HTTP2 ..
 phpmode_http2off=Wyłączanie HTTP2 ..
 phpmode_http2def=Korzystanie z domyślnego trybu HTTP2..
+phpmode_phpinfo_show=Kliknij, aby wyświetlić informacje o środowisku PHP na Twoim serwerze za pomocą funkcji <tt>phpinfo()</tt>
+phpmode_phpinfo_show_dir=Kliknij, aby wyświetlić informacje o środowisku PHP na serwerze w <tt>$1</tt> za pomocą funkcji <tt>phpinfo()</tt>
+phpmode_phpinfo_ecannot=Nie masz uprawnień do przeglądania informacji PHP dla tego serwera wirtualnego
+phpmode_phpinfo_dir_ecannot_dir=Ten wirtualny serwer nie zażądał katalogu $1 w $2 
 
 website_header=Opcje witryny
 
@@ -4363,12 +4417,14 @@ spf_dsrecs=Rekordy DS dla rejestratora
 spf_edsrecs=Nie udało się wygenerować rekordów DS : $1 
 spf_dmarcenable=Tworzenie rekordu DMARC ..
 spf_dmarcdisable=Usuwam rekord DMARC ..
+spf_tlsa=Rekordy TLSA są włączone?
 spf_denabled=Zapis DMARC włączony?
 spf_dnssec=Czy podpis DNSSEC jest włączony?
 spf_dp=Zasady DMARC dla e-maili, które nie spełniają SPF lub DKIM
 spf_dpct=Procent wiadomości do zastosowania zasad
 spf_delrecs=Usuwanie $1 rekordów DNS ..
 spf_addrecs=Dodawanie $1 rekordów DNS ..
+spf_eaddrecs=.. rekord o nazwie $1 już istnieje
 spf_ttl=Ustawienie domyślnego TTL na $1 ..
 spf_ettlsupport=.. nieobsługiwane przez dostawcę DNS
 spf_enablednssec=Tworzenie klucza i rekordów DNSSEC ..
@@ -4599,14 +4655,13 @@ upgrade_sched=Konfigurowanie Webmin do automatycznej aktualizacji modułów Virt
 upgrade_schednot=.. zrobione, ale automatyczna instalacja aktualizacji nie jest włączona. Użyj modułu <a href='$1'>$2</a>, aby je włączyć.
 upgrade_file=Tworzenie pliku licencji Virtualmin ..
 upgrade_problems=Podczas aktualizacji systemu do Virtualmin Pro wystąpiły pewne błędy. Sprawdź powyższe komunikaty pod kątem możliwych przyczyn.
-upgrade_complete=Twój system został pomyślnie uaktualniony do Virtualmin Pro!
 upgrade_esharedroot=Twój katalog główny Webmin $1 jest współużytkowany przez wiele systemów - aktualizacje modułów są niedozwolone
 upgrade_eyumrepo=Virtualmin został zainstalowany z RPM, ale nie korzysta z repozytorium Virtualmin GPL. Aktualizacja nie jest obecnie możliwa.
 upgrade_eyumlist=Nie znaleziono pakietu $1 RPM na liście dostępnych pakietów z repozytorium. Być może jedno z Twoich obecnych repozytoriów nie działa?
 upgrade_edebrepo=Virtualmin został zainstalowany z pakietu Debian, ale nie korzysta z repozytorium GPL Virtualmin. Aktualizacja nie jest obecnie możliwa.
+upgrade_to_pro=Aktualizacja do Virtualmin Pro ..
 upgrade_eyumfile=W $1 nie znaleziono repozytorium Virtualmin GPL
-upgrade_update=Aktualizacja dostępnych pakietów z APT ..
-upgrade_debs=Aktualizacja pakietów Debiana Virtualmin : $1 
+upgrade_update_pkgs=Aktualizacja dostępnych pakietów. ..
 upgrade_yumclear=Czyszczenie pamięci podręcznych repozytoriów ..
 upgrade_etypematch=Aktualizacja nie jest możliwa, ponieważ typ instalacji Virtualmin to <tt>$1</tt>, ale Webmin to <tt>$2</tt>
 
@@ -4744,7 +4799,7 @@ balancer_eurl2=Brakujący lub nieprawidłowy docelowy adres URL
 balancer_eurls=Nie wprowadzono docelowych adresów URL
 balancer_script=Używany przez instalatora skryptów
 balancer_scriptver=Wersja skryptu
-balancer_none=Nie proxy dla tej ścieżki - zamiast tego serwuj lokalnie
+balancer_none=Nie używaj proxy dla tej ścieżki i zamiast tego wyświetlaj lokalnie
 
 scriptwarn_header=Następujące skrypty zarządzane przez Virtualmin mają nowe wersje :
 scriptwarn_header2=Poniższe skrypty zarządzane przez Virtualmin mają nowe wersje dostępne na \nwirtualnym serwerze $1  :
@@ -4990,7 +5045,7 @@ chroot_active=Aktywny?
 chroot_who=Zastosuj do serwera i podserwerów
 chroot_dir=Ogranicz do katalogu
 chroot_all=Wszystkie serwery wirtualne
-chroot_gsel=Tylko serwer $1 ($2 Wszystkie oprócz serwera)
+chroot_gsel=Tylko serwer $1 $2 Wszystkie oprócz serwera
 chroot_root=Wszystkie pliki w systemie
 chroot_home=Katalogi domowe użytkowników
 chroot_path=Inny katalog $1 
@@ -5166,7 +5221,7 @@ postgrey_initdone=.. włączone
 postgrey_initalready=.. już włączony
 postgrey_proc=Uruchamianie serwera Postgrey
 postgrey_procfailed=.. uruchomienie nie powiodło się : $1 
-postgrey_procdone=.. zaczęło się OK
+postgrey_procdone=..zaczęło się gotowe
 postgrey_procalready=.. już działający
 postgrey_postfix=Konfigurowanie Postfix do korzystania z Postgrey ..
 postgrey_postfixalready=.. już skonfigurowane
@@ -5176,7 +5231,7 @@ postgrey_nopostfixdone=.. usunięty
 postgrey_nopostfixalready=.. już usunięte
 postgrey_noproc=Zatrzymywanie serwera Postgrey
 postgrey_noprocfailed=... zamknięcie nie powiodło się : $1 
-postgrey_noprocdone=.. zamknij OK
+postgrey_noprocdone=.. zamknięcie zrobione
 postgrey_noprocalready=.. nie działa
 postgrey_noinit=Wyłączanie Postgrey w czasie uruchamiania ..
 postgrey_noinitdone=.. niepełnosprawny
@@ -5245,18 +5300,26 @@ copycert_fsaving=Kopiowanie certyfikatu i klucza do plików ProFTPD ..
 copycert_fsaving2=Kopiowanie certyfikatu, klucza i urzędu certyfikacji do plików ProFTPD ..
 copycert_fenabling=Włączanie protokołu SSL w konfiguracji ProFTPD.
 
+wizard_finish=Skończyć
+wizard_end=Wróć do Virtualmin
 wizard_memory=Virtualmin można dostroić, aby poprawić wydajność interfejsu użytkownika i przetwarzania wiadomości e-mail, ale kosztem zwiększonego zużycia pamięci. Najlepszy wybór zależy od sposobu użytkowania systemu.
 wizard_memory_preload=Wstępnie załadować biblioteki Virtualmin?
+wizard_memory_preload1=Tak, szybszy interfejs użytkownika z większą ilością pamięci RAM ($1)
+wizard_memory_preload0=Nie, wolniejszy interfejs użytkownika z mniejszą ilością pamięci RAM, ale większym obciążeniem procesora
 wizard_memory_lookup=Czy uruchomić serwer wyszukiwania domen e-mail?
+wizard_memory_lookup1=Tak, szybsze przetwarzanie poczty przy większej ilości pamięci RAM ($1)
+wizard_memory_lookup0=Nie, wolniejsze przetwarzanie poczty przy mniejszym zużyciu pamięci RAM, ale większym obciążeniu procesora
 wizard_virusnew=Jeśli Twój system będzie hostował domeny, które otrzymają dużą liczbę wiadomości e-mail, skanowanie wiadomości przychodzących w poszukiwaniu wirusów może generować duże obciążenie procesora. Ponieważ skanowanie odbywa się za pomocą serwera skanującego ClamAV <tt>clamd</tt>, zużywa pamięć RAM, nawet jeśli nie przetwarza wiadomości e-mail. Jeśli twój system nie będzie hostował poczty e-mail, skanowanie antywirusowe można wyłączyć.
 wizard_virusmsg=Włączyć skanowanie w poszukiwaniu wirusów za pomocą ClamAV?
-wizard_virus1=Tak (zużywa około 750 MB pamięci RAM)
+wizard_virus1=Tak, wykorzystuje do 2 GB pamięci RAM
 wizard_virus2=Używaj skanera na żądanie
-wizard_virus0=Nie (e-mail nie będzie filtrowany)
+wizard_virus0=Nie, e-mail nie będzie filtrowany
 wizard_eclamdenable=Nie udało się uruchomić skanera serwera ClamAV. Spróbuj włączyć ją na stronie <b>Skanowanie spamu i wirusów</b>, aby wyświetlić bardziej szczegółowy komunikat o błędzie.
 wizard_eclamdtest=Wystąpił problem podczas testowania skanera serwera ClamAV : $1 
 wizard_eclaminuse=Skanowania antywirusowego nie można wyłączyć, ponieważ jest używany przez $1 serwerów wirtualnych
 wizard_spam=Jeśli Twój system będzie hostował domeny, które otrzymają dużą liczbę wiadomości e-mail, filtrowanie wiadomości przychodzących pod kątem spamu może generować znaczne obciążenie procesora. Wynika to z użycia procesora przez filtr poczty SpamAssassin podczas jego uruchamiania, czego można uniknąć, uruchamiając serwer filtrów SpamAssassin <tt>spamd</tt> w tle. To zużywa pamięć RAM, ale zmniejsza obciążenie procesora i przyspiesza przetwarzanie poczty.
+wizard_spamd1=Tak, szybsze przetwarzanie poczty przy większej ilości pamięci RAM (30M) i bez ustawień dla poszczególnych domen
+wizard_spamd0=Nie, wolniejsze przetwarzanie poczty przy mniejszej ilości pamięci RAM
 wizard_spamdnone=Jednak serwer SpamAssassin <tt>spamd</tt> nie jest zainstalowany w twoim systemie. Najpierw musisz go zainstalować, a następnie włączyć na stronie <b>Skanowanie spamu i wirusów</b>.
 wizard_espamdenable=Nie udało się uruchomić filtru serwera SpamAssassin. Spróbuj włączyć ją na stronie <b>Skanowanie spamu i wirusów</b>, aby wyświetlić bardziej szczegółowy komunikat o błędzie.
 wizard_db=Virtualmin obsługuje zarówno serwery bazy danych MariaDB/MySQL, jak i PostgreSQL, ale możesz chcieć uruchomić tylko jeden (lub żaden) w systemie. Każda z nich zużywa pamięć RAM podczas działania, nawet jeśli nie są używane. <p> W zależności od stron internetowych i aplikacji, które zamierzasz hostować, uruchomienie MariaDB/MySQL może wystarczyć, ponieważ większość aplikacji internetowych nie obsługuje PostgreSQL lub nie wymaga. Jeśli Twój system będzie używany tylko do obsługi poczty lub hostingu DNS, nie musisz go uruchamiać.
@@ -5277,6 +5340,7 @@ wizard_mysql_delanon=Usunąć anonimowego użytkownika MySQL?
 wizard_mysql_epass=Niepoprawne hasło MySQL
 wizard_mysize=MariaDB/MySQL można skonfigurować w taki sposób, aby zmniejszało zużycie pamięci w celu zwiększenia wydajności, w zależności od ilości pamięci RAM w systemie i intensywności użycia bazy danych.
 wizard_mysize_type=Rozmiar konfiguracji MariaDB/MySQL
+wizard_mysize_def=Zostaw aktualny rozmiar
 wizard_mysize_small=Mały system (256M) z rzadkim użyciem MariaDB/MySQL
 wizard_mysize_medium=System średni (512M) z regularnym użyciem MariaDB/MySQL
 wizard_mysize_large=Duży system (1G), w którym MariaDB/MySQL jest intensywnie używana
@@ -5284,6 +5348,8 @@ wizard_mysize_huge=Ogromny system (2G lub więcej), na którym intensywnie używ
 wizard_myrec=(ZALECANA)
 wizard_emysizestart=Nie można uruchomić MySQL przy nowej konfiguracji: $1. Stara konfiguracja została przywrócona.
 wizard_done=Konfiguracja poinstalacyjna Virtualmin jest teraz zakończona!
+wizard_done2=Możesz jednak kontynuować korzystanie z kreatora, aby skonfigurować funkcje opcjonalne.
+wizard_alldone=Dodatkowa konfiguracja poinstalacyjna została zakończona!
 wizard_title_dns=Konfiguracja DNS
 wizard_dns=Aby strefy DNS utworzone przez Virtualmin były rozpoznawalne, rekord podstawowego serwera nazw dla każdej strefy musi być ustawiony na coś, co samo może być rozwiązane przez inne systemy w Internecie.
 wizard_dns_prins=Podstawowy serwer nazw
@@ -5300,7 +5366,15 @@ wizard_hashpass=Virtualmin umożliwia przechowywanie haseł w postaci zwykłego 
 wizard_hashpass_mode=Tryb przechowywania hasła
 wizard_hashpass_mode1=Przechowuj tylko hashowane hasła
 wizard_hashpass_mode0=Przechowuj hasła w postaci zwykłego tekstu
-wizard_hashpass_warn=Ostrzeżenie - w przypadku użycia zaszyfrowanych haseł odzyskiwanie hasła dla serwerów wirtualnych nie będzie już możliwe. Ponadto hasło MySQL dla nowych serwerów będzie inne niż hasło administracyjne i będzie generowane losowo.
+wizard_hashpass_warn=Jednak po włączeniu haszowanych haseł odzyskiwanie haseł dla serwerów wirtualnych nie będzie możliwe, a hasło bazy danych dla nowych serwerów będzie inne niż hasło administracyjne i będzie generowane losowo.
+wizard_title_ssldir=Katalog kluczy SSL
+wizard_ssldir=Virtualmin daje możliwość przechowywania certyfikatów i kluczy SSL w katalogu domowym każdego serwera wirtualnego lub w innej lokalizacji w <tt>/etc</tt> ”. Pierwszy z nich jest łatwiejszy w zarządzaniu, ale wprowadza ryzyko, że właściciele serwera mogą spowodować, że serwer nie uruchomi się, jeśli usuwają plik certyfikatu
+wizard_ssldir_mode=Lokalizacja certyfikatów SSL
+wizard_ssldir_mode0=W katalogu domowym każdej domeny
+wizard_ssldir_mode1=Katalog na domenę w $1 
+wizard_ssldir_mode2=Niestandardowy szablon pliku klucza
+wizard_ssldir_mode3=Istniejąca lokalizacja niestandardowa
+wizard_essldir=Brak niestandardowego szablonu pliku klucza
 wizard_defdom=Virtualmin może utworzyć domyślny serwer wirtualny, który będzie obsługiwał żądania internetowe do twojego systemu, które nie pasują do żadnej innej domeny. Można go również użyć do zażądania certyfikatu Let's Encrypt SSL do użytku przez własny interfejs użytkownika Virtualmin.
 wizard_defdom_exists=Utworzono już domyślny serwer wirtualny o nazwie $1. Będziesz musiał go usunąć, zanim będzie można użyć tej strony do utworzenia nowego domyślnego.
 wizard_defdom_mode=Skonfigurować domyślny serwer wirtualny?
@@ -5533,6 +5607,10 @@ smtpcloud_esandbox=Twoje konto Amazon SES jest nadal w trybie piaskownicy, więc
 smtpcloud_ses_sandbox=Stan produkcji SES
 smtpcloud_ses_inprod=Produkcja gotowa
 smtpcloud_ses_insandbox=W SES Sandbox – dostarczanie poczty jest ograniczone do czasu <a href='$1' target=_blank>uaktualnienia konta</a>.
+smtpcloud_egone=Dostawca chmury nie istnieje!
+smtpcloud_title=Dostawca usługi dostarczania poczty w chmurze
+smtpcloud_echeck=Nie można użyć dostawcy poczty w chmurze $1 : $2 
+
 provision_ecannot=Nie wolno konfigurować klienta usług Cloudmin
 provision_header=Opcje klienta usług Cloudmin
 provision_server=Mistrz usług Cloudmin
@@ -6029,6 +6107,12 @@ cloud_dropboxdesc=Dropbox
 cloud_bbdesc=Backblaze
 cloud_s3account=Używanie klucza dostępu $1 
 cloud_rsuser=Używanie loginu $1 
+cloud_s3_noawscli=Zaleca się zainstalowanie oficjalnego interfejsu wiersza poleceń AWS.
+cloud_s3_noawscli2=Interfejs wiersza poleceń AWS nie jest zainstalowany!
+cloud_s3_noawscli_install=<a href='$1'>Kliknij tutaj</a>, aby zainstalować go automatycznie.
+cloud_s3_awscli_installing=Instalowanie pakietu AWS CLI ..
+cloud_s3_awscli_title=Zainstaluj AWS CLI
+cloud_s3_awscli_return=Formularz S3
 cloud_s3_akey=Domyślny login S3
 cloud_noneset=Brak zestawu
 cloud_below=Wprowadzono poniżej ..
