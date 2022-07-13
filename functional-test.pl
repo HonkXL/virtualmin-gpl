@@ -115,6 +115,9 @@ while(@ARGV > 0) {
 	elsif ($a eq "--no-cleanup") {
 		$no_cleanup = 1;
 		}
+	elsif ($a eq "--skip-cleanup") {
+		$no_cleanup = 2;
+		}
 	elsif ($a eq "--output") {
 		$output = 1;
 		}
@@ -376,6 +379,13 @@ $domains_tests = [
 		  'grep' => [ 'PHP execution mode: cgi' ],
 		},
 
+		# Validate PHP mode cache
+		{ 'command' => 'list-domains.pl',
+		  'args' => [ [ 'simple-multiline' ],
+			      [ 'domain', $test_domain ] ],
+		  'grep' => [ 'PHP execution mode: cgi' ],
+		},
+
 		# Check PHP running via CGI
 		{ 'command' => 'echo "<?php system(\'id -a\'); ?>" >~'.
 			       $test_domain_user.'/public_html/test.php',
@@ -399,6 +409,13 @@ $domains_tests = [
 		  'grep' => [ 'PHP execution mode: fcgid' ],
 		},
 
+		# Validate PHP mode cache
+		{ 'command' => 'list-domains.pl',
+		  'args' => [ [ 'simple-multiline' ],
+			      [ 'domain', $test_domain ] ],
+		  'grep' => [ 'PHP execution mode: fcgid' ],
+		},
+
 		# Check PHP running via fCGId
 		{ 'command' => 'echo "<?php system(\'id -a\'); ?>" >~'.
 			       $test_domain_user.'/public_html/test.php',
@@ -418,6 +435,13 @@ $domains_tests = [
 		# Validate PHP mode
 		{ 'command' => 'list-domains.pl',
 		  'args' => [ [ 'multiline' ],
+			      [ 'domain', $test_domain ] ],
+		  'grep' => [ 'PHP execution mode: fpm' ],
+		},
+
+		# Validate PHP mode cache
+		{ 'command' => 'list-domains.pl',
+		  'args' => [ [ 'simple-multiline' ],
 			      [ 'domain', $test_domain ] ],
 		  'grep' => [ 'PHP execution mode: fpm' ],
 		},
@@ -460,6 +484,13 @@ $domains_tests = [
 	# Validate PHP mode
 	{ 'command' => 'list-domains.pl',
 	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_domain ] ],
+	  'grep' => [ 'PHP execution mode: none' ],
+	},
+
+	# Validate PHP mode cache
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'simple-multiline' ],
 		      [ 'domain', $test_domain ] ],
 	  'grep' => [ 'PHP execution mode: none' ],
 	},
@@ -1342,6 +1373,7 @@ $script_tests = [
 		      [ 'path', '/' ],
 		      [ 'db', 'mysql '.$test_domain_db ],
 		      [ 'opt', 'demo 1' ],
+		      [ 'opt', 'nowizard 1' ],
 		      [ 'version', 'latest' ] ],
 	  'timeout' => 300,
 	  'antigrep' => 'partially complete',
@@ -4541,6 +4573,17 @@ $mail_tests = [
 		  'antigrep' => 'BCC incoming email to:',
 		},
 
+		) : ( ),
+
+	&get_dkim_type() && ($dkim = &get_dkim_config()) &&
+	    $dkim && $dkim->{'enabled'} ? (
+		# Check for the DKIM DNS record
+		{ 'command' => 'get-dns.pl',
+		  'args' => [ [ 'multiline' ],
+			      [ 'domain', $test_domain ],
+			      [ 'regexp' => '_domainkey' ] ],
+		  'grep' => [ 'v=DKIM1' ],
+		},
 		) : ( ),
 
 	# Cleanup the domain
@@ -9882,6 +9925,7 @@ TESTS: foreach $tt (@tests) {
 		}
 	$lastt = undef;
 	foreach $t (@tts) {
+		next if ($no_cleanup == 2 && $t->{'cleanup'});
 		$lastt = $t;
 		$total++;
 		$ok = &run_test($t);
@@ -10086,7 +10130,7 @@ print "\n";
 print "usage: functional-tests.pl [--domain test.domain]\n";
 print "                           [--test type]*\n";
 print "                           [--skip-test type]*\n";
-print "                           [--no-cleanup]\n";
+print "                           [--no-cleanup | --skip-cleanup]\n";
 print "                           [--output]\n";
 print "                           [--migrate $mig]\n";
 print "                           [--user webmin-login --pass password]\n";

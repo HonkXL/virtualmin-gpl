@@ -8,6 +8,7 @@ $d || &error($text{'edit_egone'});
 &can_edit_domain($d) || &error($text{'edit_ecannot'});
 &can_edit_records($d) || &error($text{'records_ecannot'});
 &require_bind();
+$tmpl = &get_template($d->{'template'});
 
 if ($in{'type'}) {
 	# Adding a new record
@@ -42,6 +43,7 @@ else {
 	($t) = grep { $_->{'type'} eq $r->{'type'} } &list_dns_record_types($d);
 	}
 &can_edit_record($d, $r) && $t || &error($text{'record_eedit'});
+$cloud = &get_domain_dns_cloud($d);
 
 print &ui_form_start("save_record.cgi", "post");
 print &ui_hidden("dom", $in{'dom'});
@@ -124,6 +126,27 @@ else {
 					     $vals[$i]->{'width'}, "soft");
 			}
 		$field .= " ".$vals[$i]->{'suffix'};
+		if ($cloud && $cloud->{'proxy'} &&
+		    $t->{'type'} =~ /^(A|AAAA|CNAME)$/) {
+			$pc = $in{'type'} ? $tmpl->{'dns_cloud_proxy'}
+					  : $r->{'proxied'};
+			$field .= "&nbsp;&nbsp;".&ui_checkbox("proxyit", 1,
+		                      $text{'records_typeprox'}, $pc);
+			$field .= "
+			<script>
+				var ttl_def = document.querySelector('[name=\"ttl_def\"][value=\"1\"]'),
+					ttl_val = document.querySelector('[name=\"ttl_def\"][value=\"0\"]'),
+				    proxied = document.querySelector('[name=\"proxyit\"]');
+				    if (ttl_val && proxied) {
+					    ttl_val.addEventListener(\"click\", function() {
+					    	proxied.checked = false;
+					    });
+					    proxied.addEventListener(\"click\", function() {
+					    	this.checked && ttl_def.click()
+					    });
+				    }
+			</script>";
+			}
 		print &ui_table_row($vals[$i]->{'desc'}, $field);
 		}
 	}

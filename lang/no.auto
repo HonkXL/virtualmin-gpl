@@ -18,6 +18,17 @@ index_cloudsdesc=Konfigurer autentisering til leverandører av skylagring som S3
 index_themeswitch=Virtualmin 5 kommer med et helt nytt HTML 5-tema! Vil du prøve det nå?
 index_themeswitchok=Bytt temaer
 index_themeswitchnot=Ikke spør meg igjen
+index_disable_mod_php=Den utdaterte Apache <tt>mod_php</tt> modulen er aktivert på systemet ditt, men er ikke i bruk av noen virtuelle servere. Deaktivering vil forhindre at denne PHP-kjøringsmodusen blir valgt for virtuelle servere i fremtiden.
+index_disable_mod_phpok=Deaktiver det
+index_edisable_mod_php_cannot=Du har ikke lov til å deaktivere mod_php
+index_edisable_mod_php_mods=Ingen PHP Apache-moduler funnet!
+index_disable_mod_php_title=Deaktivering
+index_disable_mod_php_subtitle=Apache <tt>mod_php</tt>
+index_disable_mod_php_enmod=Deaktiverer Apache-modulen med <tt>a2dismod</tt> ..
+index_disable_mod_php_load=Fjerner <tt>LoadModule</tt>-linjen ..
+index_disable_mod_php_doms=Fjerner <tt>php_*</tt> direktiver fra virtuelle servere ..
+index_disable_mod_php_ddone=.. oppdatert $1 servere
+index_disable_mod_php_global=Fjerner globale <tt>php_*</tt> direktiver ..
 index_certwarn=SSL-sertifikatadvarsel
 index_certexpired=Noen virtuelle serveres SSL-sertifikater er utløpt : $1 
 index_certnearly=Noen virtuelle serveres SSL-sertifikater er i ferd med å utløpe : $1 
@@ -37,6 +48,7 @@ form_sshkey2=Bruk offentlig nøkkel nedenfor ..
 form_content2=Ja, med standardmal og innhold nedenfor
 form_content0=Ja, med innholdet nedenfor
 
+setup_edomainip=Et domenenavn kan ikke være en IP-adresse
 setup_eremoteuser=Brukernavnet kan ikke være det samme som den nåværende Virtualmin-innloggingen
 setup_edepunixdir=En virtuell server på toppnivå med retning i hjemmet, må ha en Unix-bruker
 setup_edepdnssub2=DNS kan ikke deaktiveres mens underdomenet fremdeles har aktivert
@@ -57,6 +69,7 @@ setup_ebind_cloud2=.. ferdig, men noen poster ble ikke opprettet : $1
 setup_ebindslaveip2=.. kunne ikke bestemme IP-adressen til dette systemet. Du må angi IP-adressen i BIND DNS Server-modulen.
 setup_ebindslaveip=.. kunne ikke bestemme en gyldig IP-adresse for dette systemet (fikk $1). Du må angi IP-adressen i BIND DNS Server-modulen.
 setup_enodnssecalg=.. DNSSEC-algoritme ikke valgt i servermal
+setup_webmindown2=.. kunne ikke starte Webmin på nytt : $1
 setup_usermindown=.. kjører foreløpig ikke
 setup_usermindown2=.. kunne ikke starte Usermin på nytt : $1
 setup_failed=.. mislyktes
@@ -85,6 +98,7 @@ setup_mail_esmtpcloud=.. mislyktes : $1
 setup_overquota=Virtuell serveropprettelse mislyktes på grunn av mangel på kvote : $1
 setup_overgroupquota=Serverkvoten for $2 av $1 er nådd
 setup_overuserquota=Domeneeierkvoten for $2 av $1 er nådd
+setup_ewebfcgidcmd=Fant ikke <tt>fcgiwrap</tt> serverkommando!
 
 users_indomsub=$1 brukere i domene $2 ($3 inkludert underdomener)
 users_mailclient=Vis innstillinger for e-postklient
@@ -140,6 +154,7 @@ delete_esslnoips=Ingen SSL-sertifikater funnet for domene
 delete_mail_smtpcloud=Fjerner leverandør av skymelding $1 ..
 
 save_apache12=Oppdaterer PHP FPM-konfigurasjon ..
+save_apache12none=.. ingen reparasjoner nødvendig
 save_bind_cloud=Endrer DNS-domenenavn på $1 ..
 save_bind_ecloud=.. mislyktes : $1 
 save_dok_rmfeatures=Ja, spar nå
@@ -311,7 +326,9 @@ backup_eownrestore=Bare signerte sikkerhetskopier kan gjenopprettes av virtuelle
 backup_deleteddom=Virtuell server $1 kan ikke sikkerhetskopieres da den er slettet!
 backup_ebackupdirlock=.. midlertidig sikkerhetskopi $1 er låst av prosess $2 
 backup_efeatureeval=.. sikkerhetskopi av $1 mislyktes : $2 
+backup_include=Inkluder bare disse filene, i stedet for å ekskludere
 backup_ekilllock=En sikkerhetskopi til samme destinasjon med PID $1 er avsluttet
+backup_eincrzip=Inkrementelle sikkerhetskopier kan ikke brukes med ZIP-format
 backup_edesturl=Sikkerhetskopiedestinasjon $1 er ugyldig : $2 
 backup_eownergone=Eierdomenet eksisterer ikke lenger!
 backup_purging3=Sletter sikkerhetskopier fra $2 som matcher $3 eldre enn $1 dager ..
@@ -332,6 +349,7 @@ restore_zipcmd=.. dekomprimeringskommando $1 er ikke installert
 restore_ezipcmd=Dekompresjonskommando $1 er ikke installert
 restore_eugroup=.. domeneeieren Unix-gruppen $1 eksisterer ikke
 restore_eugroup2=.. domeneeieren Unix-gruppen $1 eksisterer ikke - bytter tilbake til domenets egen gruppe
+restore_edefip6=.. kunne ikke finne standard IPv6-adressen
 restore_erecreate=.. oppretting av manglende server mislyktes : $1 
 restore_disabledomain=Deaktiver virtuell server $1 på nytt.
 restore_downloadgc=Laster ned arkiv fra Google Cloud Storage ..
@@ -462,6 +480,8 @@ tmpl_dmarcyes=Ja, med policy nedenfor
 tmpl_dmarcextra=Ekstra DMARC-alternativer
 tmpl_edmarcpct=Prosentdel av meldinger må være et helt tall mellom 0 og 100
 tmpl_dns_cloud=Opprett nye DNS-soner på
+tmpl_dns_cloud_import=Ta over eksisterende sone ved opprettelse
+tmpl_dns_cloud_proxy=Aktiver proxing på nye poster
 dns_cloud_def=&lt; Velg automatisk &gt;
 dns_cloud_services=Cloudmin-tjenester
 dns_cloud_local=Lokale filer
@@ -482,6 +502,9 @@ tmpl_ephpfcgi=Manglende eller ugyldig FastCGI-innpakning for PHP $1
 bwgraph_enable=Sjekk $1 -siden for å sikre at statistikksamlingen er aktivert.
 
 newfields_type11=Ja/Nei (standard nei)
+newfields_err=Kunne ikke lagre egendefinerte felt
+newfields_edesc=Manglende beskrivelse for feltet $1
+newfields_eopts=Manglende verdi for ja/nei-feltet $1
 
 databases_tabremote=MySQL Server Host
 databases_desc6=Denne siden lar deg velge hvilken ekstern MySQL-server som skal brukes til å være vert for databaser for dette domenet.
@@ -545,8 +568,9 @@ scripts_eupdate=.. automatisk modulinstallasjon er ikke tilgjengelig på systeme
 scripts_einstallmod=.. modulen ble installert, men kan ikke lastes
 scripts_install_phpmods_check=Sjekker PHP-moduler ..
 scripts_install_phpmods_check_done=.. sjekk ferdig
+scripts_sitelink=Mer informasjon om bruk av dette skriptet finner du på <a href='$1' target=_blank>$2</a>.
 scripts_passmode4=Opprinnelig passord for skript
-scripts_idbneed_link=, som kan aktiveres på <a href='$1'>$2</a> siden
+scripts_idbneed_link=, som kan aktiveres på <a href='$1'>$2</a> siden.
 scripts_iphpneed=PHP er deaktivert for denne virtuelle serveren
 scripts_iphpnover=Det ble ikke funnet noen PHP -versjon for denne virtuelle serveren
 scripts_iphpfullver=PHP-versjon $1 eller nyere kreves, men denne virtuelle serveren bruker versjon $2 
@@ -561,6 +585,8 @@ scripts_gpl_to_pro_upgrade=Oppgradering for dette skriptet er nå bare tilgjenge
 scripts_gpl_pro_tip=Pro -funksjon
 scripts_gpl_pro_tip_hide=Takk for advarselen
 scripts_gpl_pro_tip_hide2=Takk, jeg skal tenke på det
+scripts_gpl_pro_tip_open=Kjøp Virtualmin Pro
+scripts_gpl_pro_tip_remind=Minn meg på det senere
 scripts_gpl_pro_tip_and=og
 scripts_gpl_pro_tip_enroll=Vennligst vurder å kjøpe <a target=_blank href='$1'>Virtualmin Pro</a>-lisens for å støtte utviklingen og låse opp denne og mange andre kule funksjoner.
 scripts_gpl_pro_tip_list_scripts=Det er flere installasjonsskript tilgjengelig!
@@ -646,6 +672,7 @@ validate_ednsns2=DNS-sone har ingen NS-poster
 validate_ednsns=NS-post $1 kan ikke løses til en IP-adresse
 validate_ednsip6=DNS-posten $1 løser seg til IPv6-adressen $2 i stedet for den virtuelle serverens IPv6-adresse $3 
 validate_ecloud=DNS -domenet ble ikke funnet på skyleverandøren $1
+validate_enoncloud=DNS-domene eksisterer lokalt når det kun skal være vert for skyleverandøren $1
 validate_ewebconfig=Det ble funnet en feil i den virtuelle vertskonfigurasjonen : $1
 validate_ewebphpsuexec=PHP er konfigurert til å kjøre som domeneeier, men suEXEC er ikke aktivert!
 validate_ewebphpconfig=PHP-konfigurasjonsfeil ble funnet i versjon $1 : $2 
@@ -723,6 +750,7 @@ spf_dpct=Prosentandel av meldinger som skal brukes
 spf_delrecs=Slette $1 DNS-poster ..
 spf_addrecs=Legger til $1 DNS-poster ..
 spf_eaddrecs=.. en post kalt $1 eksisterer allerede
+spf_eaddproxy=.. Cloud DNS-leverandør støtter ikke proxy-poster
 spf_ttl=Setter standard TTL til $1 ..
 spf_ettlsupport=.. støttes ikke av DNS -leverandør
 spf_enablednssec=Oppretter DNSSEC nøkkel og poster ..
@@ -742,9 +770,11 @@ spf_dnscloud=Flytter DNS -poster til skyleverandør $1 ..
 spf_dnslocal=Flytter DNS -poster til lokal hosting ..
 spf_eclouddns=.. mislyktes : $1
 spf_ecloud=Kunne ikke oppdatere DNS -vert : $1
+spf_epostchange=Kunne ikke lagre DNS-poster : $1
 
 s3_emodule2=Perl-modulen $1 som trengs for å kommunisere med Amazons S3-tjeneste, kunne ikke lastes : $2 
 s3_emodule3=Perl-modulene $1 eller $2 som trengs for å kommunisere med Amazons S3-tjeneste er ikke installert
+s3_eawscmd=AWS-kommandoen er installert, men fungerer ikke : $1
 
 newdynip_eexternal=I ekstern skriptmodus må hele banen til et skript som skal kjøres legges inn
 
@@ -752,6 +782,7 @@ dynip_external=Eksternt manus ..
 dynip_none=Ikke oppdater noen tjeneste
 
 upgrade_epackages=Fant ingen pakker å installere!
+upgrade_success=Oppgraderingen til Virtualmin Pro var vellykket. Takk for at du valgte Virtualmin Pro!
 upgrade_eyumlist=$1 RPM -pakken ble ikke funnet i listen over tilgjengelige pakker fra depotet. Kanskje en av de nåværende depotene dine ikke fungerer?
 upgrade_to_pro=Oppgraderer til Virtualmin Pro ..
 upgrade_update_pkgs=Oppdaterer tilgjengelige pakker ..
@@ -763,6 +794,7 @@ exclude_edb=Databasens navn '$1' er ugyldig
 
 balancer_none=Ikke bruk proxy for denne banen, og tjen lokalt i stedet
 
+clamd_start_updater=Starter ClamAV-databaseoppdateringsverktøyserveren og aktiverer ved oppstart ..
 clamd_einit=.. oppstartshandling $1 eksisterer ikke!
 
 newshells_reseller=Forhandler?
@@ -813,7 +845,7 @@ wizard_memory_lookup1=Ja, raskere e-postbehandling med mer RAM brukt ($1)
 wizard_memory_lookup0=Nei, tregere postbehandling med mindre RAM brukt, men mer CPU-belastning
 wizard_virusnew=Hvis systemet ditt skal være vert for domener som vil motta en stor mengde e-post, kan skanning av innkommende meldinger etter virus generere høy CPU-belastning. Fordi skanning gjøres ved hjelp av ClamAV-skanningsserveren <tt>clamd</tt>, vil den konsumere RAM selv når du ikke behandler e-post. Hvis systemet ditt ikke er vert for e-post, kan virusscanning deaktiveres.
 wizard_virusmsg=Vil du aktivere virusscanning med ClamAV?
-wizard_virus1=Ja, bruker opptil 2 GB RAM
+wizard_virus1=Ja, bruker opptil 2G RAM
 wizard_virus2=Fortsett å bruke skanner på forespørsel
 wizard_virus0=Nei, e-post vil ikke bli filtrert
 wizard_eclaminuse=Virusskanning kan ikke deaktiveres da den er i bruk av $1 virtuelle servere
@@ -883,6 +915,9 @@ redirect_http=Ikke-SSL nettsted
 redirect_https=SSL nettsted
 redirect_ecode=Ugyldig HTTP-statuskode
 
+dkim_extra=Ekstra domener å signere for
+
+dkim_ednsadded=.. DNS-oppdatering mislyktes : $1
 dkim_founddomains3=.. fant $1 servere og $2 ekstra domener
 dkim_pubkeypem=DKIM offentlig nøkkel i PEM-format
 dkim_privkeypem=DKIM privat nøkkel i PEM-format
@@ -933,6 +968,8 @@ smtpcloud_echeck=Nettskypostleveringsleverandør $1 kan ikke brukes : $2
 
 provision_nolimit=ubegrenset
 
+records_typeprox=Fullmakt
+records_typenoprox=Kun DNS
 records_valuespf=Avsender er tillatt fra spesifikasjonen
 
 record_sservice=Tjenestenavn
@@ -951,6 +988,7 @@ bkey_extra=Eksisterende nøkkel
 bkey_download=Last ned nøkkel
 
 transfer_replication=Replikere til eksternt system?
+transfer_ttlerror=DNS TTL for denne virtuelle serveren er satt til $1, noe som betyr at IP-adresseendringen som er nødvendig for overføringen ikke vil være synlig for klienter på minst så lenge. TTL bør senkes ved å klikke på knappen nedenfor før du utfører overføringen.
 transfer_ereplication=Både replikering og sletting av domenet kan ikke aktiveres samtidig
 transfer_ehost=Manglende destinasjonsvertsnavn
 transfer_ehost2=Destinasjonsvertsnavn kan ikke løses
@@ -962,7 +1000,6 @@ domdkim_key1=Bruk global standardnøkkel
 domdkim_key2=Generer ny nøkkel
 domdkim_key0=Bruk tasten nedenfor
 domdkim_err=Kunne ikke lagre DomainKey-alternativene
-
 domdkim_setkey=Bruker tilpasset DKIM-tast ..
 domdkim_clearkey=Bruker standard DKIM-tast ..
 domdkim_econfig=.. DKIM konfigurasjonsfil ble ikke funnet!
@@ -991,7 +1028,6 @@ cloud_bbdesc=Backblaze
 cloud_s3account=Bruker tilgangsnøkkel $1 
 cloud_rsuser=Bruker innlogging $1 
 cloud_s3_noawscli=Det anbefales å ha offisielt AWS kommandolinjegrensesnitt installert.
-cloud_s3_noawscli2=AWS kommandolinjegrensesnitt er ikke installert!
 cloud_s3_noawscli_install=<a href='$1'>Klikk her</a> for å få den installert automatisk.
 cloud_s3_awscli_installing=Installere AWS CLI-pakken ..
 cloud_s3_awscli_title=Installer AWS CLI
@@ -1326,6 +1362,7 @@ dnscloud_cloudflare_esfx=Domenet $1 er ikke under en offentlig toppdommer
 dnscloud_cloudflare_esfx2=Domenet $1 kan bare være ett nivå under toppdomenet $2
 dnscloud_cloudflare_ens=Kunne ikke lete opp NS -poster : $1
 dnscloud_cloudflare_ens2=Ingen NS -poster ble funnet for $1. Cloudflare krever at DNS -domener registreres først.
+dnscloud_cloudflare_ens3=NS-poster funnet for <tt>$1</tt> -domene, men disse NS-postene <tt>$2</tt> peker ikke til Cloudflare-leverandøren
 
 install_mod_perl_link=Bruk siden <a href='$1'>Perl Modules</a> i Webmin for å installere den
 

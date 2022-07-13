@@ -1692,8 +1692,8 @@ newreseller_title=Ny forhandler e-post
 newreseller_ecannot=Du har ikke lov til å redigere malen for melding til nye forhandlere
 newreseller_desc2=Bruk dette skjemaet til å redigere mal for e-post meldingen som sendes til en ny forhandler-konto etter at den er opprettet. Følgende erstatninger vil bli gjort i teksten :
 
-feature_web=Apache nettsted
 feature_dns=BIND DNS domene
+feature_web=Apache nettsted
 feature_mysql=MySQL database
 feature_postgres=PostgreSQL database
 feature_webalizer=Webalizer rapportering
@@ -3665,8 +3665,6 @@ scripts_epythonmod=.. automatisk installasjon av Python moduler støttes ikke p�
 scripts_epythoninst=.. automatisk installasjon av Python modul feilet
 scripts_installgem=Installerer Ruby Gems pakke ..
 scripts_mmax=(Maksimalt $1)
-scripts_sitelink=Mer informasjon om bruk av dette scriptet kan finnes på <a href='$1' target=_new>$1</a>.
-
 scripts_userpass=Den initielle administrasjonsbrukeren er $1 med passordet $2.
 scripts_useronly=Denne initielle administrasjonsbrukeren er $1.
 scripts_passonly=Det initielle administrasjonspassordet er $1.
@@ -5737,7 +5735,6 @@ dkim_return=DKIM skjema
 dkim_err=Kunne ikka lagre DKIM innstillinger
 dkim_eselector=Manglende eller ugyldig selektor - må være et gyldig DNS oppføringsnavn
 dkim_eselfile=.. selektor nøkkelfil $1 finnes allerede!
-dkim_extra=Ekstra domener det skal signeres for
 dkim_eextra=Ugyldig ekstra domene $1
 dkim_eexclude=Ugyldig ekskludert domene $1
 dkim_exclude=Signer aldri for domenene
@@ -6241,8 +6238,7 @@ transfer_backingdone=.. backup ferdig.
 transfer_restoringdone=.. gjenoppretting fullført
 transfer_validating=Validerer backup ..
 transfer_validated=.. alle domener overført ok
-transfer_ttlerror=WARNING : The DNS TTL for this virtual server is set to $1, which means that the IP address change needed for the transfer will not be visible to clients for at least that long. The TTL should be lowered by clicking the button below before performing the transfer.
-transfer_recent=ADVARSEL : DNS TTL for denne virtuelle tjeneren ble endret fra $1 for bare $2 dager siden. Dette er ikke lang nok tid til at endringen er blitt synlig for alle klienter.
+transfer_recent=DNS TTL for denne virtuelle tjeneren ble endret fra $1 for bare $2 dager siden. Dette er ikke lang nok tid til at endringen er blitt synlig for alle klienter.
 transfer_fixttl=Senk TTL til:
 transfer_secs=sekunder
 transfer_err2=Kunne ikke endre TTL

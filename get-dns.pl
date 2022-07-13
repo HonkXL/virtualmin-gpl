@@ -16,6 +16,10 @@ Normally the command will output the DNS records in the domain's zone file,
 but you can request to show the DNSSEC DS records that should be created
 in the registrar's zone with the C<--ds-records> flag.
 
+By default the command will list all records, but you can limit it to
+records with a specific name via the C<--name> flag. Similarly you can limit
+by type (A, CNAME, MX, etc) with the C<--type> flag.
+
 =cut
 
 package virtual_server;
@@ -40,6 +44,15 @@ while(@ARGV > 0) {
 	if ($a eq "--domain") {
 		$dname = shift(@ARGV);
 		}
+	elsif ($a eq "--name") {
+		$rname = shift(@ARGV);
+		}
+	elsif ($a eq "--regexp") {
+		$regexp = shift(@ARGV);
+		}
+	elsif ($a eq "--type") {
+		$rtype = shift(@ARGV);
+		}
 	elsif ($a eq "--ds-records") {
 		$dsmode = 1;
 		}
@@ -62,6 +75,7 @@ $dname || &usage("Missing --domain parameter");
 $d = &get_domain_by("dom", $dname);
 $d || &usage("Virtual server $dname does not exist");
 $d->{'dns'} || &usage("Virtual server $dname does not have DNS enabled");
+$cloud = &get_domain_dns_cloud($d);
 
 if ($dsmode) {
 	$dsrecs = &get_domain_dnssec_ds_records($d);
@@ -72,6 +86,20 @@ else {
 	@recs = grep { $_->{'type'} } &get_domain_dns_records($d);
 	}
 @recs = grep { !&is_dnssec_record($_) } @recs;
+
+# Filter by name and type if requested
+if ($rname) {
+	$rname .= ".".$d->{'dom'} if ($rname !~ /\Q$d->{'dom'}\E$/i);
+	$rname .= "." if ($rname !~ /\.$/);
+	@recs = grep { lc($_->{'name'}) eq lc($rname) } @recs;
+	}
+if ($regexp) {
+	@recs = grep { $_->{'name'} =~ /$regexp/i } @recs;
+	}
+if ($rtype) {
+	@recs = grep { lc($_->{'type'}) eq lc($rtype) } @recs;
+	}
+
 if ($nameonly) {
 	# Only record names
 	foreach $r (@recs) {
@@ -89,6 +117,10 @@ elsif ($multiline) {
 			}
 		foreach $v (@{$r->{'values'}}) {
 			print "    Value: $v\n";
+			}
+		if ($cloud && $cloud->{'proxy'}) {
+			print "    Proxied: ",
+			      ($r->{'proxied'} ? "Yes" : "No"),"\n";
 			}
 		}
 	}
@@ -113,6 +145,8 @@ print "\n";
 print "virtualmin get-dns --domain name\n";
 print "                  [--ds-records]\n";
 print "                  [--multiline | --name-only]\n";
+print "                  [--name record-name | --regexp name-pattern]\n";
+print "                  [--type A|AAAA|CNAME|MX|NS|TXT]\n";
 exit(1);
 }
 

@@ -281,6 +281,12 @@ if (!defined($compression) || $compression eq '') {
 	}
 $opts->{'dir'}->{'compression'} = $compression;
 
+# Make sure incremental mode is supported with the compression format
+if ($compression == 3 && $increment) {
+	&$first_print($text{'backup_eincrzip'});
+	return (0, 0, $doms);
+	}
+
 # Check if the limit on running backups has been hit
 local $err = &check_backup_limits($asowner, $onsched, $desturl);
 if ($err) {
@@ -432,7 +438,7 @@ foreach my $desturl (@$desturls) {
 			&$first_print($text{'backup_es3nopath'});
 			next;
 			}
-		local $cerr = &check_s3();
+		local ($cerr) = &check_s3();
 		if ($cerr) {
 			&$first_print($cerr);
 			next;
@@ -1973,7 +1979,7 @@ if ($mode > 0) {
 		      $mode == 10 ? $text{'restore_downloadbb'} :
 				   $text{'restore_downloadssh'});
 	if ($mode == 3) {
-		local $cerr = &check_s3();
+		local ($cerr) = &check_s3();
 		if ($cerr) {
 			&$second_print($cerr);
 			return 0;
@@ -2676,7 +2682,7 @@ if ($ok) {
 					$d->{'ip6'} = $defip6;
 					if (!$d->{'ip6'}) {
 						&$second_print(
-						    $text{'restore_edefip'});
+						    $text{'restore_edefip6'});
 						$ok = 0;
 						if ($continue) { next DOMAIN; }
 						else { last DOMAIN; }
@@ -2711,7 +2717,8 @@ if ($ok) {
 				# Use this system's default IPv6 address
 				$d->{'ip6'} = $defip6;
 				if (!$d->{'ip6'}) {
-					&$second_print($text{'restore_edefip'});
+					&$second_print(
+						$text{'restore_edefip6'});
 					$ok = 0;
 					if ($continue) { next DOMAIN; }
 					else { last DOMAIN; }
@@ -4351,7 +4358,7 @@ elsif ($mode == 2) {
 	}
 elsif ($mode == 3) {
 	# Amazon S3 service
-	local $cerr = &check_s3();
+	local ($cerr) = &check_s3();
 	$cerr && &error($cerr);
 	$in{$name.'_s3path'} =~ /^\S+$/ || &error($text{'backup_es3path'});
 	$in{$name.'_s3path'} =~ /\\/ && &error($text{'backup_es3pathslash'});
@@ -4684,10 +4691,10 @@ return $fullcmd;
 sub get_gunzip_command
 {
 if (!$config{'pigz'}) {
-	return &has_command('gunzip') || 'gunzip';
+	return (&has_command('gunzip') || 'gunzip').' -f';
 	}
 elsif (&has_command('unpigz')) {
-	return &has_command('unpigz');
+	return &has_command('unpigz').' -f';
 	}
 else {
 	# Fall back to using -d option

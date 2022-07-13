@@ -99,12 +99,12 @@ sub wizard_show_virus
 print &ui_table_row(undef, $text{'wizard_virusnew'} . "<p></p>", 2);
 local $cs = &check_clamd_status();
 if ($cs != -1) {
-	$cs = 2 if (!$cs && $config{'virus'});
+	$cs = 2 if (!$cs && &get_global_virus_scanner() eq 'clamscan');
 	print &ui_table_row($text{'wizard_virusmsg'},
 		&ui_radio("clamd", $cs,
-			  [ [ 1, $text{'wizard_virus1'}."<br>" ],
-			    $cs == 2 ? ( [ 2, $text{'wizard_virus2'} ] ) : ( ),
-			    [ 0, $text{'wizard_virus0'} ] ]));
+		  [ [ 1, $text{'wizard_virus1'}."<br>" ],
+		    $cs == 2 ? ( [ 2, $text{'wizard_virus2'}."<br>" ] ) : ( ),
+		    [ 0, $text{'wizard_virus0'} ] ]));
 	}
 else {
 	print &ui_table_row(undef, "<b>$text{'wizard_clamdnone'}</b>");
@@ -377,15 +377,14 @@ else {
 	if (!$in{'mypass_def'}) {
 		# Change in DB
 		eval {
+			local $main::error_must_die = 1;
 			&execute_password_change_sql(undef, $user, undef, $pass);
 			};
-		if (!$@) {
-			# Update the password used by subsequent code if
-			# changing it worked
-			&update_webmin_mysql_pass($user, $pass);
-			$mysql::mysql_pass = $pass;
-			$mysql::authstr = &mysql::make_authstr();
-			}
+		# Update the password used by subsequent code if
+		# changing it worked
+		&update_webmin_mysql_pass($user, $pass);
+		$mysql::mysql_pass = $pass;
+		$mysql::authstr = &mysql::make_authstr();
 		}
 	}
 
@@ -806,7 +805,7 @@ else {
 				 &ui_textbox("defhost", $def, 20) ] ]));
 
 	print &ui_table_row($text{'wizard_defdom_ssl'},
-		&ui_radio("defssl", 1,
+		&ui_radio("defssl", 2,
 			  [ [ 0, $text{'wizard_defssl0'} ],
 			    [ 1, $text{'wizard_defssl1'} ],
 			    [ 2, $text{'wizard_defssl2'} ] ]));
@@ -879,14 +878,16 @@ my %dom;
 $dom{'dir'} = 1;
 $dom{'unix'} = 1;
 $dom{'dns'} = 1;
+$dom{'no_default_service_cert_webmin'} = 2
+	if ($ENV{'SERVER_NAME'} eq $dname);
 my $webf = &domain_has_website();
 my $sslf = &domain_has_ssl();
 $dom{$webf} = 1;
-$dom{'no_default_service_certs'} = 1 if ($in->{'defssl'} != 2);
 if ($in->{'defssl'}) {
 	$dom{$sslf} = 1;
 	if ($in->{'defssl'} == 2) {
-		$dom{'auto_letsencrypt'} = 1;
+		$dom{'letsencrypt_dname'} = $dname;
+		$dom{'auto_letsencrypt'} = 2;
 		}
 	else {
 		$dom{'auto_letsencrypt'} = 0;

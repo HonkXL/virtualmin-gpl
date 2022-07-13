@@ -297,8 +297,24 @@ my @supp = &supported_php_modes();
 my %cannums = map { $mmap->{$_}, 1 } @supp;
 if (!$cannums{int($tmpl->{'web_php_suexec'})} && @supp) {
 	# Default mode cannot be used .. change to first that can
-	$tmpl->{'web_php_suexec'} = $mmap{$supp[0]};
+	$tmpl->{'web_php_suexec'} = $mmap->{$supp[0]};
 	&save_template($tmpl);
+	}
+
+# Cache current PHP modes
+foreach my $d (grep { &domain_has_website($_) && !$_->{'alias'} }
+		    &list_domains()) {
+	if (!$d->{'php_mode'}) {
+		$d->{'php_mode'} = &get_domain_php_mode($d);
+		&save_domain($d);
+		}
+	}
+foreach my $d (grep { $_->{'alias'} } &list_domains()) {
+	my $dd = &get_domain($d->{'alias'});
+	if ($dd && $dd->{'php_mode'}) {
+		$d->{'php_mode'} = $dd->{'php_mode'};
+		&save_domain($d);
+		}
 	}
 
 # Enable checking for latest scripts

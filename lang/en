@@ -38,36 +38,36 @@ index_none2=You do not have access to any virtual servers.
 index_return=virtual servers list
 index_return2=module index
 index_list=List..
-index_enet=The Network Configuration module is not supported on your operating system. Virtualmin needs this module to manage virtual network interfaces.
-index_edefip=Virtualmin could not work out the default IPv4 address for virtual servers on your system. You will need to update either the <b>Network interface for virtual addresses</b> or <b>Default virtual server IP address</b> fields on the <a href='$1'>module configuration</a> page.
-index_edefip6=Virtualmin could not work out the default IPv6 address for virtual servers on your system. You will need to update either the <b>Network interface for virtual addresses</b> or <b>Default virtual server IP address</b> fields on the <a href='$1'>module configuration</a> page.
-index_eapache=The Apache webserver does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Apache Webserver</a> module. If your system does not use Apache, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_eproftpd=The ProFTPD server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>ProFTPD Server</a> module. If your system does not use ProFTPD, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_ebind=The BIND DNS server version 8 or 9 does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>BIND DNS Server</a> module. If your system does not use BIND, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
+index_enet=The Network Configuration module is not supported on your operating system. Virtualmin needs this module to manage virtual network interfaces
+index_edefip=Virtualmin could not work out the default IPv4 address for virtual servers on your system. You will need to update either the <b>Network interface for virtual addresses</b> or <b>Default virtual server IP address</b> fields on the <a href='$1'>module configuration</a> page
+index_edefip6=Virtualmin could not work out the default IPv6 address for virtual servers on your system. You will need to update either the <b>Network interface for virtual addresses</b> or <b>Default virtual server IPv6 address</b> fields on the <a href='$1'>module configuration</a> page
+index_eapache=The Apache webserver does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Apache Webserver</a> module. If your system does not use Apache, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_eproftpd=The ProFTPD server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>ProFTPD Server</a> module. If your system does not use ProFTPD, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_ebind=The BIND DNS server version 8 or 9 does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>BIND DNS Server</a> module. If your system does not use BIND, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
 index_ebinderrs=Errors were found in your system's BIND configuration : $1
-index_ebindmod=The BIND DNS server Webmin module is not installed on your system.
-index_email=None of the supported mail servers (Sendmail, Postfix and Qmail) were detected on your system. Maybe they are not installed, or their Webmin modules have not been set up properly.
-index_emysql=MySQL does not appear to be installed and running on your system, or has not yet been set up properly in Webmin's <a href='$1'>MySQL Database</a> module. If your system does not use MySQL, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_emysql2=MySQL client programs do not appear to be installed, or have not yet been set up properly in Webmin's <a href='$1'>MySQL Database</a> module. If your system does not use MySQL, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_epostgres=PostgreSQL does not appear to be installed and running on your system, or has not yet been set up properly in Webmin's <a href='$1'>PostgreSQL Database</a> module. If your system does not use PostgreSQL, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_ewebalizer=Webalizer does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Webalizer Logfile Analysis</a> module. If your system does not use Webalizer, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_ewebalizerfile=The template Webalizer configuration file $1 was not found on your system. It may need to be changed in the <a href='$2'>Webalizer Logfile Analysis</a> module.
-index_eopenssl=The $1 command was not found on your system, and it is needed to set up SSL websites. If you do not plan to host SSL sites, this feature should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_emodssl=The Apache configuration on your system appears to be missing the module $1, which is needed to host SSL websites. If you do not plan to host SSL sites, this feature should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_emodssl2=The Apache configuration on your system does not appear to be listening on port $1, which is needed to host SSL websites. If you do not plan to host SSL sites, this feature should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_esendmail=The Sendmail mail server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Sendmail Mail Server</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page.
-index_epostfix=The Postfix server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Postfix Configuration</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page.
-index_eqmail=The QMail server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>QMail Configuration</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page.
-index_evpopmail=The QMail server does not appear to be installed on your system, is missing the VPOPMail extensions, or has not yet been set up properly in Webmin's <a href='$1'>QMail Configuration</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page.
-index_emailboxessystem=The Read User Mail module is not setup to use the $3 mail server. Either adjust its <a href='$1'>module configuration</a> to match, or change the <a href='$2'>Virtualmin configuration</a>.
-index_eiface=No Ethernet interface could be automatically found on your system. Use the <a href='$1'>module configuration</a> page to set the interface manually.
-index_elogrotate=The Logrotate program does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Log File Rotation</a> module. If your system does not use Logrotate, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_elogrotatever=The Logrotate program appears to be version $3, but Virtualmin requires version $4 or above in order to support multiple log files in the same section.
-index_espam=The SpamAssassin program does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>SpamAssassin Mail Filter</a> module. If your system does not use spam filtering, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_eprocmail=The Procmail program needed for spam filtering does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Procmail Mail Filter</a> module. If your system does not use spam filtering, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page.
-index_evirus=The ClamAV program $1 does not appear to be installed on your system. Either adjust the path on the <a href='$2'>module configuration</a> page, or disable this feature.
-index_estatus=The System and Server Status module does not appear to be installed on your system. Either install it, or disable status monitoring on the <a href='$2'>module configuration</a> page.
-index_evirusrun2=The ClamAV program $1 does not appear to be working properly : $2. Either change the program on the <a href='$3'>spam and virus scanners</a> page, or disable this feature.
+index_ebindmod=The BIND DNS server Webmin module is not installed on your system
+index_email=None of the supported mail servers (Sendmail, Postfix and Qmail) were detected on your system. Maybe they are not installed, or their Webmin modules have not been set up properly
+index_emysql=MySQL does not appear to be installed and running on your system, or has not yet been set up properly in Webmin's <a href='$1'>MySQL Database</a> module. If your system does not use MySQL, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_emysql2=MySQL client programs do not appear to be installed, or have not yet been set up properly in Webmin's <a href='$1'>MySQL Database</a> module. If your system does not use MySQL, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_epostgres=PostgreSQL does not appear to be installed and running on your system, or has not yet been set up properly in Webmin's <a href='$1'>PostgreSQL Database</a> module. If your system does not use PostgreSQL, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_ewebalizer=Webalizer does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Webalizer Logfile Analysis</a> module. If your system does not use Webalizer, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_ewebalizerfile=The template Webalizer configuration file $1 was not found on your system. It may need to be changed in the <a href='$2'>Webalizer Logfile Analysis</a> module
+index_eopenssl=The $1 command was not found on your system, and it is needed to set up SSL websites. If you do not plan to host SSL sites, this feature should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_emodssl=The Apache configuration on your system appears to be missing the module $1, which is needed to host SSL websites. If you do not plan to host SSL sites, this feature should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_emodssl2=The Apache configuration on your system does not appear to be listening on port $1, which is needed to host SSL websites. If you do not plan to host SSL sites, this feature should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_esendmail=The Sendmail mail server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Sendmail Mail Server</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page
+index_epostfix=The Postfix server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Postfix Configuration</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page
+index_eqmail=The QMail server does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>QMail Configuration</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page
+index_evpopmail=The QMail server does not appear to be installed on your system, is missing the VPOPMail extensions, or has not yet been set up properly in Webmin's <a href='$1'>QMail Configuration</a> module. If you are running a different mail server, select it on the <a href='$2'>module configuration</a> page
+index_emailboxessystem=The Read User Mail module is not setup to use the $3 mail server. Either adjust its <a href='$1'>module configuration</a> to match, or change the <a href='$2'>Virtualmin configuration</a>
+index_eiface=No Ethernet interface could be automatically found on your system. Use the <a href='$1'>module configuration</a> page to set the interface manually
+index_elogrotate=The Logrotate program does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Log File Rotation</a> module. If your system does not use Logrotate, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_elogrotatever=The Logrotate program appears to be version $3, but Virtualmin requires version $4 or above in order to support multiple log files in the same section
+index_espam=The SpamAssassin program does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>SpamAssassin Mail Filter</a> module. If your system does not use spam filtering, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_eprocmail=The Procmail program needed for spam filtering does not appear to be installed on your system, or has not yet been set up properly in Webmin's <a href='$1'>Procmail Mail Filter</a> module. If your system does not use spam filtering, it should be disabled in Virtualmin's <a href='$2'>module configuration</a> page
+index_evirus=The ClamAV program $1 does not appear to be installed on your system. Either adjust the path on the <a href='$2'>module configuration</a> page, or disable this feature
+index_estatus=The System and Server Status module does not appear to be installed on your system. Either install it, or disable status monitoring on the <a href='$2'>module configuration</a> page
+index_evirusrun2=The ClamAV program $1 does not appear to be working properly : $2. Either change the program on the <a href='$3'>spam and virus scanners</a> page, or disable this feature
 index_etlsassl=OpenSSL does not support certificate parsing or SHA-256 hashing
 index_astart=Start Apache
 index_astartdesc=The Apache webserver is currently down, meaning that all virtual server web pages are inaccessible. Click this button to start it.
@@ -245,6 +245,17 @@ index_virtualminconfig=Virtualmin Configuration
 index_themeswitch=Virtualmin 5 comes with a brand new HTML 5 theme! Would you like to try it now?
 index_themeswitchok=Switch Themes
 index_themeswitchnot=Don't Ask Me Again
+index_disable_mod_php=The deprecated Apache <tt>mod_php</tt> module is enabled on your system, but is not in use by any virtual servers. Disabling it will prevent this PHP execution mode from being selected for any virtual servers in future.
+index_disable_mod_phpok=Disable It
+index_edisable_mod_php_cannot=You are not allowed to disable mod_php
+index_edisable_mod_php_mods=No PHP Apache modules found!
+index_disable_mod_php_title=Disabling
+index_disable_mod_php_subtitle=Apache <tt>mod_php</tt>
+index_disable_mod_php_enmod=Disabling Apache module with <tt>a2dismod</tt> ..
+index_disable_mod_php_load=Removing <tt>LoadModule</tt> line ..
+index_disable_mod_php_doms=Removing <tt>php_*</tt> directives from virtual servers ..
+index_disable_mod_php_ddone=.. updated $1 servers
+index_disable_mod_php_global=Removing global <tt>php_*</tt> directives ..
 index_certwarn=SSL Certificate Warning
 index_certexpired=The following virtual servers' SSL certificates have expired : $1
 index_certnearly=The following virtual servers' SSL certificates are about to expire : $1
@@ -378,6 +389,7 @@ setup_esubdomain=Invalid sub-domain name - no dots are allowed
 setup_eforceunder=You are only allowed to create domains under $1
 setup_edomain4=You are already hosting this domain
 setup_edomainstar=A domain name cannot start with *. To create a wildcard domain, first create it without the * and then go to Server Configuration -&gt; Website Options.
+setup_edomainip=A domain name cannot be an IP address
 setup_eip=Missing or invalid IP address
 setup_eip6=Missing or invalid IPv6 address
 setup_evirtalloc=Could not allocate virtual IP address from range
@@ -587,6 +599,7 @@ setup_webmin=Creating Webmin user ..
 setup_webminpid=Re-starting Webmin ..
 setup_webminpid2=Re-loading Webmin ..
 setup_webmindown=.. not currently running
+setup_webmindown2=.. failed to restart Webmin : $1
 setup_userminpid=Re-starting Usermin ..
 setup_usermindown=.. not currently running
 setup_usermindown2=.. failed to restart Usermin : $1
@@ -691,6 +704,7 @@ setup_mail_esmtpcloud=.. failed : $1
 setup_overquota=Virtual server creation failed due to lack of quota : $1
 setup_overgroupquota=Server quota for $2 of $1 has been reached
 setup_overuserquota=Domain owner quota for $2 of $1 has been reached
+setup_ewebfcgidcmd=Could not find <tt>fcgiwrap</tt> server command!
 
 indom=In domain $1
 equotacommand=Quota command $1 failed : $2
@@ -1402,6 +1416,7 @@ save_apache9=Updating website proxying ..
 save_apache10=Updating home directory in PHP configuration ..
 save_apache11=Updating document directory in website configuration ..
 save_apache12=Updating PHP FPM configuration ..
+save_apache12none=.. no fixes needed
 save_dns=Changing IP address in DNS domain ..
 save_dns2=Changing DNS domain name ..
 save_dns2_provision=Changing DNS domain name on services host ..
@@ -1863,9 +1878,9 @@ newreseller_title=New Reseller Email
 newreseller_ecannot=You are not allowed to edit the new reseller email template
 newreseller_desc2=Use this form to edit the template for the email message that can be sent to a new reseller account after it is created. The following substitions will be done to the text :
 
+feature_dns=DNS domain
 feature_web=Apache website
 feature_ssl=Apache SSL website
-feature_dns=BIND DNS domain
 feature_mysql=MySQL database
 feature_postgres=PostgreSQL database
 feature_webalizer=Webalizer reporting
@@ -2581,6 +2596,7 @@ backup_vchroot=FTP directory restrictions
 backup_vmailserver=Mail server settings
 backup_virtualmin=Virtualmin settings to also backup
 backup_exclude=Files to exclude from each domain
+backup_include=Include only these files, instead of excluding
 backup_webmin=Backing up Webmin ACL files ..
 backup_webminfailed=.. tar failed : $1
 backup_webminnofiles=.. no ACL files found
@@ -2588,6 +2604,7 @@ backup_webminproto=.. not required, as the Webmin user is in a remote data store
 backup_esamelock=A backup to the same destination is already running with PID $1
 backup_ekilllock=A backup to the same destination with PID $1 has been terminated
 backup_etarcmd=The <tt>tar</tt> command was not found on your system!
+backup_eincrzip=Incremental backups cannot be used with ZIP format
 backup_ezipkey=Encryption cannot be used with ZIP format backups
 backup_edesturl=Backup destination $1 is invalid : $2
 backup_eftptest=Failed to connect to FTP server : $1
@@ -2745,6 +2762,7 @@ restore_eresel2=.. the reseller $1 specified in the backup does not exist - remo
 restore_eugroup=.. the domain owner Unix group $1 does not exist
 restore_eugroup2=.. the domain owner Unix group $1 does not exist - switching back to the domain's own group
 restore_edefip=.. could not work out the default IP address
+restore_edefip6=.. could not work out the default IPv6 address
 restore_eclash=.. a clash was detected : $1
 restore_erecreate=.. creation of missing server failed : $1
 restore_ewarnings=.. the following warnings were detected :
@@ -3480,6 +3498,8 @@ tmpl_edmarcpct=Percentage of messages must be an integer between 0 and 100
 tmpl_edns=No DNS records entered
 tmpl_dns_sub=Add sub-domain DNS records to parent domain?
 tmpl_dns_cloud=Create new DNS zones on
+tmpl_dns_cloud_import=Take over existing zone when creating
+tmpl_dns_cloud_proxy=Enable proxing on new records
 dns_cloud_def=&lt;Choose automatically&gt;
 dns_cloud_services=Cloudmin Services
 dns_cloud_local=Local files
@@ -3686,6 +3706,9 @@ newfields_visible=Visible to
 newfields_visible0=All users
 newfields_visible1=All users (RO)
 newfields_visible2=Master admin
+newfields_err=Failed to save custom fields
+newfields_edesc=Missing description for field $1
+newfields_eopts=Missing value for yes/no field $1
 
 ldap_emod=Missing Perl module $1 needed for connecting to LDAP
 ldap_econn=Failed to connect to LDAP server $1 port $2
@@ -4174,7 +4197,7 @@ scripts_epythonmod=.. automatic Python module installation is not supported on y
 scripts_epythoninst=.. automatic Python module installation failed
 scripts_installgem=Installing Ruby Gems package ..
 scripts_mmax=(At most $1)
-scripts_sitelink=More information on using this script can be found at <a href='$1' target=_blank>$1</a>.
+scripts_sitelink=More information on using this script can be found at <a href='$1' target=_blank>$2</a>.
 scripts_userpass=The initial administration login is $1 with the password $2 .
 scripts_useronly=The initial administration login is $1 .
 scripts_passonly=The initial administration password is $1 .
@@ -4197,7 +4220,7 @@ scripts_proxyfailed=.. proxy setup failed : $1
 scripts_epartial=.. installation was only partially complete.
 scripts_icommand=Missing command $1
 scripts_idbneed=A $1 database is needed
-scripts_idbneed_link=, which can be enabled on <a href='$1'>$2</a> page
+scripts_idbneed_link=, which can be enabled on <a href='$1'>$2</a> page.
 scripts_idbneedor=$1 or $2
 scripts_gemver=Updating Ruby Gems to latest version from $1 ..
 scripts_gemverfailed=.. Gems update failed : $1
@@ -4231,6 +4254,8 @@ scripts_gpl_to_pro_upgrade=Upgrade for this script is now only available in Pro
 scripts_gpl_pro_tip=Pro Feature
 scripts_gpl_pro_tip_hide=Thanks for the heads-up
 scripts_gpl_pro_tip_hide2=Thanks, I will think about it
+scripts_gpl_pro_tip_open=Purchase Virtualmin Pro
+scripts_gpl_pro_tip_remind=Remind Me Later
 scripts_gpl_pro_tip_and=and
 scripts_gpl_pro_tip_enroll=Please consider purchasing <a target=_blank href='$1'>Virtualmin Pro</a> license to support the development and unlock this and many other cool features.
 scripts_gpl_pro_tip_list_scripts=There are more install scripts available!
@@ -4853,6 +4878,7 @@ validate_ednsmx=This domain has email enabled, but none of the MX records $1 poi
 validate_ednsnotype=DNS zone for domain $1 has no type!
 validate_ednstype=DNS zone for domain $1 has the type $2 instead of $3
 validate_ecloud=DNS domain not found on cloud provider $1
+validate_enoncloud=DNS domain exists locally when it should be only hosted on cloud provider $1
 validate_eweb=No Apache virtual host for $1 found
 validate_ewebconfig=An error was found in the virtual host configuration : $1
 validate_ewebphp=Missing wrapper script for PHP $1 - $2
@@ -5310,6 +5336,7 @@ spf_dpct=Percentage of messages to apply policy
 spf_delrecs=Deleting $1 DNS records ..
 spf_addrecs=Adding $1 DNS records ..
 spf_eaddrecs=.. a record named $1 already exists
+spf_eaddproxy=.. Cloud DNS provider does not support proxy records
 spf_ttl=Setting default TTL to $1 ..
 spf_ettlsupport=.. not supported by DNS provider
 spf_enablednssec=Creating DNSSEC key and records ..
@@ -5329,10 +5356,12 @@ spf_dnscloud=Moving DNS records to Cloud provider $1 ..
 spf_dnslocal=Moving DNS records to local hosting ..
 spf_eclouddns=.. failed : $1
 spf_ecloud=Failed to update DNS host : $1
+spf_epostchange=Failed to save DNS records : $1
 
-s3_emodule=The Perl module $1 needed to communicate with Amazon's S3 service is not installed
-s3_emodule2=The Perl module $1 needed to communicate with Amazon's S3 service could not be loaded : $2
-s3_emodule3=The Perl modules $1 or $2 needed to communicate with Amazon's S3 service is not installed
+s3_emodule=The Perl module $1 needed to communicate with Amazon's S3 service is not installed.
+s3_emodule2=The Perl module $1 needed to communicate with Amazon's S3 service could not be loaded : $2.
+s3_emodule3=The Perl modules $1 or $2 needed to communicate with Amazon's S3 service is not installed.
+s3_eawscmd=The AWS command is installed, but not working : $1
 s3_elist=Failed to list S3 buckets : $1
 s3_elistfiles=Failed to list S3 files : $1
 s3_edelete=Failed to delete S3 bucket : $1
@@ -5422,10 +5451,10 @@ phpver_pub=Default HTML directory
 phpver_enewdir=Invalid website subdirectory - must be like <tt>myapp</tt> or <tt>programs/myapp</tt>
 
 html_title=Edit Web Pages
-html_edit=Edit existing file:
+html_edit=Edit existing file
 html_editok=Edit
 html_textok=Edit as Text
-html_create=Create new file:
+html_create=Create new file
 html_createok=Create
 html_efile=Invalid filename!
 html_err=Failed to save web page
@@ -5439,9 +5468,9 @@ html_dtitle=Delete Web Page
 html_drusure=Are you sure you want to delete the web page $1, which is $2 in size?
 html_dok=Delete Now
 html_return=web page editor
-html_upload=Upload file:
+html_upload=Upload file
 html_uploadok=Upload
-html_apply=Use content style:
+html_apply=Use content style
 html_styleok=Replace Files
 
 upload_err=Failed to upload file
@@ -5580,6 +5609,7 @@ upgrade_schedok=.. done. Updates will be automatically installed.
 upgrade_schednot=.. done, but automatic update installation is not enabled. Use the <a href='$1'>$2</a> module to turn them on.
 upgrade_file=Creating Virtualmin license file ..
 upgrade_problems=Some errors occurred while upgrading your system to Virtualmin Pro. Please check the messages above for possible causes.
+upgrade_success=Upgrade to Virtualmin Pro was successful. Thank you choosing Virtualmin Pro!
 upgrade_theme=Enabling theme <i>$1</i> ..
 upgrade_esharedroot=Your Webmin root directory $1 is shared between multiple systems - module updates are not allowed
 upgrade_eyumrepo=Virtualmin has been installed from an RPM, but not using the Virtualmin GPL repository. Upgrading is not possible at this time.
@@ -5884,6 +5914,7 @@ clamd_esrcalready=.. already exists
 clamd_initscript=Fixing ClamAV bootup action $1 ..
 clamd_initalready=.. already done
 clamd_start=Starting ClamAV server and enabling at boot ..
+clamd_start_updater=Starting ClamAV database update utility server and enabling at boot ..
 clamd_estart=.. failed to start : $1
 clamd_einit=.. bootup action $1 does not exist!
 clamd_stop=Stopping ClamAV server and disabling at boot ..
@@ -6320,7 +6351,7 @@ wizard_memory_lookup1=Yes, faster mail processing with more RAM used (≈$1)
 wizard_memory_lookup0=No, slower mail processing with less RAM used, but more CPU load
 wizard_virusnew=If your system is going to host domains that will receive a large amount of email, scanning incoming messages for viruses can generate high CPU load. Because scanning is done using the ClamAV scanning server <tt>clamd</tt>, it will consume RAM even when not processing email. If your system will not be hosting email, virus scanning can be disabled.
 wizard_virusmsg=Enable virus scanning with ClamAV?
-wizard_virus1=Yes, uses up to 2 GB of RAM
+wizard_virus1=Yes, uses up to 2G of RAM
 wizard_virus2=Keep using on-demand scanner
 wizard_virus0=No, email will not be filtered
 wizard_clamdnone=However, Virtualmin does not know how to enable the ClamAV server scanner on your system. You will need to set it up manually.
@@ -6537,6 +6568,8 @@ dkim_failed=DomainKeys indentified mail is not available on this system : $1
 dkim_installdesc=However, Virtualmin can attempt to automatically install the DKIM filter package for you.
 dkim_install=Install Now
 dkim_header=DomainKeys identified mail options
+dkim_header2=Keys and records for offsite hosting
+dkim_header3=Domains currently signed for
 dkim_enabled=Signing of outgoing mail enabled?
 dkim_selector=Selector for DKIM record name
 dkim_verify=Reject incoming email with invalid DKIM signature?
@@ -6549,7 +6582,7 @@ dkim_return=DKIM form
 dkim_err=Failed to save DKIM settings
 dkim_eselector=Missing or invalid selector - must be a valid DNS record name
 dkim_eselfile=.. selector key file $1 already exists!
-dkim_extra=Domains to sign for
+dkim_extra=Extra domains to sign for
 dkim_eextra=Invalid additional domain $1
 dkim_eexclude=Invalid excluded domain $1
 dkim_exclude=Never sign for domains
@@ -6567,6 +6600,7 @@ dkim_dns=Adding DKIM records to DNS domain $1 ..
 dkim_ednszone=.. domain not found!
 dkim_ednsexclude=.. domain has been excluded from DKIM
 dkim_dnsadded=.. added successfully
+dkim_ednsadded=.. DNS update failed : $1
 dkim_dnsalready=.. records already exist
 dkim_config=Setting domain and selector in DKIM filter configuration ..
 dkim_boot=Enabling DKIM filter at boot time ..
@@ -6703,6 +6737,8 @@ records_title=DNS Records
 records_ecannot=You are not allowed to edit DNS records
 records_name=Record name
 records_type=Type
+records_typeprox=Proxied
+records_typenoprox=DNS only
 records_value=Value
 records_delete=Delete Selected Records
 records_add=Create Record of Type:
@@ -7113,8 +7149,8 @@ transfer_backingdone=.. backup done
 transfer_restoringdone=.. restore complete
 transfer_validating=Validating backup ..
 transfer_validated=.. all domains transferred successfully
-transfer_ttlerror=WARNING : The DNS TTL for this virtual server is set to $1, which means that the IP address change needed for the transfer will not be visible to clients for at least that long. The TTL should be lowered by clicking the button below before performing the transfer.
-transfer_recent=WARNING : The DNS TTL for this virtual server was changed from $1 only $2 ago, which is not long enough for the change to be visible to all clients.
+transfer_ttlerror=The DNS TTL for this virtual server is set to $1, which means that the IP address change needed for the transfer will not be visible to clients for at least that long. The TTL should be lowered by clicking the button below before performing the transfer.
+transfer_recent=The DNS TTL for this virtual server was changed from $1 only $2 ago, which is not long enough for the change to be visible to all clients.
 transfer_fixttl=Lower TTL To:
 transfer_secs=seconds
 transfer_err2=Failed to change TTL
@@ -7160,8 +7196,7 @@ cloud_dropboxdesc=Dropbox
 cloud_bbdesc=Backblaze
 cloud_s3account=Using access key $1
 cloud_rsuser=Using login $1
-cloud_s3_noawscli=It is recommended to have official AWS command line interface installed.
-cloud_s3_noawscli2=AWS command line interface is not installed!
+cloud_s3_noawscli=We recommend installing the official AWS command line interface.
 cloud_s3_noawscli_install=<a href='$1'>Click here</a> to have it installed automatically.
 cloud_s3_awscli_installing=Installing the AWS CLI package ..
 cloud_s3_awscli_title=Install AWS CLI
@@ -7364,7 +7399,7 @@ php_fpmnoinit2=No FPM server bootup action found
 php_fpmnomod=Apache module $1 is missing or not enabled
 php_fpmeconfig=No FPM configuration found for domain!
 
-jailkit_ecmd=The Jailkit command $1 was not found on your system - maybe the <i>jailkit</i> package is not installed?
+jailkit_ecmd=The Jailkit command $1 was not found on your system - maybe the <tt>jailkit</tt> package is not installed?
 jailkit_einit=Failed to initialize jail : $1
 jailkit_elinux=Jailkit is only supported on Linux systems
 jailkit_emount=Failed to bind mount home directory : $1
@@ -7496,6 +7531,7 @@ dnscloud_cloudflare_esfx=Domain $1 is not under a public TLD
 dnscloud_cloudflare_esfx2=Domain $1 can be only one level under TLD $2
 dnscloud_cloudflare_ens=Failed to lookup NS records : $1
 dnscloud_cloudflare_ens2=No NS records found for $1. Cloudflare requires that DNS domains be registered first.
+dnscloud_cloudflare_ens3=NS records found for <tt>$1</tt> domain, however these NS records <tt>$2</tt> do not point to Cloudflare provider
 
 install_mod_perl_link=Use the <a href='$1'>Perl Modules</a> page in Webmin to install it.
 

@@ -52,22 +52,14 @@ my %umap = map { $_->{'user'}, $_ } &list_domain_users($d, 0, 1, 1, 1);
 if (!@active_domain_server_ports_procs) {
 	@active_domain_server_ports_procs = &proc::list_processes();
 	}
-if (defined(&proc::find_all_process_sockets) &&
-    !@active_domain_server_ports_socks) {
+if (!@active_domain_server_ports_socks) {
 	@active_domain_server_ports_socks = &proc::find_all_process_sockets();
 	}
 foreach my $p (@active_domain_server_ports_procs) {
 	my $u = $umap{$p->{'user'}};
 	next if (!$u);
-	my @psocks;
-	if (@active_domain_server_ports_socks) {
-		@psocks = grep { $_->{'pid'} eq $p->{'pid'} }
-			       @active_domain_server_ports_socks;
-		}
-	else {
-		# XXX remove this case when Webmin 1.950 is out
-		@psocks = &proc::find_process_sockets($p->{'pid'});
-		}
+	my @psocks = grep { $_->{'pid'} eq $p->{'pid'} }
+			  @active_domain_server_ports_socks;
 	foreach my $s (&proc::find_process_sockets($p->{'pid'})) {
 		next if (!$s->{'listen'});
 		if ($s->{'lport'} !~ /^\d+$/) {
@@ -84,6 +76,32 @@ my %donepid;
 return @rv;
 }
 
+# unusual_domain_server_port(&process)
+# Returns 1 if a process looks risky
+sub unusual_domain_server_port
+{
+my ($p) = @_;
+if ($p->{'proc'}->{'args'} =~ /^spamd\s+child$/) {
+	# Spamd child process can sometimes open ports
+	return 0;
+	}
+foreach my $a (split(/\t+/, $config{'allowed_ports'})) {
+	if ($a =~ /^\d+$/) {
+		# One port
+		return 0 if ($p->{'lport'} == $a);
+		}
+	elsif ($a =~ /^(\d+)\-(\d+)$/) {
+		# A port range
+		return 0 if ($p->{'lport'} >= $1 && $p->{'lport'} <= $2);
+		}
+	else {
+		# Assume it's a regexp for the process name
+		return 0 if ($p->{'proc'}->{'args'} =~ /$a/);
+		}
+	}
+return 1;
+}
+
 # disallowed_domain_server_ports(&domain)
 # Returns active ports that should not be in use
 sub disallowed_domain_server_ports
@@ -91,7 +109,8 @@ sub disallowed_domain_server_ports
 my ($d) = @_;
 my %canports = map { $_->{'lport'}, $_ } &allowed_domain_server_ports($d);
 my @usedports = &active_domain_server_ports($d);
-return grep { !$canports{$_->{'lport'}} } @usedports;
+my @bad = grep { !$canports{$_->{'lport'}} } @usedports;
+return grep { &unusual_domain_server_port($_) } @bad;
 }
 
 # kill_disallowed_domain_server_ports(&domain)

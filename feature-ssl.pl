@@ -527,9 +527,6 @@ local ($d) = @_;
 &obtain_lock_web($d);
 local $conf = &apache::get_config();
 
-# Remove from Dovecot, Webmin, etc..
-&disable_domain_service_ssl_certs($d);
-
 # Remove the custom Listen directive added for the domain, if any
 &remove_listen($d, $conf, $d->{'web_sslport'} || $default_web_sslport);
 
@@ -555,14 +552,6 @@ foreach my $od (&get_domain_by("ssl_same", $d->{'id'})) {
 
 # Update DANE DNS records
 &sync_domain_tlsa_records($d);
-
-# If this domain had it's own lets encrypt cert, delete any leftover files
-# for it under /etc/letsencrypt
-&foreign_require("webmin");
-if ($d->{'letsencrypt_last'} && !$d->{'ssl_same'} &&
-    defined(&webmin::cleanup_letsencrypt_files)) {
-	&webmin::cleanup_letsencrypt_files($d->{'dom'});
-	}
 
 # If this domain was sharing a cert with another, forget about it now
 if ($d->{'ssl_same'}) {
@@ -1350,7 +1339,7 @@ if (&is_under_directory($d->{'home'}, $d->{'ssl_cert'})) {
 	$data = &read_file_contents_as_domain_user($d, $d->{'ssl_cert'});
 	}
 else {
-	$data = &read_file_contents($d, $d->{'ssl_cert'});
+	$data = &read_file_contents($d->{'ssl_cert'});
 	}
 $data =~ s/\r//g;
 if ($data =~ /(-----BEGIN\s+CERTIFICATE-----\n([A-Za-z0-9\+\/=\n\r]+)-----END\s+CERTIFICATE-----)/) {
@@ -1370,7 +1359,7 @@ if (&is_under_directory($d->{'home'}, $file)) {
 	$data = &read_file_contents_as_domain_user($d, $file);
 	}
 else {
-	$data = &read_file_contents($d, $file);
+	$data = &read_file_contents($file);
 	}
 $data =~ s/\r//g;
 if ($data =~ /(-----BEGIN\s+RSA\s+PRIVATE\s+KEY-----\n([A-Za-z0-9\+\/=\n\r]+)-----END\s+RSA\s+PRIVATE\s+KEY-----)/) {
@@ -2383,7 +2372,7 @@ if ($d->{'virt'}) {
 					}
 				}
 			}
-		next if (!$smtp);
+		next if (!$smtp && $enable);
 
 		if ($enable) {
 			# Create or update the entry
@@ -2439,7 +2428,7 @@ if ($d->{'virt'}) {
 				&postfix::delete_master($already);
 				$changed = 1;
 				}
-			if (!@others && $smtp->{'name'} ne $pfx) {
+			if (!@others && $smtp && $smtp->{'name'} ne $pfx) {
 				# If the default service has an IP but this is
 				# no longer needed, remove it
 				$smtp->{'name'} = $pfx;
@@ -2877,8 +2866,10 @@ my $lets = &is_letsencrypt_cert($info) ? 1 : 0;
 if (!@caa && $lets) {
 	# Need to add a Let's Encrypt record
 	&pre_records_change($d);
-	&bind8::create_record($file, "@", undef, "IN",
-		      "CAA", join(" ", "0", "issuewild", "letsencrypt.org"));
+	my $caa = { 'name' => '@',
+		    'type' => 'CAA',
+		    'values' => [ "0", "issuewild", "letsencrypt.org" ] };
+	&create_dns_record($recs, $file, $caa);
 	&post_records_change($d, $recs, $file);
 	&reload_bind_records($d);
 	}
@@ -2887,7 +2878,7 @@ elsif (@caa == 1 &&
        $caa[0]->{'values'}->[2] eq 'letsencrypt.org' && !$lets) {
 	# Need to remove the record
 	&pre_records_change($d);
-	&bind8::delete_record($file, $caa[0]);
+	&delete_dns_record($recs, $file, $caa[0]);
 	&post_records_change($d, $recs, $file);
 	&reload_bind_records($d);
 	}
@@ -3021,8 +3012,9 @@ $size ||= $config{'key_size'};
 my $phd = &public_html_dir($d);
 my ($ok, $cert, $key, $chain);
 my @errs;
+my @wilds = grep { /^\*\./ } @$dnames;
 &lock_file($ssl_letsencrypt_lock);
-if (&domain_has_website($d) && (!$mode || $mode eq "web")) {
+if (&domain_has_website($d) && !@wilds && (!$mode || $mode eq "web")) {
 	# Try using website first
 	($ok, $cert, $key, $chain) = &webmin::request_letsencrypt_cert(
 		$dnames, $phd, $d->{'emailto'}, $size, "web", $staging,
@@ -3053,13 +3045,14 @@ else {
 	}
 }
 
-# validate_letsencrypt_config(&domain)
+# validate_letsencrypt_config(&domain, [&features])
 # Returns a list of validation errors that might prevent Let's Encrypt
 sub validate_letsencrypt_config
 {
-my ($d) = @_;
+my ($d, $feats) = @_;
 my @rv;
-foreach my $f ("web", "dns") {
+$feats ||= ["web", "dns"];
+foreach my $f (@$feats) {
 	if ($d->{$f} && $config{$f}) {
 		my $vfunc = "validate_$f";
 		my $err = &$vfunc($d);

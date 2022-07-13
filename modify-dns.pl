@@ -14,11 +14,14 @@ from the DNS section of the domain's server template.
 
 To add allowed hostname, MX domains or IP addresses, use the C<--spf-add-a>,
 C<--spf-add-mx>, C<--spf-add-ip4> and C<--spf-add-ip6> options respectively.
-Each of which must be followed by a single host, domain or IP address.
+Each of which must be followed by a single host, domain or IP address. Or you
+can use C<--spf-add-include> followed by a domain name who's SPF policy will
+be included in this one.
 
-Similarly, the C<--spf-remove-a>, C<--spf-remove-mx>, C<--spf-remove-ip4> and
-C<--spf-remove-ip6> options will remove the following host, domain or IP address
-from the allowed list for the specified domains.
+Similarly, the C<--spf-remove-a>, C<--spf-remove-mx>, C<--spf-remove-ip4>,
+C<--spf-remove-ip6> and C<--spf-remove-include> options will remove the
+following host, domain or IP address from the allowed list for the specified
+domains.
 
 To control how SPF treats senders not in the allowed hosts list, use one of
 the C<--spf-all-disallow>, C<--spf-all-discourage>, C<--spf-all-neutral>,
@@ -33,7 +36,8 @@ This command can also be used to add and remove DNS records from all the
 selected domains. Adding is done with the C<--add-record> flag, which must
 be followed by a single parameter containing the record name, type and value.
 Alternately, you can use C<--add-record-with-ttl> followed by the name, type,
-TTL and value.
+TTL and value. If your cloud DNS provider supports proxy records, you can
+use the C<--add-proxy-record> with the same parameters as C<--add-record>.
 
 Conversely, deletion is done with the C<--remove-record> flag, followed by a 
 single parameter containing the name and type of the record(s) to delete. You
@@ -110,14 +114,14 @@ while(@ARGV > 0) {
 	elsif ($a eq "--no-spf") {
 		$spf = 0;
 		}
-	elsif ($a =~ /^--spf-add-(a|mx|ip4|ip6)$/) {
+	elsif ($a =~ /^--spf-add-(a|mx|ip4|ip6|include)$/) {
 		$add = shift(@ARGV);
 		$type = $1;
 		$add =~ /^[a-z0-9\.\-\_:]+$/ ||
 		    &usage("$a must be followed by a hostname or IP address");
 		push(@{$add{$type}}, $add);
 		}
-	elsif ($a =~ /^--spf-remove-(a|mx|ip4|ip6)$/) {
+	elsif ($a =~ /^--spf-remove-(a|mx|ip4|ip6|include)$/) {
 		$rem = shift(@ARGV);
 		$type = $1;
 		$rem =~ /^[a-z0-9\.\-\_:]+$/ ||
@@ -159,12 +163,17 @@ while(@ARGV > 0) {
 	elsif ($a eq "--add-record") {
 		my ($name, $type, @values) = split(/\s+/, shift(@ARGV));
 		$name && $type && @values || &usage("--add-record must be followed by the record name, type and values, all in one parameter");
-		push(@addrecs, [ $name, $type, undef, \@values ]);
+		push(@addrecs, [ $name, $type, undef, \@values, 0 ]);
 		}
 	elsif ($a eq "--add-record-with-ttl") {
 		my ($name, $type, $ttl, @values) = split(/\s+/, shift(@ARGV));
 		$name && $type && $ttl && @values || &usage("--add-record-with-ttl must be followed by the record name, type, TTL and values, all in one parameter");
-		push(@addrecs, [ $name, $type, $ttl, \@values ]);
+		push(@addrecs, [ $name, $type, $ttl, \@values, 0 ]);
+		}
+	elsif ($a eq "--add-proxied-record") {
+		my ($name, $type, @values) = split(/\s+/, shift(@ARGV));
+		$name && $type && @values || &usage("--add-proxied-record must be followed by the record name, type and values, all in one parameter");
+		push(@addrecs, [ $name, $type, undef, \@values, 1 ]);
 		}
 	elsif ($a eq "--remove-record") {
 		my ($name, $type, @values) = split(/\s+/, shift(@ARGV));
@@ -295,6 +304,7 @@ foreach $d (@doms) {
 	&obtain_lock_dns($d);
 	&$indent_print();
 	$oldd = { %$d };
+	$cloud = &get_domain_dns_cloud($d);
 
 	$currspf = &get_domain_spf($d);
 	if (defined($spf)) {
@@ -320,15 +330,15 @@ foreach $d (@doms) {
 		if ($dmarc == 1 && !$currdmarc) {
 			# Need to enable, with default settings
 			&$first_print($text{'spf_dmarcenable'});
-			&save_domain_dmarc($d,
+			$err = &save_domain_dmarc($d,
 				$currdmarc = &default_domain_dmarc($d));
-			&$second_print($text{'setup_done'});
+			&$second_print($err || $text{'setup_done'});
 			}
 		elsif ($dmarc == 0 && $currdmarc) {
 			# Need to disable
 			&$first_print($text{'spf_dmarcdisable'});
-			&save_domain_dmarc($d, undef);
-			&$second_print($text{'setup_done'});
+			$err = &save_domain_dmarc($d, undef);
+			&$second_print($err || $text{'setup_done'});
 			$currdmarc = undef;
 			}
 		}
@@ -410,9 +420,8 @@ foreach $d (@doms) {
 				}
 			push(@alld, @d);
 			}
-		@alld = sort { $b->{'line'} cmp $a->{'line'} } @alld;
 		foreach my $r (@alld) {
-			&bind8::delete_record($file, $r);
+			&delete_dns_record($recs, $file, $r);
 			$changed++;
 			}
 		&$second_print($text{'setup_done'});
@@ -426,24 +435,26 @@ foreach $d (@doms) {
 			($recs, $file) = &get_domain_dns_records_and_file($d);
 			}
 		foreach my $rn (@addrecs) {
-			my ($name, $type, $ttl, $values) = @$rn;
+			my ($name, $type, $ttl, $values, $proxied) = @$rn;
 			if ($name !~ /\.$/ && $name ne "\@") {
 				$name .= ".".$d->{'dom'}.".";
 				}
 			my $r = { 'name' => $name,
 				  'type' => $type,
 				  'ttl' => $ttl,
-				  'values' => $values };
+				  'values' => $values,
+				  'proxied' => $proxied };
 			my ($clash) = grep { $_->{'name'} eq $name &&
 					     &bind8::join_record_values($_) eq
 						&bind8::join_record_values($r) } @$recs;
 			if ($clash) {
 				&$second_print(&text('spf_eaddrecs', $r->{'name'}));
 				}
+			elsif ($proxied && (!$cloud || !$cloud->{'proxy'})) {
+				&$second_print(&text('spf_eaddproxy', $r->{'name'}));
+				}
 			else {
-				&bind8::create_record($file, $name, $ttl, "IN",
-						      uc($type), join(" ", @$values));
-				push(@$recs, $r);
+				&create_dns_record($recs, $file, $r);
 				$changed++;
 				}
 			}
@@ -460,14 +471,10 @@ foreach $d (@doms) {
 		($oldttl) = grep { $_->{'defttl'} } @$recs;
 		if ($oldttl) {
 			$oldttl->{'defttl'} = $ttl;
-			&bind8::modify_defttl($file, $oldttl, $ttl);
+			&modify_dns_record($recs, $file, $oldttl);
 			}
 		else {
-			&bind8::create_defttl($file, $ttl);
-			foreach my $e (@$recs) {
-				$e->{'line'}++;
-				$e->{'eline'}++ if (defined($e->{'eline'}));
-				}
+			&create_dns_record($recs, $file, $ttl);
 			}
 		$changed++;
 		&$second_print($text{'setup_done'});
@@ -486,9 +493,7 @@ foreach $d (@doms) {
 		foreach my $r (@$recs) {
 			if ($r->{'ttl'} && $r->{'type'} ne 'SOA') {
 				$r->{'ttl'} = $ttl;
-				&bind8::modify_record($file, $r, $r->{'name'},
-				    $r->{'ttl'}, $r->{'class'}, $r->{'type'},
-				    &join_record_values($r), $r->{'comment'});
+				&modify_dns_record($recs, $file, $r);
 				$changed++;
 				}
 			}
@@ -595,7 +600,10 @@ foreach $d (@doms) {
 		}
 
 	if ($changed || $bumpsoa) {
-		&post_records_change($d, $recs, $file);
+		my $err = &post_records_change($d, $recs, $file);
+		if ($err) {
+			&$second_print(&text('spf_epostchange', $err));
+			}
 		&reload_bind_records($d);
 		}
 
@@ -668,6 +676,7 @@ print "                     [--dmarc-policy none|quarantine|reject]\n";
 print "                     [--dmarc-percent number]\n";
 print "                     [--add-record \"name type value\"]\n";
 print "                     [--add-record-with-ttl \"name type TTL value\"]\n";
+print "                     [--add-proxy-record \"name type value\"]\n";
 print "                     [--remove-record \"name type value\"]\n";
 print "                     [--ttl seconds | --all-ttl seconds]\n";
 print "                     [--add-slave hostname]* | [--add-all-slaves]\n";

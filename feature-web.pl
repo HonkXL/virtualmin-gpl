@@ -243,8 +243,7 @@ if (!$d->{'alias'}) {
 			&$second_print(&text('setup_efcgiwrap', $err));
 			}
 		else {
-			&$second_print(&text('setup_efcgiwrap',
-					     $d->{'fcgiwrap_port'}));
+			&$second_print($text{'setup_done'});
 			}
 		}
 	}
@@ -1126,11 +1125,23 @@ local ($virt, $vconf, $d) = @_;
 local $tmpl = &get_template($d->{'template'});
 local $conf = &apache::get_config();
 if ($tmpl->{'disabled_url'} eq 'none') {
-	# Disable is done via local HTML
+	# Disable is done via alias to local HTML
 	local @am = &apache::find_directive("AliasMatch", $vconf);
 	local $dis = &disabled_website_html($d);
 	&apache::save_directive("AliasMatch",
 				[ "^/.*\$ $dis", @am ], $vconf, $conf);
+
+	# Also prevent undoing this via .htaccess
+	local $pdir = &public_html_dir($d);
+	local ($dir) = grep { $_->{'words'}->[0] eq $pdir }
+			    &apache::find_directive_struct("Directory", $vconf);
+	if ($dir) {
+		local @ao = &apache::find_directive(
+			"AllowOverride", $dir->{'members'});
+		&apache::save_directive("AllowOverride",
+			[ @ao, "None" ], $dir->{'members'}, $conf);
+		}
+
 	&flush_file_lines($virt->{'file'});
 	local $def_tpl = &read_file_contents("$default_content_dir/index.html");
 	local %hashtmp = %$d;
@@ -1250,6 +1261,19 @@ local $conf = &apache::get_config();
 local @rm = &apache::find_directive("RedirectMatch", $vconf);
 @rm = grep { substr($_, 0, 5) ne "^/.*\$" } @rm;
 &apache::save_directive("RedirectMatch", \@rm, $vconf, $conf);
+
+# Remove AllowOverride None
+local $pdir = &public_html_dir($d);
+local ($dir) = grep { $_->{'words'}->[0] eq $pdir }
+		    &apache::find_directive_struct("Directory", $vconf);
+if ($dir) {
+	local @ao = &apache::find_directive(
+		"AllowOverride", $dir->{'members'});
+	@ao = grep { $_ ne "None" } @ao;
+	&apache::save_directive("AllowOverride",
+		\@ao, $dir->{'members'}, $conf);
+	}
+
 
 &flush_file_lines($virt->{'file'}, undef, 1);
 }
@@ -2382,9 +2406,11 @@ if ($d->{'virt'} && !$d->{'name'}) {
 sub links_web
 {
 local ($d) = @_;
+return () if ($d->{'alias'});
 local @rv;
 my $link = $d->{'dom'}.":".$d->{'web_port'};
 my $slink = $d->{'dom'}.":".$d->{'web_sslport'};
+
 # Link to configure virtual host
 push(@rv, { 'mod' => 'apache',
 	    'desc' => $text{'links_web'},
@@ -2435,7 +2461,7 @@ if ($mode eq "cgi" || $mode eq "fcgid") {
 			  });
 		}
 	}
-elsif ($mode eq "fpm" && &get_webmin_version() >= 1.844) {
+elsif ($mode eq "fpm") {
 	# Link to phpini module for the FPM version
 	my $conf = &get_php_fpm_config($d);
 	if ($conf) {
@@ -4822,24 +4848,49 @@ foreach my $dir (&apache::find_directive_struct("Directory", $vconf)) {
 return $changed;
 }
 
-# fix_mod_php_directives(&domain, port)
+# list_mod_php_directives()
+# Returns names of directives associated with mod_php
+sub list_mod_php_directives
+{
+return ('php_value', 'php_flag', 'php_admin_value', 'php_admin_flag');
+}
+
+# fix_mod_php_directives(&domain, port, [force])
 # Remove php_value directives if not supported by this system
 sub fix_mod_php_directives
 {
-my ($d, $port) = @_;
-my @modes = &supported_php_modes($d);
-if (&indexof("mod_php", @modes) < 0) {
+my ($d, $port, $force) = @_;
+my $count = 0;
+if (!&get_apache_mod_php_version() || $force) {
 	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $port);
 	if ($virt) {
-		&apache::save_directive(
-			"php_value", [ ], $vconf, $conf);
-		&apache::save_directive(
-			"php_admin_value", [ ], $vconf, $conf);
+		my @dtargs = &list_mod_php_directives();
+		foreach my $pval (@dtargs) {
+			my @phpv = &apache::find_directive($pval, $vconf);
+			$count += scalar(@phpv);
+			&apache::save_directive($pval, [ ], $vconf, $conf);
+			}
+		my @dirs;
+		foreach my $dirname ("Directory", "DirectoryMatch",
+				     "Files", "FilesMatch",
+				     "Location", "LocationMatch") {
+			push(@dirs, &apache::find_directive_struct(
+					$dirname, $vconf));
+			}
+		foreach my $dir (@dirs) {
+			foreach my $pval (@dtargs) {
+				my @phpv = &apache::find_directive(
+					$pval, $dir->{'members'});
+				$count += scalar(@phpv);
+				&apache::save_directive(
+					$pval, [ ], $dir->{'members'}, $conf);
+				}
+			}
 		&flush_file_lines($virt->{'file'}, undef, 1);
 		&register_post_action(\&restart_apache);
 		}
 	}
-
+return $count;
 }
 
 # fix_options_template(&tmpl, [ignore-version]))
@@ -4925,7 +4976,7 @@ my $port = "$domdir/socket";
 
 # Get the command
 my ($cmd, $log, $pidfile) = &get_fcgiwrap_server_command($d, $port);
-$cmd || return (0, $text{'fcgid_ecmd'});
+$cmd || return (0, $text{'setup_ewebfcgidcmd'});
 
 # Create init script
 &foreign_require("init");

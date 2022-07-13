@@ -609,6 +609,11 @@ if ($c && defined(&list_smtp_clouds)) {
 		}
 	}
 
+# Turn off email autoconfig
+if (&domain_has_website($d) && $config{'mail_autoconfig'}) {
+	&disable_email_autoconfig($d);
+	}
+
 &release_lock_mail($d);
 return 1;
 }
@@ -4648,8 +4653,10 @@ if ($d->{'dns'} && !$config{'secmx_nodns'}) {
 				 $r->{'name'} eq $withdot &&
 				 $r->{'values'}->[1] eq $mxhost."." } @$recs;
 		if (!$r) {
-			&bind8::create_record($file, $withdot, undef,
-				      "IN", "MX", "10 $mxhost.");
+			my $r = { 'name' => $withdot,
+				  'type' => 'MX',
+				  'values' => [ 10, $mxhost."." ] };
+			&create_dns_record($recs, $file, $r);
 			$added++;
 			}
 		}
@@ -6238,8 +6245,10 @@ if (!$cr) {
 			    $_->{'type'} eq 'A' } @$recs;
 	if (!$r) {
 		my $ip = $d->{'dns_ip'} || $d->{'ip'};
-		&bind8::create_record($file, $autoconfig, undef,
-				      "IN", "A", $ip);
+		my $cr = { 'name' => $autoconfig,
+			   'type' => 'A',
+			   'values' => [ $ip ] };
+		&create_dns_record($recs, $file, $cr);
 		$changed++;
 		}
 
@@ -6248,8 +6257,10 @@ if (!$cr) {
 			    $_->{'type'} eq 'AAAA' } @$recs;
 	if (!$r && $d->{'ip6'}) {
 		my $ip = $d->{'ip6'};
-		&bind8::create_record($file, $autoconfig, undef,
-				      "IN", "AAAA", $ip);
+		my $cr = { 'name' => $autoconfig,
+			   'type' => 'AAAA',
+			   'values' => [ $ip ] };
+		&create_dns_record($recs, $file, $cr);
 		$changed++;
 		}
 	}
@@ -6364,10 +6375,10 @@ if ($d->{'dns'}) {
 		}
 	my $changed = 0;
 	my %adots = map { $_.".", 1 } @autoconfig;
-	foreach my $r (reverse(@$recs)) {
+	foreach my $r (@$recs) {
 		if ($r->{'type'} =~ /^(A|AAAA)$/ &&
 		    $adots{$r->{'name'}}) {
-			&bind8::delete_record($file, $r);
+			&delete_dns_record($recs, $file, $r);
 			$changed++;
 			}
 		}
@@ -6582,9 +6593,9 @@ if ($d->{'dns'}) {
 	local ($recs, $file) = &get_domain_dns_records_and_file($d);
 
 	# Remove all MX records
-	foreach my $r (reverse(@$recs)) {
+	foreach my $r (@$recs) {
 		if ($r->{'type'} eq 'MX' && $r->{'name'} eq $d->{'dom'}.".") {
-			&bind8::delete_record($file, $r);
+			&delete_dns_record($recs, $file, $r);
 			}
 		}
 	&post_records_change($d, $recs);
@@ -6593,8 +6604,10 @@ if ($d->{'dns'}) {
 	if ($prov) {
 		# Add provider records
 		foreach my $r (@{$prov->{'mx'}}) {
-			&bind8::create_record($file, $d->{'dom'}.".", undef,
-					      "IN", "MX", "10 ${r}.");
+			my $mxr = { 'name' => $d->{'dom'}.".",
+				    'type' => 'MX',
+				    'values' => [ 10, $r."." ] };
+			&create_dns_record($recs, $file, $mxr);
 			}
 		}
 	else {

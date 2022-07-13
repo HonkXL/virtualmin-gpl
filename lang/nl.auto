@@ -24,6 +24,17 @@ index_cloudsdesc=Configureer authenticatie voor cloudopslagproviders zoals S3, r
 index_themeswitch=Virtualmin 5 wordt geleverd met een gloednieuw HTML 5-thema! Wil je het nu proberen?
 index_themeswitchok=Wissel van thema
 index_themeswitchnot=Vraag me niet nog een keer
+index_disable_mod_php=De verouderde Apache <tt>mod_php</tt> module is ingeschakeld op uw systeem, maar wordt niet door virtuele servers gebruikt. Als u dit uitschakelt, wordt voorkomen dat deze PHP-uitvoeringsmodus in de toekomst wordt geselecteerd voor virtuele servers.
+index_disable_mod_phpok=Schakel het uit
+index_edisable_mod_php_cannot=Je mag mod_php niet uitschakelen
+index_edisable_mod_php_mods=Geen PHP Apache-modules gevonden!
+index_disable_mod_php_title=Uitschakelen
+index_disable_mod_php_subtitle=Apache <tt>mod_php</tt>
+index_disable_mod_php_enmod=Apache-module uitschakelen met <tt>a2dismod</tt> ..
+index_disable_mod_php_load=<tt>LoadModule</tt> regel verwijderen ..
+index_disable_mod_php_doms=<tt>php_*</tt> richtlijnen van virtuele servers verwijderen ..
+index_disable_mod_php_ddone=.. $1 servers bijgewerkt
+index_disable_mod_php_global=<tt>php_*</tt> richtlijnen verwijderen ..
 index_certwarn=Waarschuwing SSL-certificaat
 index_certexpired=De SSL-certificaten van sommige virtuele servers zijn verlopen : $1
 index_certnearly=De SSL-certificaten van sommige virtuele servers verlopen bijna : $1
@@ -45,6 +56,7 @@ form_content2=Ja, met standaardsjabloon en inhoud hieronder
 form_content0=Ja, met onderstaande inhoud
 
 setup_eforceunder=Je mag alleen domeinen maken onder $1
+setup_edomainip=Een domeinnaam kan geen IP-adres zijn
 setup_evirt6alloc2=Kan virtueel IPv6-adres niet toewijzen uit resellerbereik
 setup_evirtalloc3=Geen IP-toewijzingsbereiken gedefinieerd!
 setup_evirt6alloc3=Geen IPv6-toewijzingsbereiken gedefinieerd!
@@ -72,6 +84,7 @@ setup_ebind_cloud2=.. klaar, maar sommige records zijn niet gemaakt : $1
 setup_ebindslaveip2=.. kon het IP-adres voor dit systeem niet bepalen. U moet het IP-adres instellen in de BIND DNS Server-module.
 setup_ebindslaveip=.. kon geen geldig IP-adres voor dit systeem bepalen (kreeg $1). U moet het IP-adres instellen in de BIND DNS Server-module.
 setup_enodnssecalg=.. DNSSEC-algoritme niet geselecteerd in serversjabloon
+setup_webmindown2=.. kan Webmin niet herstarten : $1
 setup_usermindown=.. momenteel niet actief
 setup_usermindown2=.. kan Usermin niet herstarten : $1
 setup_failed=.. mislukt
@@ -101,6 +114,7 @@ setup_mail_esmtpcloud=.. mislukt  : $1
 setup_overquota=Maken van virtuele server is mislukt vanwege gebrek aan quota : $1
 setup_overgroupquota=Serverquotum voor $2 van $1 is bereikt
 setup_overuserquota=Quotum voor domeineigenaar voor $2 van $1 is bereikt
+setup_ewebfcgidcmd=Kon <tt>fcgiwrap</tt> serveropdracht niet vinden!
 
 users_indom=$1 gebruikers in domein $2
 
@@ -177,6 +191,7 @@ delete_esslnoips=Geen SSL-certificaat gevonden voor domein
 delete_mail_smtpcloud=Cloudmailprovider $1 verwijderen ..
 
 save_apache12=PHP FPM-configuratie bijwerken ..
+save_apache12none=.. geen reparaties nodig
 save_bind_cloud=DNS-domeinnaam wijzigen op $1 ..
 save_bind_ecloud=.. mislukt : $1
 save_dok_rmfeatures=Ja, sla nu op
@@ -418,8 +433,10 @@ backup_ebackupdirlock=.. tijdelijke back-up directory $1 is vergrendeld door pro
 backup_efeatureeval=.. back-up van $1 is mislukt : $2
 backup_mailhomeless=Een back-up maken van de basismappen van $1 gebruiker.
 backup_mailhomefailed=.. back-up van thuismap is mislukt : $1
+backup_include=Alleen deze bestanden opnemen, in plaats van uitsluiten
 backup_webminnofiles=.. geen ACL-bestanden gevonden
 backup_ekilllock=Een back-up naar dezelfde bestemming met PID $1 is beëindigd
+backup_eincrzip=Incrementele back-ups kunnen niet worden gebruikt met ZIP-indeling
 backup_ezipkey=Versleuteling kan niet worden gebruikt met back-ups in ZIP-formaat
 backup_edesturl=Back-upbestemming $1 is ongeldig : $2
 backup_eownergone=Domein van eigenaar bestaat niet meer!
@@ -465,6 +482,7 @@ restore_deletefirst=Virtuele server $1 verwijderen ..
 restore_eresel2=.. de reseller $1 gespecificeerd in de back-up bestaat niet - het verwijderen uit het domein
 restore_eugroup=.. de domeineigenaar Unix-groep $1 bestaat niet
 restore_eugroup2=.. de domeineigenaar Unix-groep $1 bestaat niet - terugschakelen naar de eigen groep van het domein
+restore_edefip6=.. kon het standaard IPv6-adres niet achterhalen
 restore_erecreate=.. aanmaken van ontbrekende server is mislukt : $1
 restore_disabledomain=Opnieuw uitschakelen van virtuele server $1 ..
 restore_downloadrs=Archief downloaden van Rackspace Cloud Files.
@@ -640,6 +658,8 @@ tmpl_dmarcyes=Ja, met onderstaand beleid
 tmpl_dmarcextra=Extra DMARC-opties
 tmpl_edmarcpct=Het percentage berichten moet een geheel getal zijn tussen 0 en 100
 tmpl_dns_cloud=Maak nieuwe DNS-zones op
+tmpl_dns_cloud_import=Bestaande zone overnemen bij het maken
+tmpl_dns_cloud_proxy=Proxing inschakelen voor nieuwe records
 dns_cloud_def=&lt; Automatisch kiezen &gt;
 dns_cloud_services=Cloudmin-diensten
 dns_cloud_local=Lokale bestanden
@@ -671,6 +691,9 @@ tmpl_outlook_eautoconfig=In de XML voor automatische configuratie van Outlook on
 bwgraph_enable=Controleer de $1 -pagina om ervoor te zorgen dat het verzamelen van statistieken is ingeschakeld.
 
 newfields_type11=Ja/Nee (standaard Nee)
+newfields_err=Kan aangepaste velden niet opslaan
+newfields_edesc=Ontbrekende beschrijving voor veld $1
+newfields_eopts=Ontbrekende waarde voor ja/nee-veld $1
 
 databases_indom=$1 databases in domein $2
 databases_desc3h=Dit formulier kan worden gebruikt om de primaire databasewachtwoorden voor deze virtuele server te wijzigen.
@@ -770,8 +793,9 @@ scripts_eupdate=.. automatische module-installatie is niet beschikbaar op uw sys
 scripts_einstallmod=.. module is geïnstalleerd maar kan niet worden geladen
 scripts_install_phpmods_check=PHP-modules controleren ..
 scripts_install_phpmods_check_done=.. controle klaar
+scripts_sitelink=Meer informatie over het gebruik van dit script is te vinden op <a href='$1' target=_blank>$2</a>.
 scripts_passmode4=Eerste wachtwoord voor script
-scripts_idbneed_link=, die kan worden ingeschakeld op de pagina <a href='$1'>$2</a>
+scripts_idbneed_link=, die kan worden ingeschakeld op de pagina <a href='$1'>$2</a>.
 scripts_iphpneed=PHP is uitgeschakeld voor deze virtuele server
 scripts_iphpnover=Er is geen PHP-versie gevonden voor deze virtuele server
 scripts_iphpfullver=PHP-versie $1 of hoger is vereist, maar deze virtuele server gebruikt versie $2
@@ -793,6 +817,8 @@ scripts_gpl_to_pro_upgrade=Upgrade voor dit script is nu alleen beschikbaar in P
 scripts_gpl_pro_tip=Pro-functie
 scripts_gpl_pro_tip_hide=Bedankt voor de heads-up
 scripts_gpl_pro_tip_hide2=Bedankt, ik zal er over nadenken
+scripts_gpl_pro_tip_open=Koop Virtualmin Pro
+scripts_gpl_pro_tip_remind=Herinner me er later aan
 scripts_gpl_pro_tip_and=en
 scripts_gpl_pro_tip_enroll=Overweeg om een <a target=_blank href='$1'>Virtualmin Pro</a>-licentie aan te schaffen om de ontwikkeling te ondersteunen en deze en vele andere coole functies te ontgrendelen.
 scripts_gpl_pro_tip_list_scripts=Er zijn meer installatiescripts beschikbaar!
@@ -889,6 +915,7 @@ validate_ednsmx=E-mail is ingeschakeld voor dit domein, maar geen van de MX-reco
 validate_ednsnotype=DNS-zone voor domein $1 heeft geen type!
 validate_ednstype=DNS-zone voor domein $1 heeft het type $2 in plaats van $3
 validate_ecloud=DNS-domein niet gevonden op cloudprovider $1
+validate_enoncloud=DNS-domein bestaat lokaal wanneer het alleen moet worden gehost op cloudprovider $1
 validate_ewebconfig=Er is een fout gevonden in de configuratie van de virtuele host : $1
 validate_ewebphpsuexec=PHP is geconfigureerd om als domeineigenaar te worden uitgevoerd, maar suEXEC is niet ingeschakeld!
 validate_ewebphpconfig=Er zijn PHP-configuratiefouten gevonden in versie $1 : $2
@@ -984,6 +1011,7 @@ spf_dpct=Percentage berichten dat beleid moet toepassen
 spf_delrecs=$1 DNS-records verwijderen.
 spf_addrecs=$1 DNS-records toevoegen.
 spf_eaddrecs=.. er bestaat al een record met de naam $1
+spf_eaddproxy=.. Cloud DNS-provider ondersteunt geen proxyrecords
 spf_ttl=Standaard TTL instellen op $1 ..
 spf_ettlsupport=.. niet ondersteund door DNS-provider
 spf_enablednssec=DNSSEC-sleutel en -records maken.
@@ -1003,9 +1031,11 @@ spf_dnscloud=DNS-records verplaatsen naar cloudprovider $1 ..
 spf_dnslocal=DNS-records verplaatsen naar lokale hosting ..
 spf_eclouddns=.. mislukt  : $1
 spf_ecloud=Kan DNS-host niet updaten : $1
+spf_epostchange=Kan DNS-records niet opslaan : $1
 
 s3_emodule2=De Perl-module $1 die nodig is om te communiceren met de S3-service van Amazon kan niet worden geladen : $2
 s3_emodule3=De Perl-modules $1 of $2 die nodig zijn om te communiceren met de S3-service van Amazon, zijn niet geïnstalleerd
+s3_eawscmd=De AWS-opdracht is geïnstalleerd, maar werkt niet : $1
 s3_einfo2=Kan $1 : $2 niet lezen
 s3_eputacl=Kan bucket-ACL niet opslaan : $1
 s3_eputlifecycle=Kan bucketlevenscyclus niet opslaan : $1
@@ -1021,6 +1051,7 @@ dynip_external=Extern script ..
 dynip_none=Update geen enkele dienst
 
 upgrade_epackages=Geen pakketten gevonden om te installeren!
+upgrade_success=Upgrade naar Virtualmin Pro is gelukt. Bedankt voor het kiezen van Virtualmin Pro!
 upgrade_eyumlist=Het $1 RPM-pakket is niet gevonden in de lijst met beschikbare pakketten uit de repository. Misschien werkt een van uw huidige repositories niet?
 upgrade_to_pro=Upgraden naar Virtualmin Pro ..
 upgrade_update_pkgs=Beschikbare pakketten bijwerken ..
@@ -1041,6 +1072,7 @@ history_stat_memcached=Buffercache gebruikt
 history_stat_memburst=Barstbare limiet
 history_stat_ratecount=E-mailtarief beperkt per minuut
 
+clamd_start_updater=ClamAV database update utility server starten en inschakelen bij opstarten ..
 clamd_einit=.. opstartactie $1 bestaat niet!
 
 newshells_reseller=Tussenpersoon?
@@ -1107,7 +1139,7 @@ wizard_memory_lookup1=Ja, snellere e-mailverwerking met meer RAM-geheugen ($1)
 wizard_memory_lookup0=Nee, langzamere e-mailverwerking met minder RAM-gebruik, maar meer CPU-belasting
 wizard_virusnew=Als uw systeem domeinen gaat hosten die een grote hoeveelheid e-mail zullen ontvangen, kan het scannen van inkomende berichten op virussen een hoge CPU-belasting genereren. Omdat er wordt gescand met de ClamAV-scanserver <tt>clamd</tt>, zal deze RAM verbruiken, zelfs wanneer geen e-mail wordt verwerkt. Als uw systeem geen e-mail host, kan virusscanning worden uitgeschakeld.
 wizard_virusmsg=Virusscanning inschakelen met ClamAV?
-wizard_virus1=Ja, gebruikt tot 2 GB RAM
+wizard_virus1=Ja, gebruikt tot 2G RAM
 wizard_virus2=Blijf on-demand scanner gebruiken
 wizard_virus0=Nee, e-mail wordt niet gefilterd
 wizard_eclaminuse=Virusscanning kan niet worden uitgeschakeld omdat het wordt gebruikt door $1 virtuele servers
@@ -1184,10 +1216,12 @@ redirect_ecode=Ongeldige HTTP-statuscode
 
 dkim_size=Grootte van nieuwe DKIM-sleutel
 dkim_bits=stukjes
+dkim_extra=Extra domeinen om voor te tekenen
 dkim_eexclude=Ongeldig uitgesloten domein $1
 dkim_exclude=Teken nooit voor domeinen
 
 dkim_ednsexclude=.. domein is uitgesloten van DKIM
+dkim_ednsadded=.. DNS-update mislukt : $1
 dkim_founddomains3=.. $1 servers en $2 extra domeinen gevonden
 dkim_pubkeypem=DKIM openbare sleutel in PEM-formaat
 dkim_privkeypem=DKIM privésleutel in PEM-formaat
@@ -1249,6 +1283,8 @@ smtpcloud_echeck=Cloudmailbezorgingsprovider $1 kan niet worden gebruikt : $2
 
 provision_nolimit=onbeperkt
 
+records_typeprox=volmacht
+records_typenoprox=Alleen DNS
 records_typesrv=Servicebestand
 records_valuesrv1=Prioriteit
 records_evaluesrv1=Prioriteit moet een nummer zijn
@@ -1507,8 +1543,8 @@ transfer_backingdone=.. back-up gedaan
 transfer_restoringdone=.. herstel voltooid
 transfer_validating=Back-up valideren. ..
 transfer_validated=.. alle domeinen succesvol overgedragen
-transfer_ttlerror=WAARSCHUWING: De DNS TTL voor deze virtuele server is ingesteld op $1, wat betekent dat de wijziging van het IP-adres dat nodig is voor de overdracht niet zo lang zichtbaar zal zijn voor clients. De TTL moet worden verlaagd door op de onderstaande knop te klikken voordat u de overdracht uitvoert.
-transfer_recent=WAARSCHUWING: de DNS TTL voor deze virtuele server is gewijzigd van $1 slechts $2 geleden, wat niet lang genoeg is om de wijziging zichtbaar te maken voor alle clients.
+transfer_ttlerror=De DNS TTL voor deze virtuele server is ingesteld op $1, wat betekent dat de wijziging van het IP-adres dat nodig is voor de overdracht niet zo lang zichtbaar zal zijn voor clients. De TTL moet worden verlaagd door op de onderstaande knop te klikken voordat u de overdracht uitvoert.
+transfer_recent=De DNS TTL voor deze virtuele server is gewijzigd van $1 slechts $2 geleden, wat niet lang genoeg is om de wijziging zichtbaar te maken voor alle clients.
 transfer_fixttl=Lagere TTL naar:
 transfer_secs=seconden
 transfer_err2=Kan TTL niet wijzigen
@@ -1555,7 +1591,6 @@ cloud_bbdesc=Backblaze
 cloud_s3account=Toegangssleutel $1 gebruiken
 cloud_rsuser=Login $1 gebruiken
 cloud_s3_noawscli=Het wordt aanbevolen om de officiële AWS-opdrachtregelinterface te installeren.
-cloud_s3_noawscli2=AWS-opdrachtregelinterface is niet geïnstalleerd!
 cloud_s3_noawscli_install=<a href='$1'>Klik hier</a> om het automatisch te laten installeren.
 cloud_s3_awscli_installing=Het AWS CLI-pakket installeren ..
 cloud_s3_awscli_title=Installeer AWS CLI
@@ -1890,6 +1925,7 @@ dnscloud_cloudflare_esfx=Domein $1 valt niet onder een openbaar TLD
 dnscloud_cloudflare_esfx2=Domein $1 kan slechts één niveau zijn onder TLD $2
 dnscloud_cloudflare_ens=Kan NS-records niet opzoeken : $1
 dnscloud_cloudflare_ens2=Geen NS-records gevonden voor $1. Cloudflare vereist dat DNS-domeinen eerst worden geregistreerd.
+dnscloud_cloudflare_ens3=NS-records gevonden voor <tt>$1</tt> domein, maar deze NS-records <tt>$2</tt> wijzen niet naar Cloudflare-provider
 
 install_mod_perl_link=Gebruik de <a href='$1'>Perl Modules</a> pagina in Webmin om het te installeren
 

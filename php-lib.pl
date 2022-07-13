@@ -24,7 +24,8 @@ if ($virt) {
 	local @ppm = &apache::find_directive("ProxyPassMatch", $vconf);
 	foreach my $ppm (@ppm) {
 		if ($ppm =~ /unix:\Q$fsock\E/ ||
-		    $ppm =~ /fcgi:\/\/localhost:\Q$fport\E/) {
+		    $ppm =~ /fcgi:\/\/localhost:\Q$fport\E/ ||
+		    $ppm =~ /fcgi:\/\/127\.0\.0\.1:\Q$fport\E/) {
 			return 'fpm';
 			}
 		}
@@ -34,6 +35,7 @@ if ($virt) {
 		next if ($f->{'words'}->[0] ne '\.php$');
 		foreach my $h (&apache::find_directive("SetHandler", $f->{'members'})) {
 			if ($h =~ /proxy:fcgi:\/\/localhost/ ||
+			    $h =~ /proxy:fcgi:\/\/127\.0\.0\.1/ ||
 			    $h =~ /proxy:unix:/) {
 				return 'fpm';
 				}
@@ -77,7 +79,12 @@ if ($virt) {
 			}
 		}
 	}
-return 'mod_php';
+
+# Fall back to mod_php, if enabled
+if (&get_apache_mod_php_version()) {
+	return 'mod_php';
+	}
+return 'none';
 }
 
 # save_domain_php_mode(&domain, mode, [port], [new-domain])
@@ -90,6 +97,7 @@ local $p = &domain_has_website($d);
 $p || return "Virtual server does not have a website";
 local $tmpl = &get_template($d->{'template'});
 local $oldmode = &get_domain_php_mode($d);
+local @vers = &list_available_php_versions($d, $mode);
 
 # Work out the default PHP version for FPM
 if ($mode eq "fpm") {
@@ -101,10 +109,21 @@ if ($mode eq "fpm") {
 		delete($d->{'php_fpm_version'});
 		}
 	if (!$d->{'php_fpm_version'}) {
-		my $defconf = $tmpl->{'web_phpver'} ?
-			&get_php_fpm_config($tmpl->{'web_phpver'}) : undef;
-		$defconf ||= $fpms[0];
-		$d->{'php_fpm_version'} = $defconf->{'shortversion'};
+		# Work out the default FPM version from the template
+		if (@vers) {
+			my @ver_max = sort { $a->[0] < $b->[0] } @vers;
+			my ($fpm) = grep { $_->[0] eq $tmpl->{'web_phpver'} ||
+			                   # Use max version if set to use highest
+			                   $_->[0] eq $ver_max[0]->[0] } @vers;
+			$fpm ||= $vers[0];
+			$d->{'php_fpm_version'} = $fpm->[0];
+			}
+		else {
+			my $defconf = $tmpl->{'web_phpver'} ?
+				&get_php_fpm_config($tmpl->{'web_phpver'}) : undef;
+			$defconf ||= $fpms[0];
+			$d->{'php_fpm_version'} = $defconf->{'shortversion'};
+			}
 		}
 	}
 
@@ -116,7 +135,6 @@ if ($mode =~ /mod_php|none/ && $oldmode !~ /mod_php|none/) {
 
 # Work out source php.ini files
 local (%srcini, %subs_ini);
-local @vers = &list_available_php_versions($d, $mode);
 $mode eq "none" || @vers || return "No PHP versions found for mode $mode";
 foreach my $ver (@vers) {
 	$subs_ini{$ver->[0]} = 0;
@@ -233,6 +251,7 @@ foreach my $ver (@vers) {
 if ($p ne 'web') {
 	my $err = &plugin_call($p, "feature_save_web_php_mode",
 			       $d, $mode, $port, $newdom);
+	$d->{'php_mode'} = $mode if (!$err);
 	return $err;
 	}
 &require_apache();
@@ -395,13 +414,16 @@ foreach my $p (@ports) {
 	# For FPM mode, we need a proxy directive at the top level
 	local $fsock = &get_php_fpm_socket_file($d, 1);
 	local $fport = $d->{'php_fpm_port'};
+	local $fmode = $fport ? 'port' :
+		       -r $fsock ? 'socket' :
+		       $tmpl->{'php_sock'} ? 'socket' : 'port';
 	local @ppm = &apache::find_directive("ProxyPassMatch", $vconf);
-	local @oldppm = grep { /unix:\Q$fsock\E/ || /fcgi:\/\/localhost:\Q$fport\E/ } @ppm;
+	local @oldppm = grep { /unix:\Q$fsock\E/ || /fcgi:\/\/(localhost|127\.0\.0\.1):\Q$fport\E/ } @ppm;
 	if ($fsock) {
 		@ppm = grep { !/unix:\Q$fsock\E/ } @ppm;
 		}
 	if ($fport) {
-		@ppm = grep { !/fcgi:\/\/localhost:\Q$fport\E/ } @ppm;
+		@ppm = grep { !/fcgi:\/\/(localhost|127\.0\.0\.1):\Q$fport\E/ } @ppm;
 		}
 	local $files;
 	foreach my $f (&apache::find_directive_struct("FilesMatch", $vconf)) {
@@ -411,26 +433,27 @@ foreach my $p (@ports) {
 		# Use a proxy directive for older Apache or if this is what's
 		# already in use
 		local $phd = $phpconfs[0]->{'words'}->[0];
-		if (-r $fsock) {
-			# Use existing socket file, since it presumably works
-			push(@ppm, "^/(.*\.php(/.*)?)\$ unix:${fsock}|fcgi://localhost${phd}/\$1");
+		if ($fmode eq 'socket') {
+			# Use socket file
+			push(@ppm, "^/(.*\.php(/.*)?)\$ unix:${fsock}|fcgi://127.0.0.1${phd}/\$1");
 			}
 		else {
 			# Allocate and use a port number
 			$fport = &get_php_fpm_socket_port($d);
-			push(@ppm, "^/(.*\.php(/.*)?)\$ fcgi://localhost:${fport}${phd}/\$1");
+			push(@ppm, "^/(.*\.php(/.*)?)\$ fcgi://127.0.0.1:${fport}${phd}/\$1");
 			}
 		}
 	elsif ($mode eq "fpm" && $apache::httpd_modules{'core'} >= 2.4) {
 		# Can use a FilesMatch block with SetHandler inside instead
 		my $wanth;
-		if ($tmpl->{'php_sock'}) {
-			my $fsock = &get_php_fpm_socket_file($d);
-			$wanth = 'proxy:unix:'.$fsock."|fcgi://localhost";
+		if ($fmode eq 'socket') {
+			# Use a socket file
+			$wanth = 'proxy:unix:'.$fsock."|fcgi://127.0.0.1";
 			}
 		else {
+			# Allocate, save and use a TCP port
 			my $fport = &get_php_fpm_socket_port($d);
-			$wanth = 'proxy:fcgi://localhost:'.$fport;
+			$wanth = 'proxy:fcgi://127.0.0.1:'.$fport;
 			}
 		if (!$files) {
 			# Add a new FilesMatch block with the socket
@@ -454,10 +477,13 @@ foreach my $p (@ports) {
 			}
 		}
 	else {
-		# For non-FPM mode, remove the whole files block
+		# For non-FPM mode, remove the whole files block,
+		# and forget about any ports or sockets
 		if ($files) {
-			&apache::save_directive_struct($files, undef, $vconf, $conf);
+			&apache::save_directive_struct(
+				$files, undef, $vconf, $conf);
 			}
+		delete($d->{'php_fpm_port'});
 		}
 	&apache::save_directive("ProxyPassMatch", \@ppm, $vconf, $conf);
 
@@ -548,6 +574,9 @@ foreach my $p (@ports) {
 
 	&flush_file_lines();
 	}
+
+# Update PHP mode cache
+$d->{'php_mode'} = $mode;
 
 local @vlist = map { $_->[0] } &list_available_php_versions($d);
 if ($mode !~ /mod_php|none/ && $oldmode =~ /mod_php|none/ &&
@@ -1778,7 +1807,7 @@ if (defined(&get_domain_php_mode) &&
 			&$second_print($text{'setup_done'});
 			}
 		else {
-			&$second_print($text{'setup_failed'});
+			&$second_print($text{'save_apache12none'});
 			}
 		}
 	}
@@ -2066,6 +2095,7 @@ return (0, "No Apache virtualhost found") if (!$virt);
 my $webport;
 foreach my $p (&apache::find_directive("ProxyPassMatch", $vconf)) {
 	if ($p =~ /fcgi:\/\/localhost:(\d+)/ ||
+	    $p =~ /fcgi:\/\/127\.0\.0\.1:(\d+)/ ||
 	    $p =~ /unix:([^\|]+)/) {
 		$webport = $1;
 		}
@@ -2075,6 +2105,7 @@ foreach my $f (&apache::find_directive_struct("FilesMatch", $vconf)) {
 	foreach my $h (&apache::find_directive("SetHandler",
 					       $f->{'members'})) {
 		if ($h =~ /proxy:fcgi:\/\/localhost:(\d+)/ ||
+		    $h =~ /proxy:fcgi:\/\/127\.0\.0\.1:(\d+)/ ||
 		    $h =~ /proxy:unix:([^\|]+)/) {
 			my $webport2 = $1;
 			if ($webport && $webport != $webport2) {
@@ -2135,14 +2166,15 @@ foreach my $p (@ports) {
                                                  $f->{'members'});
 		for(my $i=0; $i<@sh; $i++) {
 			if ($sh[$i] =~ /proxy:fcgi:\/\/localhost:(\d+)/ ||
+			    $sh[$i] =~ /proxy:fcgi:\/\/127\.0\.0\.1:(\d+)/ ||
 			    $sh[$i] =~ /proxy:unix:([^\|]+)/) {
 				# Found the directive to update
 				if ($socket =~ /^\d+$/) {
-					$sh[$i] = "proxy:fcgi://localhost:".$socket;
+					$sh[$i] = "proxy:fcgi://127.0.0.1:".$socket;
 					}
 				else {
 					$sh[$i] = "proxy:unix:".$socket.
-						  "|fcgi://localhost";
+						  "|fcgi://127.0.0.1";
 					}
 				$found++;
 				}

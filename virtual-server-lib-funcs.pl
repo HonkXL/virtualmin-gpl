@@ -542,6 +542,10 @@ if (!$d->{'created'}) {
 	}
 $d->{'id'} ||= &domain_id();
 $d->{'lastsave'} = time();
+$d->{'lastsave_script'} = $ENV{'SCRIPT_NAME'} || $0;
+$d->{'lastsave_user'} = $remote_user;
+$d->{'lastsave_type'} = $main::webmin_script_type;
+$d->{'lastsave_webmincron'} = $main::webmin_script_webmincron;
 &write_file("$domains_dir/$d->{'id'}", $d);
 &unlock_file("$domains_dir/$d->{'id'}");
 $main::get_domain_cache{$d->{'id'}} = $d;
@@ -3810,22 +3814,38 @@ else {
 	local $ifacename = $config{'iface'} || &first_ethernet_iface();
 	local ($iface) = grep { $_->{'fullname'} eq $ifacename }
 			      &net::boot_interfaces();
-	if ($iface && @{$iface->{'address6'}}) {
+	if ($iface) {
 		# Use address on the boot interface if possible, as active
 		# IPv6 addresses can get re-ordered
-		return $iface->{'address6'}->[0];
+		my $best = &best_ip6_address($iface);
+		return $best if ($best);
 		}
 	# Otherwise, fall back to first active address
 	($iface) = grep { $_->{'fullname'} eq $ifacename }
 			&net::active_interfaces();
 	if ($iface) {
-		return $iface->{'address6'} && @{$iface->{'address6'}} ?
-			$iface->{'address6'}->[0] : undef;
+		my $best = &best_ip6_address($iface);
+		return $best if ($best);
 		}
-	else {
-		return undef;
-		}
+	return undef;
 	}
+}
+
+# best_ip6_address(&iface)
+# Returns the best IPv6 address (not local) from an interface
+sub best_ip6_address
+{
+local ($iface) = @_;
+return undef if (!$iface->{'address6'});
+foreach my $a (@{$iface->{'address6'}}) {
+	next if ($a eq '::1');		 # localhost
+	next if ($a =~ /^fe80::/);	 # Link local
+	next if ($a =~ /^2000::/);	 # Global unicast
+	next if ($a eq '::');		 # Unknown
+	next if ($a =~ /^(fec0|fc00):/); # Site local 
+	return $a;
+	}
+return undef;
 }
 
 # first_ethernet_iface()
@@ -8040,15 +8060,17 @@ if ($dom->{'auto_letsencrypt'} && &domain_has_website($dom) &&
 			# Need to run any pending Apache restart
 			&run_post_actions(\&restart_apache);
 			}
-		&create_initial_letsencrypt_cert(
-			$dom, $dom->{'auto_letsencrypt'} == 2 ? 0 : 1);
-		$generated = 2;
+		if (&create_initial_letsencrypt_cert(
+			$dom, $dom->{'auto_letsencrypt'} == 2 ? 0 : 1)) {
+			# Let's encrypt cert request worked
+			$generated = 2;
+			}
 		}
 	}
 
-# Update service certs and DANE DNS records if a new Let's Encrypt cert was
-# generated
-if ($generated == 2 && !$dom->{'no_default_service_certs'}) {
+# Update service certs and DANE DNS records
+# if a new Let's Encrypt cert was generated
+if ($generated == 2) {
 	&enable_domain_service_ssl_certs($dom);
 	&sync_domain_tlsa_records($dom);
 	}
@@ -8063,7 +8085,8 @@ if ($dom->{'alias'} && &domain_has_website($dom)) {
 	    &domain_has_ssl_cert($target) &&
 	    !$target->{'letsencrypt_dname'} &&
 	    ($tinfo = &cert_info($target)) &&
-	    &is_letsencrypt_cert($tinfo)) {
+	    &is_letsencrypt_cert($tinfo) &&
+	    !&check_domain_certificate($dom->{'dom'}, $tinfo)) {
 		&$first_print(&text('setup_letsaliases',
 				    &show_domain_name($target),
 				    &show_domain_name($dom)));
@@ -8127,11 +8150,21 @@ sub create_initial_letsencrypt_cert
 {
 local ($d, $valid) = @_;
 &foreign_require("webmin");
-my @dnames = &get_hostnames_for_ssl($d);
+my @dnames;
+if ($d->{'letsencrypt_dname'}) {
+	@dnames = split(/\s+/, $d->{'letsencrypt_dname'});
+	}
+else {
+	@dnames = &get_hostnames_for_ssl($d);
+	}
 &$first_print(&text('letsencrypt_doing2',
 		    join(", ", map { "<tt>$_</tt>" } @dnames)));
 if ($valid) {
-	my @errs = &validate_letsencrypt_config($d);
+	my $vcheck = ['web'];
+	foreach my $dn (@dnames) {
+		$vcheck = ['dns'] if ($dn =~ /\*/);
+		}
+	my @errs = &validate_letsencrypt_config($d, $vcheck);
 	if (@errs) {
 		&$second_print($text{'letsencrypt_evalid'});
 		return 0;
@@ -8368,6 +8401,17 @@ foreach my $dd (@alldoms) {
 					}
 				}
 			}
+		}
+
+	# Remove SSL cert from Dovecot, Postfix, etc
+	&disable_domain_service_ssl_certs($dd);
+
+	# If this domain had it's own lets encrypt cert, delete any leftover
+	# files for it under /etc/letsencrypt
+	&foreign_require("webmin");
+	if ($dd->{'letsencrypt_last'} && !$dd->{'ssl_same'} &&
+	    defined(&webmin::cleanup_letsencrypt_files)) {
+		&webmin::cleanup_letsencrypt_files($dd->{'dom'});
 		}
 
 	# Delete all features (or just 'webmin' if un-importing). Any
@@ -8997,6 +9041,8 @@ push(@rv, { 'id' => 0,
 	    'dns_dmarcextra' => $config{'bind_dmarcextra'},
 	    'dns_sub' => $config{'bind_sub'} || "none",
 	    'dns_cloud' => $config{'bind_cloud'},
+	    'dns_cloud_import' => $config{'bind_cloud_import'},
+	    'dns_cloud_proxy' => $config{'bind_cloud_proxy'},
 	    'dns_master' => $config{'bind_master'} || "none",
 	    'dns_mx' => $config{'bind_mx'} || "none",
 	    'dns_ns' => $config{'dns_ns'},
@@ -9310,6 +9356,8 @@ if ($tmpl->{'id'} == 0) {
 	$config{'bind_sub'} = $tmpl->{'dns_sub'} eq 'none' ? undef
 							   : $tmpl->{'dns_sub'};
 	$config{'bind_cloud'} = $tmpl->{'dns_cloud'};
+	$config{'bind_cloud_import'} = $tmpl->{'dns_cloud_import'};
+	$config{'bind_cloud_proxy'} = $tmpl->{'dns_cloud_proxy'};
 	$config{'bind_master'} = $tmpl->{'dns_master'} eq 'none' ? undef
 						   : $tmpl->{'dns_master'};
 	$config{'bind_mx'} = $tmpl->{'dns_mx'} eq 'none' ? undef
@@ -10971,8 +11019,8 @@ if ($status == 0 && $max_servers && !$err) {
 	# A servers limit exists .. check if we have exceeded it
 	if ($servers > $max_servers+1) {
 		$status = 1;
-		$err = &text('licence_maxservers2', $max_servers, $servers, "<tt>$serial{'SerialNumber'}</tt>");
-		$err .= " " . &text('licence_maxwarn', "https://virtualmin.com/shop/", "https://virtualmin.com/shop/");
+		$err = "<span>".&text('licence_maxservers2', $max_servers, $servers, "<tt>$serial{'SerialNumber'}</tt>")."</span>";
+		$err .= " " . &text('licence_maxwarn', "https://virtualmin.com/shop/", $text{'license_shop_name'});
 		}
 	}
 return ($status, $expiry, $err, $doms, $servers, $max_servers, $autorenew);
@@ -11275,6 +11323,27 @@ if (@expired || @nearly) {
 			join($gluechar, map { "<a href=\"@{[&get_webprefix_safe()]}/$module_name/summary_domain.cgi?dom=$_->{'id'}\">@{[&show_domain_name($_)]}</a>" } @nearly));
 		}
 	push(@rv, $expiry_text);
+	}
+
+# Check for active but un-used mod_php
+if (&master_admin() && !$config{'mod_php_ok'} && $config{'web'} &&
+    &get_apache_mod_php_version()) {
+	# Available, but is it used?
+	my $count = 0;
+	foreach my $d (&list_domains()) {
+		if ($d->{'php_mode'} && $d->{'php_mode'} eq 'mod_php') {
+			$count++;
+			}
+		}
+	if (!$count) {
+		my $mod_text = &text('index_disable_mod_php')."<p>\n";
+		$mod_text .= &ui_form_start(
+			"@{[&get_webprefix_safe()]}/$module_name/disable_mod_php.cgi");
+		$mod_text .= &ui_submit($text{'index_disable_mod_phpok'});
+		$mod_text .= &ui_submit($text{'index_themeswitchnot'}, "cancel");
+		$mod_text .= &ui_form_end();
+		push(@rv, $mod_text);
+		}
 	}
 
 return @rv;
@@ -12451,7 +12520,7 @@ if (($d->{'spam'} && $config{'spam'} ||
 		  });
 	}
 
-if (&domain_has_website($d)) {
+if (&domain_has_website($d) && !$d->{'alias'}) {
 	# Website / PHP options buttons
 	if (&can_edit_phpmode()) {
 		push(@rv, { 'page' => 'edit_website.cgi',
@@ -12703,7 +12772,7 @@ foreach my $l (&get_domain_actions($d), &feature_links($d)) {
 		$l->{'url'} = "/$l->{'mod'}/$l->{'page'}";
 		}
 	else {
-		$l->{'url'} = "$vm/$l->{'page'}".
+		$l->{'url'} = $l->{'urlpro'} || "$vm/$l->{'page'}".
 			      "?dom=".$d->{'id'}."&amp;".
 			      join("&amp;", map { $_->[0]."=".&urlize($_->[1]) }
                                             @{$l->{'hidden'}});
@@ -15175,7 +15244,7 @@ if (!&running_in_zone()) {
 	}
 
 # Tell the user that IPv6 is available
-if (&supports_ip6()) {
+if ($config{'ip6enabled'} && &supports_ip6()) {
 	!$config{'netmask6'} || $config{'netmask6'} =~ /^\d+$/ ||
 		return &text('check_enetmask6', $config{'netmask6'});
 	&$second_print(&text('check_iface6',
@@ -15193,11 +15262,11 @@ else {
 $config{'old_defip'} ||= $defip;
 
 # Show the default IPv6 address
-if (&supports_ip6()) {
+if ($config{'ip6enabled'} && &supports_ip6()) {
 	local $defip6 = &get_default_ip6();
 	if (!$defip6) {
-		&$second_print("<b>".&text('index_edefip6',
-			"../config.cgi?$module_name")."</b>");
+		&$second_print(&ui_text_color(&text('index_edefip6',
+			"../config.cgi?module=$module_name&section=line1.3"), 'warn'));
 		}
 	else {
 		&$second_print(&text('check_defip6', $defip6));
@@ -15512,7 +15581,8 @@ if (&foreign_check("software")) {
 # Check if jailkit support is available
 my $err = &check_jailkit_support();
 if ($err) {
-	&$second_print(&text('check_jailkiterr', $err));
+	&$second_print(&text('check_jailkiterr', $err))
+		if(!$config{'jailkit_disabled'});
 	}
 else {
 	&$second_print(&text('check_jailkitok'));
@@ -15566,9 +15636,9 @@ if ($virtualmin_pro &&
 			my $found = 0;
 			foreach my $l (@$lref) {
 				# An old Debian format with login/pass inside of the repo file
-				if ($l =~ /^deb\s+https?:\/\/([^:]+):([^\@]+)\@$upgrade_virtualmin_host/) {
-					if ($1 eq $vserial{'SerialNumber'} &&
-					    $2 eq $vserial{'LicenseKey'}) {
+				if ($l =~ /^deb(.*?)https?:\/\/([^:]+):([^\@]+)\@$upgrade_virtualmin_host/) {
+					if ($2 eq $vserial{'SerialNumber'} &&
+					    $3 eq $vserial{'LicenseKey'}) {
 						$found = 2;
 						}
 					else {
@@ -15578,7 +15648,7 @@ if ($virtualmin_pro &&
 					}
 
 				# A new Debian format with auth in a separate file
-				if ($l =~ /^deb\s+(https):(\/)(\/).*($upgrade_virtualmin_host.*)$/ &&
+				if ($l =~ /^deb(.*?)(https):(\/)(\/).*($upgrade_virtualmin_host.*)$/ &&
 					-r "$virtualmin_apt_auth_dir/virtualmin.conf") {
 					my $auth_conf_lines = &read_file_contents("$virtualmin_apt_auth_dir/virtualmin.conf");
 					if ($auth_conf_lines =~ /machine\s+$upgrade_virtualmin_host\s+login\s+(\S+)\s+password\s+(\S+)/gmi) {
@@ -15921,7 +15991,7 @@ foreach my $f ("parent", "sub", "alias", "users") {
 		}
 	}
 print &ui_table_row(&hlink($text{'tmpl_for'}, "template_for"),
-		    join(", ", @fors));
+		    join("&nbsp;&nbsp;&nbsp;", @fors));
 
 # Which resellers can use this template?
 local @resels = $virtualmin_pro ? &list_resellers() : ( );
@@ -18730,6 +18800,7 @@ foreach my $f (&list_provision_features()) {
 			}
 		else {
 			$d->{'dns_cloud'} = $cloud;
+			$d->{'dns_cloud_import'} = $tmpl->{'dns_cloud_import'};
 			}
 		}
 	elsif ($config{'provision_'.$f}) {

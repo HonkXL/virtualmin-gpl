@@ -7,7 +7,7 @@ return "Django";
 
 sub script_django_uses
 {
-return ( "python", "apache", "proxy" );
+return ( "python", "proxy" );
 }
 
 sub script_django_longdesc
@@ -18,7 +18,7 @@ return "Django is a high-level Python Web framework that encourages rapid develo
 # script_django_versions()
 sub script_django_versions
 {
-return ( "4.0.3", "3.2.12", "2.2.27", "1.11.29" );
+return ( "4.0.6", "3.2.14", "2.2.28", "1.11.29" );
 }
 
 sub script_django_can_upgrade
@@ -78,21 +78,6 @@ if ($out =~ /Python\s+([0-9\.]+)/i) {
 	}
 else {
 	push(@rv, "Could not work out Python version : $out");
-	}
-
-&require_apache();
-local $conf = &apache::get_config();
-local $got_rewrite;
-foreach my $l (&apache::find_directive("LoadModule", $conf)) {
-	$got_rewrite++ if ($l =~ /mod_rewrite/);
-	}
-$apache::httpd_modules{'mod_fcgid'} ||
-	push(@rv, "Apache does not have the mod_fcgid module");
-$apache::httpd_modules{'mod_rewrite'} || $got_rewrite ||
-	push(@rv, "Apache does not have the mod_rewrite module");
-
-if ($ver >= 1.9 && !defined(&allocate_mongrel_port)) {
-	push(@rv, "Your Virtualmin version does not support proxying");
 	}
 
 return @rv;
@@ -379,7 +364,10 @@ if (!$upgrade) {
 
 	# Create Django admin user
 	chdir($pdir);
-	local $out = &run_as_domain_user($d, "echo \"from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('$domuser', '$domemail', '$dompass')\" | $python manage.py shell 2>&1");
+	my $dompass_esc = $dompass;
+	$dompass_esc =~ s/'/\\'/g;
+	$dompass_esc =~ s/"/\\"/g;
+	local $out = &run_as_domain_user($d, "echo \"from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('$domuser', '$domemail', '$dompass_esc')\" | $python manage.py shell 2>&1");
 	if ($?) {
 		return (-1, "Initial Django user creation failed : ".
 			   "<tt>".&html_escape($out)."</tt>");
@@ -428,12 +416,9 @@ if (&foreign_installed("init") && $userd &&
 &run_as_domain_user($d, $cmd, 1);
 
 if (!$upgrade) {
-	# Configure Apache to proxy to it
+	# Configure webserver to proxy to it
 	&setup_mongrel_proxy($d, $opts->{'path'}, $port);
 	}
-
-
-&register_post_action(\&restart_apache);
 
 local $url = &script_path_url($d, $opts);
 local $adminurl = $url."admin/";
@@ -457,47 +442,11 @@ return (0, $derr) if ($derr);
 &cleanup_script_database($d, $opts->{'db'}, "(django|auth)_");
 &cleanup_script_database($d, $opts->{'db'}, "(django|auth)_");
 
-# Remove <Location> block (if it exists)
-&require_apache();
-local $conf = &apache::get_config();
-local @ports = ( $d->{'web_port'},
-		 $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
-foreach my $port (@ports) {
-	local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $port);
-	next if (!$virt);
-	local @locs = &apache::find_directive_struct("Location", $vconf);
-	local ($loc) = grep { $_->{'words'}->[0] eq $opts->{'path'} } @locs;
-	next if (!$loc);
-	&apache::save_directive_struct($loc, undef, $vconf, $conf);
-	&flush_file_lines($virt->{'file'});
-	}
-
-# Remove /media and /static/admin aliases (if they exist)
-local @paths;
-push(@paths, $opts->{'path'} eq '/' ? "/media/"
-                                    : "$opts->{'path'}/media/");
-push(@paths, $opts->{'path'} eq '/' ? "/static/admin/"
-                                    : "$opts->{'path'}/static/admin/");
-foreach my $path (@paths) {
-	foreach my $port (@ports) {
-		local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $port);
-		next if (!$virt);
-		local @al = &apache::find_directive("Alias", $vconf);
-		local ($media) = grep { $_ =~ /^\Q$path\E\s/ } @al;
-		next if (!$media);
-		@al = grep { $_ ne $media } @al;
-		&apache::save_directive("Alias", \@al, $vconf, $conf);
-		&flush_file_lines($virt->{'file'});
-		}
-	}
-
 # Remove proxy path
 &delete_mongrel_proxy($d, $opts->{'path'});
 
 # Stop the server
 &script_django_stop($d, { 'opts' => $opts });
-
-&register_post_action(\&restart_apache);
 
 # Take out the DB
 if ($opts->{'newdb'}) {

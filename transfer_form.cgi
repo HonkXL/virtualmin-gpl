@@ -25,9 +25,8 @@ if ($d->{'dns'}) {
 		}
 	if (&ttl_to_seconds($maxttl) > 60) {
 		# TTL is too high
-		print "<b>",&text('transfer_ttlerror',
-			  &nice_hour_mins_secs(&ttl_to_seconds($maxttl))),
-		      "</b><p>\n";
+		print &ui_alert_box(&text('transfer_ttlerror',
+			  &nice_hour_mins_secs(&ttl_to_seconds($maxttl))), 'warn');
 		print &ui_form_start("fixttl.cgi");
 		print &ui_hidden("dom", $in{'dom'});
 		print &ui_hidden("oldttl", &ttl_to_seconds($maxttl));
@@ -39,10 +38,9 @@ if ($d->{'dns'}) {
 	elsif ($d->{'ttl_change_time'} &&
 	       time() - $d->{'ttl_change_time'} < $d->{'ttl_change_from'}) {
 		# TTL was only just changed
-		print "<b>",&text('transfer_recent',
+		print &ui_alert_box(&text('transfer_recent',
 			&nice_hour_mins_secs($d->{'ttl_change_from'}),
-			&nice_hour_mins_secs(time() - $d->{'ttl_change_time'})),
-		      "</b><p>\n";
+			&nice_hour_mins_secs(time() - $d->{'ttl_change_time'})), 'warn');
 		}
 	}
 
@@ -59,7 +57,7 @@ print &ui_table_row($text{'transfer_dom'},
 
 # Destination system
 my @hosts = &get_transfer_hosts();
-my $hfield = &ui_textbox("host", undef, 40, 0, undef, "autocomplete=off")." ".
+my $hfield = &ui_textbox("host", undef, 40, 0, undef, "autocomplete=off placeholder='example.com:22'")." ".
 	     &ui_checkbox("savehost", 1, $text{'transfer_savehost'}, 0);
 if (@hosts) {
 	print &ui_table_row($text{'transfer_host'},

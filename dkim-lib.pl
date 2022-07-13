@@ -967,6 +967,35 @@ if ($dkim_config) {
 	}
 }
 
+# get_dkim_domains(&dkim)
+# Returns the list of all domains currently being signed for
+sub get_dkim_domains
+{
+my ($dkim) = @_;
+my $dkim_config = &get_dkim_config_file();
+return ( ) if (!$dkim_config);
+my $conf = &get_open_dkim_config($dkim_config);
+my $keylist = $conf->{'KeyList'};
+my @rv;
+if ($keylist) {
+	# Use the key mapping file
+	my $lref = &read_file_lines($keylist, 1);
+	foreach my $l (@$lref) {
+		my @w = split(/:/, $l);
+		push(@rv, $w[1]);
+		}
+	}
+else {
+	# Use a domains file
+	my $file = $conf->{'Domain'};
+	if ($file && -r $file) {
+		my $lref = &read_file_lines($file, 1);
+		@rv = grep { !/^#/ && /\S/ } @$lref;
+		}
+	}
+return @rv;
+}
+
 # add_dkim_dns_records(&domains, &dkim)
 # Add DKIM DNS records to the given list of domains
 sub add_dkim_dns_records
@@ -996,9 +1025,11 @@ foreach my $d (@$doms) {
 			      $_->{'type'} eq 'TXT' } @$recs;
 	if (!$selrec) {
 		# Add new record
-		&bind8::create_record($file, $selname, undef, 'IN', 'TXT',
-		    &split_long_txt_record(
-			'"v=DKIM1; k=rsa; t=s; p='.$pubkey.'"'));
+		my $selrec = { 'name' => $selname,
+			       'type' => 'TXT',
+			       'values' => [ '"v=DKIM1; k=rsa; t=s; p='.
+					     $pubkey.'"' ] };
+		&create_dns_record($recs, $file, $selrec);
 		$changed++;
 		}
 	elsif ($selrec && join("", @{$selrec->{'values'}}) !~ /p=\Q$pubkey\E/) {
@@ -1007,15 +1038,17 @@ foreach my $d (@$doms) {
 		if ($val !~ s/p=([^;]+)/p=$pubkey/) {
 			$val = 'k=rsa; t=s; p='.$pubkey;
 			}
-		&bind8::modify_record($selrec->{'file'}, $selrec,
-				      $selrec->{'name'}, $selrec->{'ttl'},
-				      $selrec->{'class'}, $selrec->{'type'},
-				      &split_long_txt_record('"'.$val.'"'));
+		$selrec->{'values'} = [ '"'.$val.'"' ];
 		$changed++;
 		}
 	if ($changed) {
-		&post_records_change($d, $recs, $file);
-		&$second_print($text{'dkim_dnsadded'});
+		my $err = &post_records_change($d, $recs, $file);
+		if ($err) {
+			&$second_print(&text('dkim_ednsadded', $err));
+			}
+		else {
+			&$second_print($text{'dkim_dnsadded'});
+			}
 		$anychanged++;
 		}
 	else {
@@ -1052,11 +1085,11 @@ foreach my $d (@$doms) {
                               $_->{'type'} eq 'TXT' } @$recs;
 	my $changed = 0;
 	if ($selrec) {
-		&bind8::delete_record($selrec->{'file'}, $selrec);
+		&delete_dns_record($recs, $selrec->{'file'}, $selrec);
 		$changed++;
 		}
 	if ($dkrec) {
-		&bind8::delete_record($dkrec->{'file'}, $dkrec);
+		&delete_dns_record($recs, $dkrec->{'file'}, $dkrec);
 		$changed++;
 		}
 	if ($changed) {

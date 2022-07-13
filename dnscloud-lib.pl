@@ -8,6 +8,7 @@ my @rv = ( { 'name' => 'route53',
 	     'desc' => 'Amazon Route 53',
 	     'comments' => 0,
 	     'defttl' => 0,
+	     'proxy' => 0,
 	     'url' => 'https://aws.amazon.com/route53/',
 	     'longdesc' => $text{'dnscloud_route53_longdesc'} } );
 if (defined(&list_pro_dns_clouds)) {
@@ -35,6 +36,17 @@ sub dns_uses_cloud
 {
 my ($d, $c) = @_;
 return $d->{'dns'} && $d->{'dns_cloud'} eq $c->{'name'};
+}
+
+# get_domain_dns_cloud(&domain)
+# Returns the cloud provider hash for a domain
+sub get_domain_dns_cloud
+{
+my ($d) = @_;
+foreach my $c (&list_dns_clouds()) {
+	return $c if (&dns_uses_cloud($d, $c));
+	}
+return undef;
 }
 
 # dnscloud_route53_check()
@@ -133,6 +145,24 @@ sub dnscloud_route53_create_domain
 my ($d, $info) = @_;
 my $ref = &generate_route53_ref();
 my $location = $info->{'location'} || $config{'route53_location'};
+
+# Does it already exist?
+my $rv = &call_route53_cmd(
+	$config{'route53_akey'},
+	[ 'list-hosted-zones' ], undef, 1);
+my $already;
+foreach my $z (@{$rv->{'HostedZones'}}) {
+	if ($z->{'Name'} eq $info->{'domain'}.".") {
+		$already = $z;
+		}
+	}
+if ($already) {
+	# Yes .. just take it over but leave the records
+	$info->{'id'} = $already>{'Id'};
+	$info->{'location'} = $location;
+	return (1, $already->{'Id'}, $location);
+	}
+
 my $rv = &call_route53_cmd(
 	$config{'route53_akey'},
 	[ 'create-hosted-zone',
@@ -201,7 +231,7 @@ my $rv = &call_route53_cmd(
 	undef, 1);
 return 0 if (!ref($rv));
 foreach my $h (@{$rv->{'HostedZones'}}) {
-	if ($h->{'name'} eq $info->{'domain'}.".") {
+	if ($h->{'Name'} eq $info->{'domain'}.".") {
 		return 1;
 		}
 	}
@@ -282,11 +312,10 @@ return ($ok, $oldrecs) if (!$ok);
 my $js = { 'Changes' => [] };
 my %keep = map { &dns_record_key($_), 1 } @$recs;
 foreach my $r (@$oldrecs) {
-	next if ($r->{'type'} eq 'NS' || $r->{'type'} eq 'SOA' ||
-		 $r->{'type'} eq 'DMARC');
+	next if ($r->{'type'} eq 'NS' || $r->{'type'} eq 'SOA');
 	next if ($keep{&dns_record_key($r)});
 	my $v = join(" ", @{$r->{'values'}});
-	$v = "\"$v\"" if ($r->{'type'} =~ /TXT|SPF/);
+	$v = &normalize_route53_txt($r) if ($r->{'type'} =~ /TXT|SPF/);
 	push(@{$js->{'Changes'}},
 	     { 'Action' => 'DELETE',
 	       'ResourceRecordSet' => {
@@ -300,16 +329,17 @@ foreach my $r (@$oldrecs) {
 	     });
 	}
 foreach my $r (@$recs) {
-	next if ($r->{'type'} eq 'NS' || $r->{'type'} eq 'SOA' ||
-		 $r->{'type'} eq 'DMARC');
+	next if ($r->{'type'} eq 'NS' || $r->{'type'} eq 'SOA');
 	next if (!$r->{'name'} || !$r->{'type'});	# $ttl or similar
 	my $v = join(" ", @{$r->{'values'}});
-	$v = "\"$v\"" if ($r->{'type'} =~ /TXT|SPF/);
+	$type = $r->{'type'};
+	$type = "TXT" if ($type eq "SPF" || $type eq "DMARC");
+	$v = &normalize_route53_txt($r) if ($type eq "TXT");
 	push(@{$js->{'Changes'}},
 	     { 'Action' => 'UPSERT',
 	       'ResourceRecordSet' => {
 	         'Name' => $r->{'name'},
-		 'Type' => $r->{'type'},
+		 'Type' => $type,
 		 'TTL' => int($r->{'ttl'} || 86400),
 		 'ResourceRecords' => [
 		   { 'Value' => $v },
@@ -336,6 +366,16 @@ my $rv = &call_route53_cmd(
 	  '--change-batch', 'file://'.$temp ],
 	$info->{'location'}, 1);
 return ref($rv) ? (1, $rv) : (0, $rv);
+}
+
+sub normalize_route53_txt
+{
+my ($r) = @_;
+my $v = &split_long_txt_record("\"".join("", @{$r->{'values'}})."\"");
+$v =~ s/^\(\s*//;
+$v =~ s/\s*\)$//;
+$v =~ s/[\n\t]+/ /g;
+return $v;
 }
 
 # call_route53_cmd(akey, params, [region], [parse-json])

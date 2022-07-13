@@ -25,7 +25,7 @@ $tmpl = &get_template($d->{'template'});
 print &ui_table_start($text{'edit_header'}, "width=100%", 4);
 
 # Domain name (with link), user and group
-if ($d->{'web'}) {
+if (&domain_has_website($d)) {
 	my $url = &get_domain_url($d, 1);
 	print &ui_table_row($text{'edit_domain'},
 	    "<tt>".&ui_link($url, $d->{'dom'}, undef, "target=_blank")."</tt>",
@@ -223,6 +223,11 @@ if (&master_admin()) {
 	}
 
 print &ui_table_end();
+
+# Make sure the left menu is showing this domain
+if (defined(&theme_select_domain)) {
+	&theme_select_domain($d);
+	}
 
 &ui_print_footer("", $text{'index_return'});
 

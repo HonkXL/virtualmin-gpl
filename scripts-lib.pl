@@ -706,7 +706,7 @@ foreach my $script (@domain_scripts) {
 						&$indent_print() if(!$script_config_file_count++);
 						&$first_print("$sdata->{'desc'} ..") if (!$printed_name[$sdata->{'desc'}]), push(@printed_name, $sdata->{'desc'});
 						my $script_options_to_update = $script_config_types->{$config_type_current};
-						my ($replace_target, $replace_with, $value_func, @value_func_params, $script_option_multi, %options_multi);
+						my ($replace_target, $replace_with, $value_func, @value_func_params, $script_option_multi, $script_option_after, %options_multi);
 						foreach my $script_option (keys %{$script_options_to_update}) {
 							# Parse repalce
 							if ($script_option eq 'replace') {
@@ -724,6 +724,10 @@ foreach my $script (@domain_scripts) {
 							# Check if multi params must be replaced (complex replacement)
 							if ($script_option eq 'multi') {
 								$script_option_multi++;
+								}
+							# Include after regexp type (e.g. Drupal multiformat array (multi and single line))
+							if ($script_option eq 'after') {
+								$script_option_after++;
 								}
 							}
 
@@ -766,10 +770,12 @@ foreach my $script (@domain_scripts) {
 								}
 							}
 						if (-w $script_config_file_path) {
-							my $script_config_file_lines = &read_file_lines($script_config_file_path);
+							&set_filepath_permissions_as_domain_user($d, $script_config_file_path, 0755, $sdir);
+							my $script_config_file_lines = &read_file_lines_as_domain_user($d, $script_config_file_path);
 							if ($replace_target && $replace_with) {
 								foreach my $config_file_line (@{$script_config_file_lines}) {
-									if ($config_file_line =~ /(?<before>.*)(?<replace_target>$replace_target)/) {
+									if ($config_file_line =~ /(?<before>.*)(?<replace_target>$replace_target)(?<after>.*)/) {
+										my $include_after = $script_option_after ? "$+{after}" : "";
 										if ($script_option_multi) {
 											# Construct replacement first
 											foreach my $option_multi (keys %options_multi) {
@@ -781,17 +787,18 @@ foreach my $script (@domain_scripts) {
 												$replace_with =~ s/\$\$$option_multi/$option_multi_value/;
 												}
 											# Perform complex replacement (multi)
-											$config_file_line = "$+{before}$+{replace_target}$replace_with";
+											$config_file_line = "$+{before}$+{replace_target}$replace_with$include_after";
 											}
 										else {
 											# Perform simple replacement
-											$config_file_line = "$+{before}$replace_with";
+											$config_file_line = "$+{before}$replace_with$include_after";
 											}
 										$success++;
 										}
 									}
 								}
-							&flush_file_lines($script_config_file_path);
+							&flush_file_lines_as_domain_user($d, $script_config_file_path);
+							&restore_filepath_permissions_as_domain_user($d, $script_config_file_path, $sdir);
 							if ($success) {
 								$success = 
 									$script_config_files_count > 1 ?
@@ -1097,7 +1104,7 @@ if (defined(&$maxfunc)) {
 return undef if (!@vers);
 
 # Find the best matching directory with a PHP version set
-local $dirpath = &public_html_dir($d).$path;
+local $dirpath = &public_html_dir($d).($path eq '/' ? '' : $path);
 local @dirs = &list_domain_php_directories($d);
 local $bestdir;
 foreach my $dir (sort { length($a->{'dir'}) cmp length($b->{'dir'}) } @dirs) {
@@ -2472,8 +2479,8 @@ if ($callnow) {
 		}
 	else {
 		# Need to call wget
-		&system_logged(
-		    "$wget -q -O /dev/null $url >/dev/null 2>&1 </dev/null");
+		&system_logged("$wget -q -O /dev/null ".quotemeta($url).
+			       " >/dev/null 2>&1 </dev/null");
 		}
 	}
 return 1;
@@ -2504,7 +2511,7 @@ return 0 if (!&foreign_check("cron"));
 &foreign_require("cron");
 $cmd =~ /^(.*)\//;
 local $dir = $1;
-local $cmd = &php_command_for_version($phpver, 2);
+local $php = &php_command_for_version($phpver, 2);
 local $fullcmd = "cd $dir && $php -f $cmd >/dev/null 2>&1";
 local $job = { 'user' => $d->{'user'},
 	       'active' => 1,
@@ -2556,7 +2563,7 @@ foreach my $d (@$doms) {
 			}
 		@vers = sort { &compare_versions($b, $a, $script) } @vers;
 		local @better = grep { &compare_versions($_,
-				$sinfo->{'version'}, $script) >= 0 } @vers;
+				$sinfo->{'version'}, $script) > 0 } @vers;
 		local $ver = @better ? $better[$#better] : undef;
 		next if (!$ver);
 
@@ -3424,6 +3431,11 @@ return script_migrated_disallowed($script->{'migrated'}) ?
 sub check_script_quota
 {
 my ($d, $script, $ver) = @_;
+if ($d->{'parent'}) {
+	$d = &get_domain($d->{'parent'});
+	}
+return (1, undef, undef, undef)
+	if (!$d->{'quota'});
 my $qfunc = "script_".$script->{'name'}."_required_quota";
 if (defined(&$qfunc)) {
 	my ($need, $units) = &$qfunc($ver);
@@ -3440,6 +3452,28 @@ if (defined(&$qfunc)) {
 	return ($ok, $need, $usage*$bsize, $d->{'quota'}*$bsize);
 	}
 return (1, undef, undef, undef);
+}
+
+# script_link(link, [lang], [text])
+# Returns script link, if array ref is passed returns link
+# and name, if language returns formatted language string,
+# if text just returns plain link
+sub script_link
+{
+my ($link, $lang, $text) = @_;
+my ($shref, $slname);
+if (ref($link) eq 'ARRAY') {
+	$shref = $link->[0];
+	$slname = $link->[1];
+	}
+else {
+	$shref = $link;
+	$slname = $link;
+	}
+return $slname if ($text == 2);
+return $shref if ($text == 1);
+return &text($lang, $shref, $slname) if ($lang);
+return &ui_link($shref, $slname, undef, "target=_blank");
 }
 
 1;
