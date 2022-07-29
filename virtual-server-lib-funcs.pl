@@ -4241,12 +4241,12 @@ if (%ids) {
 
 # Add secondary nameservers
 if ($config{'dns'}) {
-	local %on = map { $_, 1 } split(/\s+/, $d->{'dns_slaves'});
+	local %on = map { $_, 1 } split(/\s+/, $d->{'dns_slave'});
 	local @servers = grep { $on{$_->{'host'}} || $on{$_->{'nsname'}} }
 			      &bind8::list_slave_servers();
 	$hash{'dns_server'} = &get_master_nameserver($tmpl);
-	$hash{'dns_slaves'} = join(" ", map { $_->{'nsname'} || $_->{'host'} }
-					    @servers);
+	$hash{'dns_slave'} = join(" ", map { $_->{'nsname'} || $_->{'host'} }
+					   @servers);
 	}
 
 # If any website feature is enabled (like Nginx), set the web variable
@@ -9211,8 +9211,6 @@ push(@rv, { 'id' => 1,
 	    'for_sub' => 1,
 	    'for_alias' => 0,
 	    'for_users' => !$config{'subtmpl_nousers'},
-	    'resellers' => '*',
-	    'owners' => '*',
 	  } );
 local $f;
 opendir(DIR, $templates_dir);
@@ -9222,8 +9220,6 @@ while(defined($f = readdir(DIR))) {
 		&read_file("$templates_dir/$f", \%tmpl);
 		$tmpl{'file'} = "$templates_dir/$f";
 		$tmpl{'mail'} =~ s/\t/\n/g;
-		$tmpl{'resellers'} = '*' if (!defined($tmpl{'resellers'}));
-		$tmpl{'owners'} = '*' if (!defined($tmpl{'owners'}));
 		if ($tmpl{'id'} == 1 || $tmpl{'id'} == 0) {
 			foreach $k (keys %tmpl) {
 				$rv[$tmpl{'id'}]->{$k} = $tmpl{$k}
@@ -9240,6 +9236,10 @@ while(defined($f = readdir(DIR))) {
 				}
 			}
 		}
+	}
+foreach my $tmpl (@rv) {
+	$tmpl->{'resellers'} = '*' if (!defined($tmpl->{'resellers'}));
+	$tmpl->{'owners'} = '*' if (!defined($tmpl->{'owners'}));
 	}
 closedir(DIR);
 @list_templates_cache = @rv;
@@ -11279,6 +11279,7 @@ foreach my $d (&list_domains()) {
 my (@expired, @nearly);
 foreach my $d (&list_domains()) {
 	next if (!$d->{'whois_expiry'} || !$d->{'dns'});
+	next if ($d->{'disabled'});
 
 	# If status collection is disabled and last
 	# config check was done a long time ago or if
@@ -12869,7 +12870,7 @@ local @tmpls = ( 'features', 'tmpl', 'plan', 'user', 'update',
    'dkim', 'ratelimit', 'provision',
    $config{'mail'} ? ( 'autoconfig' ) : ( ),
    $config{'mail'} && $virtualmin_pro ? ( 'retention' ) : ( ),
-   $config{'mail'} && $virtualmin_pro ? ( 'smtpclouds' ) : ( ),
+   $virtualmin_pro ? ( 'smtpclouds' ) : ( ),
    $config{'mysql'} ? ( 'mysqls' ) : ( ),
    'dnsclouds',
    );

@@ -20,7 +20,7 @@ return "A semantic personal publishing platform with a focus on aesthetics, web 
 # script_wordpress_versions()
 sub script_wordpress_versions
 {
-return ( "6.0" );
+return ( "6.0.1" );
 }
 
 sub script_wordpress_category
@@ -419,6 +419,14 @@ my $db_conn_desc =
            'dbuser' => 
            {
                'replace' => [ 'define\(\s*[\'"]DB_USER[\'"],' => "define('DB_USER', '\$\$sdbuser');" ],
+           },
+           'dbhost' => 
+           {
+               'replace' => [ 'define\(\s*[\'"]DB_HOST[\'"],' => "define('DB_HOST', '\$\$sdbhost');" ],
+           },
+           'dbname' => 
+           {
+               'replace' => [ 'define\(\s*[\'"]DB_NAME[\'"],' => "define('DB_NAME', '\$\$sdbname');" ],
            },
         }
     };

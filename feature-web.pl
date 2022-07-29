@@ -53,6 +53,9 @@ if ($d->{'php_fpm_port'}) {
 	}
 
 local @dirs = &apache_template($tmpl->{'web'}, $d);
+if ($apache::httpd_modules{'mod_proxy'}) {
+	push(@dirs, "ProxyPass /.well-known !");
+	}
 if ($d->{'alias'} && $tmpl->{'web_alias'} == 1) {
 	# Update the parent virtual host (and the SSL virtual host, if any)
 	local @ports = ( $alias->{'web_port'} );
@@ -99,7 +102,7 @@ else {
 		local $url = "http://$urlhost$port/";
 		if ($apache::httpd_modules{'mod_proxy'} &&
 		    $tmpl->{'web_alias'} == 2) {
-			push(@dirs, "ProxyPass /.well-known/acme-challenge/ !",
+			push(@dirs, "ProxyPass /.well-known !",
 				    "ProxyPass / $url",
 				    "ProxyPassReverse / $url");
 			$proxying = 1;
@@ -2586,6 +2589,7 @@ sub show_template_web
 {
 local ($tmpl) = @_;
 
+my $hr;
 if ($config{'web'}) {
 	# Work out fields to disable when Apache is in default mode
 	local @webfields = ( "web", "web_ssl", "user_def",
@@ -2706,6 +2710,7 @@ if ($config{'web'}) {
 				[ 0, $text{'phpmode_mod_ruby'}."<br>" ],
 				[ 1, $text{'phpmode_cgi'}."<br>" ] ]));
 		}
+	$hr++;
 	}
 
 if ($config{'web'} && $config{'webalizer'}) {
@@ -2748,7 +2753,8 @@ if ($config{'web'} && $config{'webalizer'}) {
 	}
 
 # Add redirects for webmail and admin
-print &ui_table_hr();
+print &ui_table_hr()
+	if ($hr);
 foreach my $r ('webmail', 'admin') {
 	print &ui_table_row(&hlink($text{'newweb_'.$r},
 				   "template_".$r),
