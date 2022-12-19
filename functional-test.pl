@@ -37,6 +37,7 @@ $test_subdomain = "example.net";
 $test_parallel_domain1 = "example1.net";
 $test_parallel_domain2 = "example2.net";
 $test_cloud_domain = "cloudexample.com";
+$test_cloud_subdomain = "dns.cloudexample.com";
 $test_ip_address = &get_default_ip();
 $test_user = "testy";
 $test_alias = "testing";
@@ -253,6 +254,9 @@ if ($webmin_user) {
 	}
 $webmin_user_theme ||= $current_theme;
 
+# Check that global configs are setup for the test
+$config{'auto_redirect'} && die "auto_redirect must be set to 0";
+
 $_config_tests = [
 	# Just validate global config
 	{ 'command' => 'check-config.pl' },
@@ -298,7 +302,7 @@ $domains_tests = [
 	},
 
 	# Test DNS lookup
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'grep' => &get_default_ip(),
 	},
 
@@ -363,6 +367,42 @@ $domains_tests = [
 	},
 	{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
 	  'grep' => 'PHP Version',
+	},
+
+	# Enable PHP error log
+	{ 'command' => 'modify-web.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'php-log', 'logs/php_error_log' ] ],
+	},
+
+	# Write to PHP error log
+	{ 'command' => 'echo "<?php error_log(\"foo\"); ?>" >~'.
+		       $test_domain_user.'/public_html/log.php',
+	},
+	{ 'command' => $wget_command.'http://'.$test_domain.'/log.php',
+	},
+
+	# Check PHP error log
+	{ 'command' => 'cat '.$test_domain_home.'/logs/php_error_log',
+	  'grep' => 'foo',
+	},
+
+	# Turn off PHP error log
+	{ 'command' => 'modify-web.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'no-php-log' ] ],
+	},
+
+	# Write a PHP error, which won't get logged
+	{ 'command' => 'echo "<?php error_log(\"bar\"); ?>" >~'.
+		       $test_domain_user.'/public_html/log.php',
+	},
+	{ 'command' => $wget_command.'http://'.$test_domain.'/log.php',
+	},
+
+	# Check PHP error log
+	{ 'command' => 'cat '.$test_domain_home.'/logs/php_error_log',
+	  'antigrep' => 'bar',
 	},
 
 	$supports_cgi ? (
@@ -618,10 +658,10 @@ $domains_tests = [
 	},
 
 	# Verify that it worked
-	{ 'command' => 'host testing.'.$test_domain,
+	{ 'command' => 'host -t A testing.'.$test_domain,
 	  'grep' => '1.2.3.4',
 	},
-	{ 'command' => 'host ttltest.'.$test_domain,
+	{ 'command' => 'host -t A ttltest.'.$test_domain,
 	  'grep' => '5.6.7.8',
 	},
 
@@ -638,10 +678,10 @@ $domains_tests = [
 	},
 
 	# Make sure they are gone
-	{ 'command' => 'host testing.'.$test_domain,
+	{ 'command' => 'host -t A testing.'.$test_domain,
 	  'fail' => 1,
 	},
-	{ 'command' => 'host ttltest.'.$test_domain,
+	{ 'command' => 'host -t A ttltest.'.$test_domain,
 	  'fail' => 1,
 	},
 
@@ -808,12 +848,12 @@ $disable_tests = [
 	},
 
 	# Test that DNS lookup fails
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'antigrep' => &get_default_ip(),
 	},
 
 	# Test that DNS lookup works for the disabled domain
-	{ 'command' => 'host '.$test_domain.'.disabled',
+	{ 'command' => 'host -t A '.$test_domain.'.disabled',
 	  'grep' => &get_default_ip(),
 	},
 
@@ -937,6 +977,17 @@ $mailbox_tests = [
 	  'grep' => "^$test_user",
 	},
 
+	# Check attributes
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'multiline' ],
+		      [ 'user' => $test_user ] ],
+	  'grep' => [ 'Password: smeg',
+		      'Email address: '.$test_user.'@'.$test_domain,
+		      'Home byte quota: '.(100*1024*1024) ],
+	  'antigrep' => [ 'Home quota expected:' ],
+	},
+
 	# Check Unix account
 	{ 'command' => $gconfig{'os_type'} =~ /-linux/ ? 
 			'su -s /bin/sh '.$test_full_user.' -c "id -a"' :
@@ -973,6 +1024,7 @@ $mailbox_tests = [
 		      [ 'user' => $test_user ],
 		      [ 'pass' => 'newpass' ],
 		      [ 'real' => 'New name' ],
+		      [ 'quota' => 200*1024 ],
 		      [ 'add-mysql' => $test_domain_user ],
 		      [ 'add-email' => 'extra@'.$test_domain ] ],
 	},
@@ -984,12 +1036,42 @@ $mailbox_tests = [
 		      [ 'multiline' ] ],
 	  'grep' => [ 'Password: newpass',
 		      'Real name: New name',
+		      'Home byte quota: '.(200*1024*1024),
 		      'Databases:.*'.$test_domain_user,
 		      'Extra addresses:.*extra@'.$test_domain, ],
+	  'antigrep' => [ 'Home quota expected:' ],
 	},
 
 	# Check user's MySQL login
 	{ 'command' => 'mysql -u '.$test_full_user_mysql.' -pnewpass '.$test_domain_db.' -e "select version()"',
+	},
+
+	# Break the quota by editing directly
+	{ 'command' => 'setquota '.$test_full_user.' 555555 555555 0 0 '.
+		       $config{'home_quotas'},
+	},
+
+	# Make sure the cached quota is still known
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'user' => $test_user ],
+		      [ 'multiline' ] ],
+	  'grep' => [ 'Home byte quota expected: '.(200*1024*1024) ],
+	},
+
+	# Fix the broken quota
+	{ 'command' => 'modify-domain.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'apply-all-quotas' ] ],
+	},
+
+	# Check the fix
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'user' => $test_user ],
+		      [ 'multiline' ] ],
+	  'grep' => [ 'Home byte quota: '.(200*1024*1024) ],
+	  'antigrep' => [ 'Home byte quota expected:' ],
 	},
 
 	# Delete the user
@@ -2147,7 +2229,7 @@ $aliasdom_tests = [
 	},
 
 	# Test DNS lookup
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'grep' => &get_default_ip(),
 	},
 
@@ -2241,7 +2323,10 @@ $aliasdom_tests = [
 # Backup tests
 @post_restore_tests = (
 	# Test DNS lookup
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
+	  'grep' => &get_default_ip(),
+	},
+	{ 'command' => 'host -t A www.'.$test_domain,
 	  'grep' => &get_default_ip(),
 	},
 
@@ -2300,10 +2385,11 @@ $aliasdom_tests = [
 	  'grep' => [ 'Password: smeg',
 		      'Email address: '.$test_user.'@'.$test_domain,
 		      'Home quota: 777' ],
+	  'antigrep' => [ 'Home quota expected:' ],
 	},
 
 	# Test DNS lookup of sub-domain
-	{ 'command' => 'host '.$test_subdomain,
+	{ 'command' => 'host -t A '.$test_subdomain,
 	  'grep' => &get_default_ip(),
 	},
 
@@ -3773,6 +3859,137 @@ $dropboxbackup_tests = [
 
 $enc_dropboxbackup_tests = &convert_to_encrypted($dropboxbackup_tests);
 
+$azure_backup_prefix = "azure://virtualmin-test-backup-bucket";
+$azurebackup_tests = [
+	# Create a simple domain to be backed up
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ 'dns' ], [ $web ], [ 'mail' ],
+		      [ 'logrotate' ],
+		      [ 'content' => 'Test home page' ],
+		      @create_args, ],
+        },
+
+	# Create a sub-server
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'parent', $test_domain ],
+		      [ 'prefix', 'example2' ],
+		      [ 'desc', 'Test sub-domain' ],
+		      [ 'dir' ], [ $web ], [ 'dns' ], [ 'mail' ],
+		      [ 'logrotate' ],
+		      @create_args, ],
+	},
+
+	# Backup to Dropbox
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$azure_backup_prefix/$test_domain.tar.gz" ] ],
+	},
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$azure_backup_prefix/$test_subdomain.tar.gz" ] ],
+	},
+
+	# Backup to Dropbox again, to test that over-writing works
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$azure_backup_prefix/$test_domain.tar.gz" ] ],
+	},
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$azure_backup_prefix/$test_subdomain.tar.gz" ] ],
+	},
+
+	# Restore from Dropbox
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'source', "$azure_backup_prefix/$test_domain.tar.gz" ] ],
+	},
+
+	# Restore sub-domain from Dropbox
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'source', "$azure_backup_prefix/$test_subdomain.tar.gz" ] ],
+	},
+
+	# Backup to Dropbox in home format
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'newformat' ],
+		      [ 'dest', $azure_backup_prefix ] ],
+	},
+
+	# Backup to Dropbox in home format again, to test overwriting
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'newformat' ],
+		      [ 'dest', $azure_backup_prefix ] ],
+	},
+
+	# Restore from Dropbox in home format
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'source', $azure_backup_prefix ] ],
+	},
+
+	# Backup from Dropbox one-by-one
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'onebyone' ],
+		      [ 'newformat' ],
+		      [ 'dest', $azure_backup_prefix ] ],
+	},
+
+	# Restore from Dropbox, all domains
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'all-domains' ],
+		      [ 'all-features' ],
+		      [ 'source', $azure_backup_prefix ] ],
+	},
+
+	# Backup to Dropbox subdirectory in home format
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'newformat' ],
+		      [ 'dest', $azure_backup_prefix."/subdir" ] ],
+	},
+
+	# Restore from Dropbox subdirectory in home format
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'source', $azure_backup_prefix."/subdir" ] ],
+	},
+
+	# Cleanup the backup domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1,
+	},
+	];
+
+$enc_azurebackup_tests = &convert_to_encrypted($azurebackup_tests);
+
 $bb_backup_prefix = "bb://virtualmin-test-backup-bucket";
 $bbbackup_tests = [
 	# Create a simple domain to be backed up
@@ -4320,11 +4537,6 @@ $purge_tests = [
 	];
 
 $mail_tests = [
-	# Fix clamd permissions
-	{ 'command' => 'chmod 755 /var/run/clamd.scan',
-	  'ignorefail' => 1,
-	},
-
 	# Create a domain to get spam
 	{ 'command' => 'create-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
@@ -4583,6 +4795,11 @@ $mail_tests = [
 			      [ 'domain', $test_domain ],
 			      [ 'regexp' => '_domainkey' ] ],
 		  'grep' => [ 'v=DKIM1' ],
+		},
+
+		# Check that it can actually be looked up
+		{ 'command' => 'dig TXT default._domainkey.'.$test_domain.' ; dig SPF default._domainkey.'.$test_domain,
+		  'grep' => 'v=DKIM1',
 		},
 		) : ( ),
 
@@ -5305,7 +5522,7 @@ $ssl_tests = [
 	},
 
 	# Create a second sub-domain with SSL on the same IP, but with no
-	# linked cert
+	# linked cert, but with redirect to SSL
 	{ 'command' => 'create-domain.pl',
           'args' => [ [ 'domain', $test_ssl2_subdomain ],
 		      [ 'desc', 'Test SSL 2 subdomain' ],
@@ -5313,12 +5530,23 @@ $ssl_tests = [
 		      [ 'dir' ], [ 'web' ], [ 'dns' ], [ 'ssl' ],
 		      [ 'parent-ip' ],
 		      [ 'break-ssl-cert' ],
+		      [ 'ssl-redirect' ],
 		      [ 'content' => 'Test SSL subdomain home page' ],
 		      @create_args, ],
 	},
 
+	# Create an alias domain for the second sub-domain
+	{ 'command' => 'create-domain.pl',
+          'args' => [ [ 'domain', $test_target_domain ],
+		      [ 'alias', $test_ssl2_subdomain ],
+		      [ 'desc', 'Test SSL 2 alias' ],
+		      [ 'dir' ], [ 'web' ], [ 'dns' ],
+		      [ 'parent-ip' ],
+		      @create_args, ],
+	},
+
 	# Test DNS lookup
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'antigrep' => &get_default_ip(),
 	},
 
@@ -5338,9 +5566,22 @@ $ssl_tests = [
 	  'grep' => [ 'O=Test SSL domain', 'CN=(\\*\\.)?'.$test_domain ],
 	},
 
-	# Test HTTP get to subdomain
+	# Test HTTP get to subdomain, which should not redirect
 	{ 'command' => $wget_command.'http://'.$test_ssl_subdomain,
 	  'grep' => 'Test SSL subdomain home page',
+	  'antigrep' => 'https://'.$test_ssl_subdomain,
+	},
+
+	# Test HTTP get to second subdomain, which should redirect
+	{ 'command' => $wget_command.'http://'.$test_ssl2_subdomain,
+	  'grep' => ['Test SSL subdomain home page',
+		     'https://'.$test_ssl2_subdomain],
+	},
+
+	# Test HTTP get to alias, which should redirect to itself
+	{ 'command' => $wget_command.'http://'.$test_target_domain,
+	  'grep' => ['Test SSL subdomain home page',
+		     'https://'.$test_target_domain],
 	},
 
 	# Check for SSL linkage
@@ -5547,7 +5788,7 @@ $ssl_tests = [
 	},
 
 	# Test DNS lookup after the restore
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'antigrep' => &get_default_ip(),
 	},
 
@@ -6156,7 +6397,7 @@ $shared_tests = [
         },
 
 	# Test DNS and website
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'grep' => '$SHARED_IP',
 	},
 	{ 'command' => $wget_command.'http://'.$test_domain,
@@ -6170,7 +6411,7 @@ $shared_tests = [
 	},
 
 	# Test DNS and website again
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'grep' => &get_default_ip(),
 	},
 	{ 'command' => $wget_command.'http://'.$test_domain,
@@ -6214,7 +6455,7 @@ $wildcard_tests = [
         },
 
 	# Test DNS and website
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'grep' => '$SHARED_IP',
 	},
 	{ 'command' => $wget_command.'http://'.$test_domain,
@@ -6240,7 +6481,7 @@ $wildcard_tests = [
         },
 
 	# Test DNS and website for the sub-domain
-	{ 'command' => 'host '.'sslsub.'.$test_domain,
+	{ 'command' => 'host -t A '.'sslsub.'.$test_domain,
 	  'grep' => '$SHARED_IP',
 	},
 	{ 'command' => $wget_command.'http://sslsub.'.$test_domain,
@@ -6931,10 +7172,10 @@ $ip6_tests = [
 	{ 'command' => 'sleep 10' },
 
 	# Test DNS lookup for v6 entry
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t AAAA '.$test_domain,
 	  'grep' => 'IPv6 address',
 	},
-	{ 'command' => 'host '.$test_target_domain,
+	{ 'command' => 'host -t AAAA '.$test_target_domain,
 	  'grep' => 'IPv6 address',
 	},
 
@@ -6953,7 +7194,7 @@ $ip6_tests = [
 	},
 
 	# Make sure DNS entries are gone
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t AAAA '.$test_domain,
 	  'antigrep' => 'IPv6 address',
 	},
 
@@ -6996,7 +7237,7 @@ $ip6_tests = [
 	},
 
 	# Test DNS lookup for v6 entry
-	{ 'command' => 'host '.$test_subdomain,
+	{ 'command' => 'host -t AAAA '.$test_subdomain,
 	  'grep' => [ 'IPv6 address', &get_default_ip6() ],
 	},
 
@@ -7082,7 +7323,7 @@ $webrename_tests = [
 	},
 
 	# Make sure DNS works
-	{ 'command' => 'host '.$test_rename_domain,
+	{ 'command' => 'host -t A '.$test_rename_domain,
 	  'grep' => &get_default_ip(),
 	},
 
@@ -7193,9 +7434,22 @@ $rename_tests = [
 		      [ 'to', 'nobody@virtualmin.com' ] ],
 	},
 
-	# Validate the domain before
+	# Create a sub-server
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'parent', $test_domain ],
+		      [ 'prefix', 'example2' ],
+		      [ 'desc', 'Test sub-domain' ],
+		      [ 'dir' ], [ $web ], [ $ssl ], [ 'dns' ], [ 'mail' ],
+		      [ 'webalizer' ], [ 'mysql' ],
+		      [ 'spam' ], [ 'virus' ],
+		      @create_args, ],
+	},
+
+	# Validate the domains before
 	{ 'command' => 'validate-domains.pl',
 	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'domain' => $test_subdomain ],
 		      [ 'all-features' ] ],
 	},
 
@@ -7208,14 +7462,18 @@ $rename_tests = [
 		      [ 'auto-prefix' ] ],
 	},
 
-	# Validate the domain
+	# Validate the domains after
 	{ 'command' => 'validate-domains.pl',
 	  'args' => [ [ 'domain' => $test_rename_domain ],
+		      [ 'domain' => $test_subdomain ],
 		      [ 'all-features' ] ],
 	},
 
 	# Make sure DNS works
-	{ 'command' => 'host '.$test_rename_domain,
+	{ 'command' => 'host -t A '.$test_rename_domain,
+	  'grep' => '$PRIVATE_IP',
+	},
+	{ 'command' => 'host -t A www.'.$test_rename_domain,
 	  'grep' => '$PRIVATE_IP',
 	},
 
@@ -7283,8 +7541,8 @@ if (!$webmin_user || !$webmin_pass) {
 
 # Tests for web, mail and FTP bandwidth accounting.
 # Uses a different domain to prevent re-reading of old mail logs.
-$test_bw_domain = time().$test_domain;
-$test_bw_domain_user = time().$test_domain_user;
+$test_bw_domain = 'bw'.time().$test_domain;
+$test_bw_domain_user = 'bw'.time().$test_domain_user;
 $bw_tests = [
 	# Create a domain for bandwidth loggin
 	{ 'command' => 'create-domain.pl',
@@ -8221,6 +8479,18 @@ $clone_tests = [
 		       $test_domain_home.'/.htaccess',
 	},
 
+	# Add a DNS record
+	{ 'command' => 'modify-dns.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'add-record', 'testing A 1.2.3.4' ] ],
+	},
+
+	# Validate before cloning
+	{ 'command' => 'validate-domains.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'all-features' ] ],
+	},
+
 	# Clone it
 	{ 'command' => 'clone-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
@@ -8302,7 +8572,7 @@ $clone_tests = [
 	},
 
 	# Test DNS lookup
-	{ 'command' => 'host '.$test_clone_domain,
+	{ 'command' => 'host -t A '.$test_clone_domain,
 	  'antigrep' => &get_default_ip(),
 	},
 
@@ -8371,6 +8641,22 @@ $clone_tests = [
 	},
 	{ 'command' => $wget_command.'http://'.$test_clone_domain.'/test.php',
 	  'grep' => 'uid=[0-9]+\\('.$test_clone_domain_user.'\\)',
+	},
+
+	# Check for basic DNS records
+	{ 'command' => 'host -t A www.'.$test_clone_domain,
+	},
+	{ 'command' => 'host -t A mail.'.$test_clone_domain,
+	},
+
+	# Check the extra DNS record
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_clone_domain ] ],
+	  'grep' => [ 'testing' ],
+	},
+	{ 'command' => 'host -t A testing.'.$test_clone_domain,
+	  'grep' => '1.2.3.4',
 	},
 
 	# Cleanup the domain being cloned
@@ -8523,7 +8809,7 @@ $clonesub_tests = [
 	},
 
 	# Test DNS lookup
-	{ 'command' => 'host '.$test_clone_domain,
+	{ 'command' => 'host -t A '.$test_clone_domain,
 	  'antigrep' => &get_default_ip(),
 	},
 
@@ -8889,7 +9175,7 @@ $ipbackup_tests = [
 	},
 
 	# Check that the main domain IP resolves OK
-	{ 'command' => 'host '.$test_domain,
+	{ 'command' => 'host -t A '.$test_domain,
 	  'grep' => &get_default_ip(),
 	},
 
@@ -8907,7 +9193,7 @@ $ipbackup_tests = [
 	},
 
 	# Check that the sub-server IP resolves OK
-	{ 'command' => 'host '.$test_subdomain,
+	{ 'command' => 'host -t A '.$test_subdomain,
 	  'antigrep' => &get_default_ip(),
 	},
 
@@ -9141,11 +9427,41 @@ $dns_tests = [
 		      @create_args, ],
         },
 
+	# Create an alias that should get a copy of records
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'alias', $test_domain ],
+		      [ 'prefix', 'example2' ],
+		      [ 'desc', 'Test alias-domain' ],
+		      [ 'dir' ], [ 'dns' ], [ 'mail' ],
+		      @create_args, ],
+	},
+
 	# Validate DNS sub-domain was created
 	{ 'command' => 'list-domains.pl',
 	  'args' => [ [ 'multiline' ],
 		      [ 'domain', $test_dns_subdomain ] ],
 	  'grep' => [ 'Parent DNS virtual server: '.$test_domain ],
+	},
+
+	# Validate standard records
+	{ 'command' => 'host -t A '.$test_domain,
+	},
+	{ 'command' => 'host -t A www.'.$test_domain,
+	},
+	{ 'command' => 'host -t A mail.'.$test_domain,
+	},
+	{ 'command' => 'host -t A '.$test_dns_subdomain,
+	},
+	{ 'command' => 'host -t A www.'.$test_dns_subdomain,
+	},
+
+	# Validate alias domain records
+	{ 'command' => 'host -t A '.$test_subdomain,
+	},
+	{ 'command' => 'host -t A www.'.$test_subdomain,
+	},
+	{ 'command' => 'host -t A mail.'.$test_subdomain,
 	},
 
 	# Add a record to both domains
@@ -9166,8 +9482,19 @@ $dns_tests = [
 	},
 	{ 'command' => 'get-dns.pl',
 	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_subdomain ] ],
+	  'grep' => [ 'testing1' ],
+	},
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'multiline' ],
 		      [ 'domain', $test_dns_subdomain ] ],
 	  'grep' => [ 'testing2' ],
+	},
+	{ 'command' => 'host -t A testing1.'.$test_domain,
+	},
+	{ 'command' => 'host -t A testing1.'.$test_subdomain,
+	},
+	{ 'command' => 'host -t A testing2.'.$test_dns_subdomain,
 	},
 
 	# Split the sub-domain into it's own zone
@@ -9270,6 +9597,13 @@ $googledns_tests = [
 		      [ 'all-features' ] ],
 	},
 
+	# Validate that it has regular records
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_cloud_domain ] ],
+	  'grep' => [ 'www', 'mail' ],
+	},
+
 	# Add a DNS record
 	{ 'command' => 'modify-dns.pl',
 	  'args' => [ [ 'domain', $test_cloud_domain ],
@@ -9281,6 +9615,54 @@ $googledns_tests = [
 	  'args' => [ [ 'multiline' ],
 		      [ 'domain', $test_cloud_domain ] ],
 	  'grep' => [ 'testing1' ],
+	},
+
+	# Create a sub-domain
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_cloud_subdomain ],
+		      [ 'parent', $test_cloud_domain ],
+		      [ 'desc', 'Test subdomain' ],
+		      [ 'dir' ], [ 'web' ], [ 'dns' ], [ 'mail' ],
+		      @create_args, ],
+        },
+
+	# Validate that it's a DNS sub-domain
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_cloud_subdomain ] ],
+	  'grep' => [ 'Parent DNS virtual server: '.$test_cloud_domain ],
+	},
+
+	# Validate that it has regular records
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_cloud_subdomain ] ],
+	  'grep' => [ 'www', 'mail' ],
+	},
+
+	# Add a sub-domain record
+	{ 'command' => 'modify-dns.pl',
+	  'args' => [ [ 'domain', $test_cloud_subdomain ],
+		      [ 'add-record', 'testing2 A 1.2.3.4' ] ],
+	},
+
+	# Validate that it was created
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_cloud_subdomain ] ],
+	  'grep' => [ 'testing2' ],
+	},
+
+	# Delete the sub-domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_cloud_subdomain ] ],
+	},
+
+	# Validate that the record is gone from the parent
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_cloud_domain ] ],
+	  'antigrep' => [ 'testing2' ],
 	},
 
 	# Disable and re-enable the DNS feature
@@ -9520,7 +9902,7 @@ $reset_tests = [
 		      'Destination: http://www.example.com',
 		      'Type: Redirect',
 		      'Match sub-paths: No',
-		      'Protocols: http$', ],
+		      'Protocols: https$', ],
 	},
 
 	# Check that the PHP mode is correct
@@ -9816,6 +10198,8 @@ $alltests = { '_config' => $_config_tests,
 	      'enc_gcsbackup' => $enc_gcsbackup_tests,
 	      'dropboxbackup' => $dropboxbackup_tests,
 	      'enc_dropboxbackup' => $enc_dropboxbackup_tests,
+	      'azurebackup' => $azurebackup_tests,
+	      'enc_azurebackup' => $enc_azurebackup_tests,
 	      'bbbackup' => $bbbackup_tests,
 	      'enc_bbbackup' => $enc_bbbackup_tests,
 	      'rsbackup' => $rsbackup_tests,

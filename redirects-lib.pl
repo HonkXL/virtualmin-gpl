@@ -80,6 +80,44 @@ foreach my $p (@ports) {
 			push(@rv, $rd);
 			}
 		}
+
+	# Find rewrite rules used for redirects that preserve the hostname
+	my @rws = (&apache::find_directive_struct("RewriteCond", $vconf),
+		   &apache::find_directive_struct("RewriteRule", $vconf));
+	@rws = sort { $a->{'line'} <=> $b->{'line'} } @rws;
+	for(my $i=0; $i<@rws; $i++) {
+		my $rwc = $rws[$i];
+		next if ($rwc->{'name'} ne 'RewriteCond');
+		my $rwr = $i+1 < @rws ? $rws[$i+1] : undef;
+		next if (!$rwr || $rwr->{'name'} ne 'RewriteRule');
+		next if ($rwc->{'words'}->[0] ne '%{HTTPS}');
+		next if ($rwr->{'words'}->[2] !~ /^\[R(=\d+)?\]$/);
+		my $rd = { 'alias' => 0,
+			   'dir' => $rwc,
+			   'dir2' => $rwr,
+			 };
+		if (lc($rwc->{'words'}->[1]) eq 'on') {
+			$rd->{'https'} = 1;
+			}
+		elsif (lc($rwc->{'words'}->[1]) eq 'off') {
+			$rd->{'http'} = 1;
+			}
+		else {
+			next;
+			}
+		$rd->{'path'} = $rwr->{'words'}->[0];
+		$rd->{'dest'} = $rwr->{'words'}->[1];
+		if ($rd->{'path'} =~ /^(.*)\.\*\$$/ ||
+		    $rd->{'path'} =~ /^(.*)\(\.\*\)\$$/) {
+			$rd->{'path'} = $1;
+			$rd->{'regexp'} = 1;
+			}
+		if ($rwr->{'words'}->[2] =~ /^\[R=(\d+)\]$/) {
+			$rd->{'code'} = $1;
+			}
+		$rd->{'id'} = $rwc->{'name'}.'_'.$rd->{'path'};
+		push(@rv, $rd);
+		}
 	}
 return @rv;
 }
@@ -97,19 +135,45 @@ if ($p && $p ne 'web') {
 my @ports = ( $d->{'web_port'},
 	      $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
 my $count = 0;
+if ($redirect->{'dest'} =~ /%\{HTTP_/ &&
+    $redirect->{'http'} && $redirect->{'https'}) {
+	return "Redirects using HTTP_ variables cannot be applied to both ".
+	       "HTTP and HTTPS modes";
+	}
 foreach my $p (@ports) {
 	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $p);
 	my $proto = $p == $d->{'web_port'} ? 'http' : 'https';
 	next if (!$redirect->{$proto});
 	next if (!$virt);
-	my $dir = $redirect->{'alias'} ? "Alias" : "Redirect";
-	$dir .= "Match" if ($redirect->{'regexp'});
-	my @aliases = &apache::find_directive($dir, $vconf);
-	push(@aliases, ($redirect->{'code'} ? $redirect->{'code'}." " : "").
-		       $redirect->{'path'}.
-		       ($redirect->{'regexp'} ? "(\.\*)\$" : "").
-		       " ".$redirect->{'dest'});
-	&apache::save_directive($dir, \@aliases, $vconf, $conf);
+	if ($redirect->{'dest'} =~ /%\{HTTP_/) {
+		# Destination uses variables, so RewriteRule is needed
+		my @rwes = &apache::find_directive("RewriteEngine", $vconf);
+		my @rwcs = &apache::find_directive("RewriteCond", $vconf);
+		my @rwrs = &apache::find_directive("RewriteRule", $vconf);
+		my $flag = $redirect->{'code'} ? "[R=".$redirect->{'code'}."]"
+					       : "[R]";
+		push(@rwcs, "%{HTTPS} ".($proto eq 'http' ? 'off' : 'on'));
+		my $path = $redirect->{'path'};
+		$path .= "(\.\*)\$" if ($redirect->{'regexp'});
+		push(@rwrs, $path." ".$redirect->{'dest'}." ".$flag);
+		if (!@rwes) {
+			&apache::save_directive(
+				"RewriteEngine", ["on"], $vconf, $conf);
+			}
+		&apache::save_directive("RewriteCond", \@rwcs, $vconf, $conf,1);
+		&apache::save_directive("RewriteRule", \@rwrs, $vconf, $conf,1);
+		}
+	else {
+		# Can just use Alias or Redirect
+		my $dir = $redirect->{'alias'} ? "Alias" : "Redirect";
+		$dir .= "Match" if ($redirect->{'regexp'});
+		my @aliases = &apache::find_directive($dir, $vconf);
+		push(@aliases, ($redirect->{'code'} ? $redirect->{'code'}." " : "").
+			       $redirect->{'path'}.
+			       ($redirect->{'regexp'} ? "(\.\*)\$" : "").
+			       " ".$redirect->{'dest'});
+		&apache::save_directive($dir, \@aliases, $vconf, $conf);
+		}
 	&flush_file_lines($virt->{'file'});
 	$count++;
 	}
@@ -136,21 +200,44 @@ my $count = 0;
 foreach my $port (@ports) {
 	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $port);
 	next if (!$virt);
-	my $dir = $redirect->{'alias'} ? "Alias" : "Redirect";
-        $dir .= "Match" if ($redirect->{'regexp'});
-	my @aliases = &apache::find_directive($dir, $vconf);
-	my $re = $redirect->{'path'};
-	my @newaliases;
-	if ($redirect->{'regexp'}) {
-		# Handle .*$ or (.*)$ at the end
-		@newaliases = grep { !/^(\d+\s+)?\Q$re\E(\.\*|\(\.\*\))\$\s/ } @aliases;
+	my $changed = 0;
+	if ($redirect->{'dir2'}) {
+		# Remove RewriteCond and RewriteRule
+		my @rwcs = &apache::find_directive_struct("RewriteCond",$vconf);
+		my @rwrs = &apache::find_directive_struct("RewriteRule",$vconf);
+		my @newrwcs = map { join(" ", @{$_->{'words'}}) }
+		  grep { $_->{'line'} != $redirect->{'dir'}->{'line'} } @rwcs;
+		my @newrwrs = map { join(" ", @{$_->{'words'}}) }
+		  grep { $_->{'line'} != $redirect->{'dir2'}->{'line'} } @rwrs;
+		if (@rwcs != @newrwcs || @rwrs != @newrwrs) {
+			&apache::save_directive(
+				"RewriteCond", \@newrwcs, $vconf, $conf);
+			&apache::save_directive(
+				"RewriteRule", \@newrwrs, $vconf, $conf);
+			$changed++;
+			}
 		}
 	else {
-		# Match on path only
-		@newaliases = grep { !/^(\d+\s+)?\Q$re\E\s/ } @aliases;
+		# Remove a single Alias or Redirect line
+		my $dir = $redirect->{'alias'} ? "Alias" : "Redirect";
+		$dir .= "Match" if ($redirect->{'regexp'});
+		my @aliases = &apache::find_directive($dir, $vconf);
+		my $re = $redirect->{'path'};
+		my @newaliases;
+		if ($redirect->{'regexp'}) {
+			# Handle .*$ or (.*)$ at the end
+			@newaliases = grep { !/^(\d+\s+)?\Q$re\E(\.\*|\(\.\*\))\$\s/ } @aliases;
+			}
+		else {
+			# Match on path only
+			@newaliases = grep { !/^(\d+\s+)?\Q$re\E\s/ } @aliases;
+			}
+		if (scalar(@aliases) != scalar(@newaliases)) {
+			&apache::save_directive($dir, \@newaliases, $vconf, $conf);
+			$changed++;
+			}
 		}
-	if (scalar(@aliases) != scalar(@newaliases)) {
-		&apache::save_directive($dir, \@newaliases, $vconf, $conf);
+	if ($changed) {
 		&flush_file_lines($virt->{'file'});
 		$count++;
 		}
@@ -218,10 +305,10 @@ return $redir;
 sub get_redirect_to_ssl
 {
 my ($d) = @_;
-return { 'path' => '^/(?!.well-known)',
-	 'dest' => 'https://'.$d->{'dom'}.'/$1',
+return { 'path' => '^/(?!.well-known)(.*)$',
+	 'dest' => 'https://%{HTTP_HOST}/$1',
 	 'alias' => 0,
-	 'regexp' => 1,
+	 'regexp' => 0,
 	 'http' => 1,
 	 'https' => 0 };
 }

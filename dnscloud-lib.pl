@@ -9,12 +9,27 @@ my @rv = ( { 'name' => 'route53',
 	     'comments' => 0,
 	     'defttl' => 0,
 	     'proxy' => 0,
+	     'disable' => 0,
 	     'url' => 'https://aws.amazon.com/route53/',
 	     'longdesc' => $text{'dnscloud_route53_longdesc'} } );
 if (defined(&list_pro_dns_clouds)) {
 	push(@rv, &list_pro_dns_clouds());
 	}
 return @rv;
+}
+
+# can_dns_cloud(&cloud)
+# Returns 1 if some clopud can be used
+sub can_dns_cloud
+{
+my ($c) = @_;
+if (&master_admin()) {
+	return 1;
+	}
+if (&reseller_admin()) {
+	return $config{'dnscloud_'.$c->{'name'}.'_reseller'} ? 1 : 0;
+	}
+return $config{'dnscloud_'.$c->{'name'}.'_owner'} ? 1 : 0;
 }
 
 # default_dns_cloud([&template])
@@ -53,8 +68,7 @@ return undef;
 # Returns an error message if any requirements for Route 53 are missing
 sub dnscloud_route53_check
 {
-return $text{'dnscloud_eaws'} if (!$config{'aws_cmd'} ||
-				  !&has_command($config{'aws_cmd'}));
+return $text{'dnscloud_eaws'} if (!&has_aws_cmd());
 eval "use JSON::PP";
 return &text('dnscloud_eperl', 'JSON::PP') if ($@);
 return undef;
@@ -247,7 +261,8 @@ return undef;
 }
 
 # dnscloud_route53_rename_domain(&domain, &info)
-# Rename a domain on route53 by deleting and re-creating it
+# Rename a domain on route53 by deleting and re-creating it. Returns an ok flag,
+# either an error message or the name domain ID.
 sub dnscloud_route53_rename_domain
 {
 my ($d, $info) = @_;
@@ -269,8 +284,8 @@ return (0, $err) if (!$ok);
 
 # Create the new one with the original records
 $info->{'recs'} = $recs;
-my ($ok, $err) = &dnscloud_route53_create_domain($d, $info);
-return ($ok, $err);
+my ($ok, $err, $location) = &dnscloud_route53_create_domain($d, $info);
+return ($ok, $err, $location);
 }
 
 # dnscloud_route53_get_records(&domain, &info)

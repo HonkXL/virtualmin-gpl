@@ -174,7 +174,7 @@ if ($alog ne $oldalog || $elog ne $oldelog) {
 		&$second_print($text{'setup_done'});
 		}
 	else {
-		&$second_print($text{'setup_nologrotate'});
+		&$second_print(&text('setup_nologrotate', $oldalog));
 		}
 	}
 
@@ -524,11 +524,13 @@ else {
 	# Always off when web is
 	return 0;
 	}
+}
 
-return &domain_has_website($d) &&
-       (!$oldd || !&domain_has_website($oldd)) &&
-       !$d->{'alias'} && !$d->{'subdom'} &&
-       $config{'logrotate'} == 3;
+# can_chained_logrotate()
+# Returns 'web' because the logrotate feature will be enabled if a website is
+sub can_chained_logrotate
+{
+return ('web');
 }
 
 # modify_user_logrotate(&domain, &old-domain, &logrotate-config)

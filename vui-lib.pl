@@ -236,4 +236,27 @@ sub vui_footer_history_back
 	return ("javascript:history.back()", $text{'error_previous'});
 }
 
+=head2 vui_ui_block_no_wrap(html, [add-white-space-around])
+
+Returns passed HTML as block element with no wrap
+
+=cut
+sub vui_ui_block_no_wrap
+{
+my ($html, $nbsps) = @_;
+$nbsps = "&nbsp;&nbsp;" if ($nbsps);
+	return "<div style='white-space: nowrap;'>$nbsps$html$nbsps</div>";
+}
+
+=head2 vui_ui_input_noauto_attrs()
+
+Returns attributes preventing browser
+to autofill input fields
+
+=cut
+sub vui_ui_input_noauto_attrs
+{
+return "autocomplete='new-password' autocorrect='off' spellcheck='false'";
+}
+
 1;

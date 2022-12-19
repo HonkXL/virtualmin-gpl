@@ -17,13 +17,13 @@ return "RoundCube Webmail is a browser-based multilingual IMAP client with an ap
 # script_roundcube_versions()
 sub script_roundcube_versions
 {
-return ( "1.5.3", "1.4.13", "1.3.17" );
+return ( "1.6.0", "1.5.3", "1.4.13" );
 }
 
 sub script_roundcube_version_desc
 {
 local ($ver) = @_;
-return &compare_versions($ver, "1.5") >= 0 ? $ver : "$ver (LTS)";
+return &compare_versions($ver, "1.6") >= 0 ? $ver : "$ver (LTS)";
 }
 
 sub script_roundcube_category
@@ -64,12 +64,6 @@ return ([ 'memory_limit', '64M', '+' ],
         [ 'mbstring.func_overload', 'Off' ]);
 }
 
-
-sub script_roundcube_php_vers
-{
-return ( 5 );
-}
-
 sub script_roundcube_release
 {
 return 3;	# For folders path fix
@@ -78,7 +72,8 @@ return 3;	# For folders path fix
 sub script_roundcube_php_fullver
 {
 local ($d, $ver, $sinfo, $phpver) = @_;
-return $ver >= 0.9 ? "5.4.1" : 5.2;
+my $phpver = &compare_versions($ver, "1.6.0") >= 0 ? "7.3" : 5.6;
+return $phpver;
 }
 
 # script_roundcube_params(&domain, version, &upgrade-info)
@@ -393,9 +388,9 @@ sub script_roundcube_latest
 {
 local ($ver) = @_;
 return ( "http://roundcube.net/download/",
-         $ver >= 1.5 ? "roundcubemail-([0-9\\.]+)-complete.tar.gz" :
-         $ver >= 1.4 ? "roundcubemail-(1\\.4\\.[0-9\\.]+)-complete.tar.gz" :
-		       "roundcubemail-(1\\.3\\.[0-9\\.]+)-complete.tar.gz" );
+         $ver >= 1.6 ? "roundcubemail-([0-9\\.]+)-complete.tar.gz" :
+         $ver >= 1.5 ? "roundcubemail-(1\\.5\\.[0-9\\.]+)-complete.tar.gz" :
+		       "roundcubemail-(1\\.4\\.[0-9\\.]+)-complete.tar.gz" );
 }
 
 sub script_roundcube_site

@@ -126,6 +126,9 @@ foreach $d (@doms) {
 			print "    Encrypted password: ",$pass,"\n";
 			print "    Disabled: ",($disable ? "Yes" : "No"),"\n";
 			print "    Home directory: ",$u->{'home'},"\n";
+			if ($u->{'domainowner'}) {
+				$u->{'shell'} = &get_domain_shell($d, $u);
+				}
 			($shell) = grep { $_->{'shell'} eq $u->{'shell'} }
 					@ashells;
 			print "    FTP access: ",
@@ -153,6 +156,13 @@ foreach $d (@doms) {
 				      ($u->{'quota'} * $home_bsize),"\n";
 				print "    Home byte quota used: ",
 				      ($u->{'uquota'} * $home_bsize),"\n";
+				if (defined($u->{'quota_cache'}) &&
+				    $u->{'quota_cache'} != $u->{'quota'}) {
+					print "    Home quota expected: ",
+					      &quota_show($u->{'quota_cache'}, "home"),"\n";
+					print "    Home byte quota expected: ",
+					      ($u->{'quota_cache'} * $home_bsize),"\n";
+					}
 				}
 			if ($u->{'unix'} && &has_mail_quotas() &&
 			    !$u->{'noquota'}) {
@@ -164,6 +174,11 @@ foreach $d (@doms) {
 				      ($u->{'mquota'} * $mail_bsize),"\n";
 				print "    Mail byte quota used: ",
 				      ($u->{'umquota'} * $mail_bsize),"\n";
+				if (defined($u->{'mquota_cache'}) &&
+				    $u->{'mquota_cache'} != $u->{'mquota'}) {
+					print "    Mail quota expected: ",
+					      &quota_show($u->{'mquota_cache'}, "mail"),"\n";
+					}
 				}
 			if ($mailsize) {
 				($msize) = &mail_file_size($u);

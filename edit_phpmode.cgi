@@ -23,7 +23,7 @@ print &ui_hidden_table_start($text{'phpmode_header'}, "width=100%", 2,
 			     "phpmode", 1, [ "width=30%" ]);
 
 if ($can) {
-	if (!$d->{'alias'} && $can == 2 &&
+	if (!$d->{'alias'} && $can &&
 	    ($p eq 'web' || &plugin_defined($p, "feature_get_web_php_mode"))) {
 		# PHP execution mode
 		push(@modes, $mode) if ($mode && &indexof($mode, @modes) < 0);
@@ -41,14 +41,16 @@ if ($can) {
 		}
 
 	# PHP fcgi sub-processes
-	if (!$d->{'alias'} && &indexof("fcgid", @modes) >= 0 && $can == 2 &&
+	if (!$d->{'alias'} && $can &&
 	    ($p eq 'web' || &plugin_defined($p, "feature_get_web_php_children"))) {
 		$children = &get_domain_php_children($d);
-		if ($children > 0) {
+		if (defined($children) && $children >= 0) {
 			print &ui_table_row(&hlink($text{'phpmode_children'},
 						   "phpmode_children"),
-				    &ui_opt_textbox("children", $children || '',
-					 5, $text{'tmpl_phpchildrennone'}));
+				    &ui_opt_textbox("children", $children > 0 ? $children : '', 5,
+				        $mode eq 'fcgid' ?
+				        $text{'tmpl_phpchildrenauto'} : 
+				        &text('tmpl_phpchildrennone', &get_php_max_childred_allowed())));
 			}
 		}
 
@@ -175,6 +177,22 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 				}
 			}
 		}
+	}
+
+# Show PHP error log
+if (&can_php_error_log($mode)) {
+	$plog = &get_domain_php_error_log($d);
+	$defplog = &get_default_php_error_log($d);
+	$mode = !$plog ? 1 :
+		$plog eq $defplog ? 2 : 0;
+	print &ui_table_row(&hlink($text{'phpmode_plog'}, 'phplog'),
+		&ui_radio_table("plog_def", $mode,
+		[ [ 1, $text{'phpmode_noplog'} ],
+		  [ 2, $text{'phpmode_defplog'},
+		       "<tt>$defplog</tt>" ],
+		  [ 0, $text{'phpmode_fileplog'},
+		    &ui_textbox("plog", $mode == 0 ? $plog : "", 60) ],
+		]));
 	}
 
 print &ui_hidden_table_end();

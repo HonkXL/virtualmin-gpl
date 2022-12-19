@@ -1,7 +1,8 @@
 # Functions for IPv6 address management
 
-# Returns 1 if this system supports IPv6 addresses. Currently only true on
-# Linux where the ifconfig command reports v6 addresses
+# Returns 1 if this system supports IPv6 addresses, or 2 if a valid-looking
+# external IPv6 address is detected. Currently only true on Linux where the
+# ifconfig command reports v6 addresses.
 sub supports_ip6
 {
 if (!defined($supports_ip6_cache)) {
@@ -9,9 +10,12 @@ if (!defined($supports_ip6_cache)) {
 	$supports_ip6_cache = 0;
 	if (&net::supports_address6()) {
 		foreach my $a (&net::active_interfaces(1)) {
-			if ($a->{'address6'} && @{$a->{'address6'}} > 0) {
+			if (&best_ip6_address($a)) {
+				$supports_ip6_cache = 2;
+				}
+			elsif ($a->{'address6'} && @{$a->{'address6'}} > 0 &&
+			       !$supports_ip6_cache) {
 				$supports_ip6_cache = 1;
-				last;
 				}
 			}
 		}
@@ -194,7 +198,9 @@ if ($orig) {
 	# For restores - option to use original IP
 	push(@opts, [ -1, $text{'form_origip'} ]);
 	}
-push(@opts, [ 0, &text('form_shared', $defip6) ]);
+if ($defip6) {
+	push(@opts, [ 0, &text('form_shared', $defip6) ]);
+	}
 local @shared = sort { $a cmp $b } &list_shared_ip6s();
 if (@shared && &can_edit_sharedips()) {
 	# Can select from extra shared list
@@ -232,9 +238,10 @@ if ($mode == 5 && $anyalloc) {
 	# Use shared or allocated (for restores only)
 	push(@opts, [ 5, &text('form_allocmaybe') ]);
 	}
-if (&indexof($mode, map { $_->[0] } @opts) < 0) {
-	# Mode is not on the list .. use shared mode
-	$mode = 0;
+my %hasmodes = map { $_->[0], 1 } @opts;
+if (!$hasmodes{$mode}) {
+	# Mode is not on the list .. use shared mode or none
+	$mode = $hasmodes{0} ? 0 : -2;
 	}
 return &ui_radio_table("virt6", $mode, \@opts, 1);
 }

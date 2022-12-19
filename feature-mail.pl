@@ -1016,7 +1016,7 @@ if ($_[0]->{'dom'} ne $_[1]->{'dom'} && $_[0]->{'mail'}) {
 			}
 
 		# Make a second pass through users to fix aliases
-		&flush_virtualmin_caches();
+		#&flush_virtualmin_caches();
 		foreach my $u (&list_domain_users($_[0])) {
 			local $oldu = { %$u };
 			if (&fix_alias_when_renaming($u, $_[0], $_[1])) {
@@ -3058,6 +3058,11 @@ if (-r "$nospam_dir/$d->{'id'}") {
 	&copy_write_as_domain_user($d, "$nospam_dir/$d->{'id'}", $file."_nospam");
 	}
 
+# Copy quota cache file
+if (-r "$quota_cache_dir/$d->{'id'}") {
+	&copy_write_as_domain_user($d, "$quota_cache_dir/$d->{'id'}", $file."_quota_cache");
+	}
+
 # Create BCC files
 if ($supports_bcc) {
 	local $bcc = &get_domain_sender_bcc($d);
@@ -3464,6 +3469,26 @@ if (-r $file."_hashpass") {
 		# Copy the whole file
 		&copy_source_dest($file."_hashpass",
 				  "$hashpass_dir/$d->{'id'}");
+		}
+	}
+
+# Restore quota cache
+if (-r $file."_quota_cache") {
+	if ($_[2]->{'mailuser'}) {
+		# Just copy for one user
+		my (%oldqc, %newqc);
+		&read_file($file."_quota_cache", \%oldqc);
+		&read_file("$quota_cache_dir/$d->{'id'}", \%newqc);
+		$newqc{$_[2]->{'mailuser'}."_quota"} =
+			$oldqc{$_[2]->{'mailuser'}."_quota"};
+		$newqc{$_[2]->{'mailuser'}."_mquota"} =
+			$oldqc{$_[2]->{'mailuser'}."_mquota"};
+		&write_file("$quota_cache_dir/$d->{'id'}", \%newqc);
+		}
+	else {
+		# Copy the whole file
+		&copy_source_dest($file."_quota_cache",
+				  "$quota_cache_dir/$d->{'id'}");
 		}
 	}
 
@@ -5052,6 +5077,47 @@ if (!$in{'new'}) {
 	}
 }
 
+# show_template_newuser(&tmpl)
+# Show the new mailbox user message template
+sub show_template_newuser
+{
+local ($tmpl) = @_;
+
+print &ui_table_row(&hlink($text{'tmpl_newuser'}, "template_newuser"),
+	&none_def_input("newuser", $tmpl->{'newuser_on'}, $text{'tmpl_mailbelow'},
+			0, 0, undef, [ "mail", "subject", "cc", "bcc" ]).
+	"<br>\n".
+	&ui_textarea("newuser", $tmpl->{'newuser'} eq "none" ? "" :
+				join("\n", split(/\t/, $tmpl->{'newuser'})),
+		     10, 60)."\n".
+	&email_template_input(undef, $tmpl->{'newuser_subject'},
+			      $tmpl->{'newuser_cc'}, $tmpl->{'newuser_bcc'},
+			      $tmpl->{'newuser_to_mailbox'},
+			      $tmpl->{'newuser_to_owner'},
+			      $tmpl->{'newuser_to_reseller'})
+	);
+}
+
+# parse_template_newuser(&tmpl)
+# Update the new mailbox user message template
+sub parse_template_newuser
+{
+local ($tmpl) = @_;
+
+$tmpl->{'newuser_on'} = $in{'newuser_mode'} == 0 ? "none" :
+		        $in{'newuser_mode'} == 1 ? "" : "yes";
+if ($tmpl->{'newuser_on'} eq 'yes') {
+	$in{'newuser'} =~ s/\r//g;
+	$tmpl->{'newuser'} = $in{'newuser'};
+	}
+$tmpl->{'newuser_subject'} = $in{'subject'};
+$tmpl->{'newuser_cc'} = $in{'cc'};
+$tmpl->{'newuser_bcc'} = $in{'bcc'};
+$tmpl->{'newuser_to_mailbox'} = $in{'mailbox'};
+$tmpl->{'newuser_to_owner'} = $in{'owner'};
+$tmpl->{'newuser_to_reseller'} = $in{'reseller'};
+}
+
 # get_generics_hash()
 # Returns a hash of all username to outgoing address mappings
 sub get_generics_hash
@@ -6218,17 +6284,17 @@ foreach my $l (@$lref) {
 return $rv;
 }
 
-# enable_dns_autoconfig(&domain, autoconfig-hostname, [force-file])
+# enable_dns_autoconfig(&domain, autoconfig-hostname, [force-file, &recs])
 # Add the DNS records needed for email autoconfig
 sub enable_dns_autoconfig
 {
-my ($d, $autoconfig, $forcefile) = @_;
+my ($d, $autoconfig, $forcefile, $forcerecs) = @_;
 &obtain_lock_dns($d);
 my ($recs, $file);
 if ($forcefile) {
 	&require_bind();
 	$file = $forcefile;
-	$recs = [ &bind8::read_zone_file($file, $d->{'dom'}) ];
+	$recs = $forcerecs || [ &bind8::read_zone_file($file, $d->{'dom'}) ];
 	}
 else {
 	($recs, $file) = &get_domain_dns_records_and_file($d);

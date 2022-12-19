@@ -46,9 +46,9 @@ foreach $f (@features) {
 			}
 		elsif ($factive{$f}) {
 			# Enabled by default
-			if ($f eq "logrotate" && $config{$f} != 1) {
-				# For logrotate, use always mode unless the user
-				# had it on enabled but optional
+			if (&can_chained_feature($f) && $config{$f} != 1) {
+				# For these features, use chain mode unless
+				# the user had it on enabled but optional
 				$config{$f} = 3;
 				}
 			else {

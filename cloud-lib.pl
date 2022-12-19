@@ -15,11 +15,12 @@ my @rv = ( { 'name' => 's3',
 	     'desc' => $text{'cloud_rsdesc'},
 	     'longdesc' => $text{'cloud_rs_longdesc'} } );
 if ($virtualmin_pro) {
+	my $ourl = &get_miniserv_base_url()."/$module_name/oauth.cgi";
 	push(@rv, { 'name' => 'google',
 		    'prefix' => [ 'gcs' ],
 		    'url' => 'https://cloud.google.com/storage',
 		    'desc' => $text{'cloud_googledesc'},
-		    'longdesc' => $text{'cloud_google_longdesc'} });
+		    'longdesc' => &text('cloud_google_longdesc', $ourl) });
 	push(@rv, { 'name' => 'dropbox',
 		    'prefix' => [ 'dropbox' ],
 		    'url' => 'https://www.dropbox.com/',
@@ -30,6 +31,11 @@ if ($virtualmin_pro) {
 		    'url' => 'https://www.backblaze.com/',
 		    'desc' => $text{'cloud_bbdesc'},
 		    'longdesc' => $text{'cloud_bb_longdesc'} });
+	push(@rv, { 'name' => 'azure',
+		    'prefix' => [ 'azure' ],
+		    'url' => 'https://azure.microsoft.com/',
+		    'desc' => $text{'cloud_azdesc'},
+		    'longdesc' => $text{'cloud_az_longdesc'} });
 	}
 return @rv;
 }
@@ -267,7 +273,8 @@ return ( [ 'https://identity.api.rackspacecloud.com/v1.0', 'US default' ],
 
 sub cloud_google_get_state
 {
-if ($config{'google_account'} && $config{'google_oauth'}) {
+if ($config{'google_account'} &&
+    ($config{'google_oauth'} || $config{'google_rtoken'})) {
 	return { 'ok' => 1,
 		 'desc' => &text('cloud_gaccount',
 				 "<tt>$config{'google_account'}</tt>",
@@ -289,11 +296,11 @@ $rv .= &ui_table_row($text{'cloud_google_account'},
 
 # Google OAuth2 client ID
 $rv .= &ui_table_row($text{'cloud_google_clientid'},
-	&ui_textbox("google_clientid", $config{'google_clientid'}, 60));
+	&ui_textbox("google_clientid", $config{'google_clientid'}, 80));
 
 # Google client secret
 $rv .= &ui_table_row($text{'cloud_google_secret'},
-	&ui_textbox("google_secret", $config{'google_secret'}, 40));
+	&ui_textbox("google_secret", $config{'google_secret'}, 60));
 
 # GCE project name
 $rv .= &ui_table_row($text{'cloud_google_project'},
@@ -319,86 +326,58 @@ sub cloud_google_parse_inputs
 my ($in) = @_;
 my $reauth = 0;
 
-if ($in{'google_set_oauth'}) {
-	# Special mode - saving the oauth token
-	$in->{'google_oauth'} =~ /^\S+$/ ||
-		&error($text{'cloud_egoogle_oauth'});
-	$config{'google_oauth'} = $in->{'google_oauth'};
-	}
-else {
-	# Parse google account
-	$in->{'google_account'} =~ /^\S+\@\S+$/ ||
-		&error($text{'cloud_egoogle_account'});
-	$reauth++ if ($config{'google_account'} ne $in->{'google_account'});
-	$config{'google_account'} = $in->{'google_account'};
+# Parse google account
+$in->{'google_account'} =~ /^\S+\@\S+$/ ||
+	&error($text{'cloud_egoogle_account'});
+$reauth++ if ($config{'google_account'} ne $in->{'google_account'});
+$config{'google_account'} = $in->{'google_account'};
 
-	# Parse client ID
-	$in->{'google_clientid'} =~ /^\S+$/ ||
-		&error($text{'cloud_egoogle_clientid'});
-	$reauth++ if ($config{'google_clientid'} ne $in->{'google_clientid'});
-	$config{'google_clientid'} = $in->{'google_clientid'};
+# Parse client ID
+$in->{'google_clientid'} =~ /^\S+$/ ||
+	&error($text{'cloud_egoogle_clientid'});
+$reauth++ if ($config{'google_clientid'} ne $in->{'google_clientid'});
+$config{'google_clientid'} = $in->{'google_clientid'};
 
-	# Parse client secret
-	$in->{'google_secret'} =~ /^\S+$/ ||
-		&error($text{'cloud_egoogle_secret'});
-	$reauth++ if ($config{'google_secret'} ne $in->{'google_secret'});
-	$config{'google_secret'} = $in->{'google_secret'};
+# Parse client secret
+$in->{'google_secret'} =~ /^\S+$/ ||
+	&error($text{'cloud_egoogle_secret'});
+$reauth++ if ($config{'google_secret'} ne $in->{'google_secret'});
+$config{'google_secret'} = $in->{'google_secret'};
 
-	# Parse project name
-	$in->{'google_project'} =~ /^\S+$/ ||
-		&error($text{'cloud_egoogle_project'});
-	$reauth++ if ($config{'google_project'} ne $in->{'google_project'});
-	$config{'google_project'} = $in->{'google_project'};
+# Parse project name
+$in->{'google_project'} =~ /^\S+$/ ||
+	&error($text{'cloud_egoogle_project'});
+$reauth++ if ($config{'google_project'} ne $in->{'google_project'});
+$config{'google_project'} = $in->{'google_project'};
 
-	# Parse bucket location
-	$config{'google_location'} = $in->{'google_location'};
+# Parse bucket location
+$config{'google_location'} = $in->{'google_location'};
 
-	$reauth++ if (!$config{'google_oauth'});
-	}
-
-if ($config{'google_oauth'} && !$config{'google_token'}) {
-	# Need to get access token for the first time
-	my $gce = { 'oauth' => $config{'google_oauth'},
-	            'clientid' => $config{'google_clientid'},
-		    'secret' => $config{'google_secret'} };
-	my ($ok, $token, $rtoken, $ttime) = &get_oauth_access_token($gce);
-	$ok || &error(&text('cloud_egoogletoken', $token));
-	$config{'google_token'} = $token;
-	$config{'google_rtoken'} = $rtoken;
-	$config{'google_ttime'} = $ttime;
-	$config{'google_tstart'} = time();
-
-	# Validate that it actually works
-	my $buckets = &list_gcs_buckets();
-	ref($buckets) || &error(&text('cloud_egoogletoken2', $buckets));
-	}
+$reauth++ if (!$config{'google_oauth'});
 
 &lock_file($module_config_file);
+$config{'cloud_oauth_mode'} = $reauth ? 'google' : undef;
 &save_module_config();
 &unlock_file($module_config_file);
 
-if ($in{'google_set_oauth'} || !$reauth) {
+if (!$reauth) {
 	# Nothing more to do - either the OAuth2 token was just set, or the
 	# settings were saved with no change
 	return undef;
 	}
 
+my $url = &get_miniserv_base_url()."/virtual-server/oauth.cgi";
 return $text{'cloud_descoauth'}."<p>\n".
        &ui_link("https://accounts.google.com/o/oauth2/auth?".
                 "scope=https://www.googleapis.com/auth/devstorage.read_write&".
-                "redirect_uri=urn:ietf:wg:oauth:2.0:oob&".
+                "redirect_uri=".&urlize($url)."&".
                 "response_type=code&".
                 "client_id=".&urlize($in->{'google_clientid'})."&".
-		"login_hint=".&urlize($in->{'google_account'}),
-                $text{'cloud_openoauth'},
-                undef,
-                "target=_blank")."<p>\n".
-       &ui_form_start("save_cloud.cgi", "post").
-       &ui_hidden("name", "google").
-       &ui_hidden("google_set_oauth", 1).
-       "<b>$text{'cloud_newoauth'}</b> ".
-       &ui_textbox("google_oauth", undef, 80)."<p>\n".
-       &ui_form_end([ [ undef, $text{'save'} ] ]);
+                "login_hint=".&urlize($in->{'google_account'})."&".
+                "access_type=offline&".
+                "prompt=consent", $text{'cloud_openoauth'},
+                undef, "target=_blank")."<p>\n".
+       $text{'cloud_descoauth2'}."<p>\n";
 }
 
 # cloud_google_clear()
@@ -410,6 +389,7 @@ delete($config{'google_clientid'});
 delete($config{'google_secret'});
 delete($config{'google_oauth'});
 delete($config{'google_token'});
+delete($config{'google_rtoken'});
 &lock_file($module_config_file);
 &save_module_config();
 &unlock_file($module_config_file);
@@ -590,5 +570,112 @@ delete($config{'cloud_bb_reseller'});
 &save_module_config();
 &unlock_file($module_config_file);
 }
+
+######## Functions for Backblaze ########
+
+sub cloud_azure_get_state
+{
+if ($config{'azure_account'} && $config{'azure_name'} && $config{'azure_id'}) {
+	return { 'ok' => 1,
+		 'desc' => &text('cloud_azaccount',
+				 "<tt>$config{'azure_account'}</tt>",
+				 "<tt>$config{'azure_name'}</tt>"),
+	       };
+	}
+else {
+	return { 'ok' => 0 };
+	}
+}
+
+sub cloud_azure_show_inputs
+{
+my $rv;
+
+# Azure account
+$rv .= &ui_table_row($text{'cloud_azure_account'},
+	&ui_textbox("azure_account", $config{'azure_account'}, 60));
+
+# Storage account name
+if ($config{'azure_name'}) {
+	$rv .= &ui_table_row($text{'cloud_azure_name'},
+		&ui_textbox("azure_name", $config{'azure_name'}, 40));
+	}
+else {
+	$rv .= &ui_table_row($text{'cloud_azure_name'},
+		&ui_opt_textbox("azure_name", $config{'azure_name'}, 40,
+				$text{'cloud_azure_auto'}));
+	}
+
+# Storage subscription ID
+if ($config{'azure_id'}) {
+	$rv .= &ui_table_row($text{'cloud_azure_id'},
+		&ui_textbox("azure_id", $config{'azure_id'}, 40));
+	}
+else {
+	$rv .= &ui_table_row($text{'cloud_azure_id'},
+		&ui_opt_textbox("azure_id", $config{'azure_id'}, 40,
+				$text{'cloud_azure_auto'}));
+	}
+
+return $rv;
+}
+
+sub cloud_azure_parse_inputs
+{
+# Save account and check that it's in use
+$in{'azure_account'} =~ /^\S+\@\S+$/ || &error($text{'cloud_eazure_eaccount'});
+$config{'azure_account'} = $in{'azure_account'};
+my $out = &call_az_cmd("account", ["list"]);
+ref($out) && @$out || &error($text{'cloud_eazure_eaccount3'});
+$out->[0]->{'user'}->{'name'} eq $in{'azure_account'} ||
+	&error(&text('cloud_eazure_eaccount2', $out->[0]->{'user'}->{'name'}));
+
+# Fetch list of storage accounts
+my $stors = &call_az_cmd("storage", ["account", "list"]);
+ref($stors) || &error($stors);
+@$stors || &error($text{'cloud_eazure_estor'});
+if ($in{'azure_name_def'}) {
+	$config{'azure_name'} = $stors->[0]->{'name'};
+	}
+else {
+	$in{'azure_name'} =~ /^[a-z0-9]+$/ ||
+		&error($text{'cloud_eazure_ename'});
+	$config{'azure_name'} = $in{'azure_name'};
+	}
+if ($in{'azure_id_def'}) {
+	$stors->[0]->{'id'} =~ /^\/subscriptions\/([^\/]+)\// ||
+		&error($text{'cloud_eazure_eid2'});
+	$config{'azure_id'} = $1;
+	}
+else {
+	$in{'azure_id'} =~ /^[a-z0-9\-]+$/ ||
+		&error($text{'cloud_eazure_eid'});
+	$config{'azure_id'} = $in{'azure_id'};
+	}
+
+# Make sure the storage account entered works
+my $list = &call_az_cmd("storage", ["container", "list"]);
+ref($list) || &error(&text('cloud_eazure_elist', (split(/\r?\n/, $list))[0]));
+
+&lock_file($module_config_file);
+&save_module_config();
+&unlock_file($module_config_file);
+
+return undef;
+}
+
+# cloud_azure_clear()
+# Reset the Azure account to the default
+sub cloud_azure_clear
+{
+&lock_file($module_config_file);
+delete($config{'azure_account'});
+delete($config{'azure_name'});
+delete($config{'azure_id'});
+&save_module_config();
+&unlock_file($module_config_file);
+}
+
+
 
 1;

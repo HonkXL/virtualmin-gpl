@@ -40,11 +40,29 @@ if (!$_[0]->{'mysql'}) {
 return undef;
 }
 
-# check_mysql_clash(&domain, [field])
+# obtain_lock_mysql(&domain)
+# Lock the MySQL config for a domain
+sub obtain_lock_mysql
+{
+my ($d) = @_;
+return if (!$config{'mysql'});
+&obtain_lock_anything($d);
+}
+
+# release_lock_mysql(&domain)
+# Un-lock the MySQL config file for some domain
+sub release_lock_mysql
+{
+local ($d) = @_;
+return if (!$config{'mysql'});
+&release_lock_anything($d);
+}
+
+# check_mysql_clash(&domain, [field], [replication-mode])
 # Returns 1 if some MySQL user or database is used by another domain
 sub check_mysql_clash
 {
-local ($d, $field) = @_;
+local ($d, $field, $repl) = @_;
 local @doms = grep { $_->{'mysql'} && $_->{'id'} ne $d->{'id'} }
 		   &list_domains();
 
@@ -1005,13 +1023,14 @@ foreach my $r (@{$u->{'data'}}) {
 return undef;
 }
 
-# check_warnings_mysql(&dom, &old-domain)
+# check_warnings_mysql(&dom, &old-domain, [replication-mode])
 # Return warning if a MySQL database or user with a clashing name exists.
 # This can be overridden to allow a takeover of the DB.
 sub check_warnings_mysql
 {
 local ($d, $oldd) = @_;
 $d->{'mysql'} && (!$oldd || !$oldd->{'mysql'}) || return undef;
+return undef if ($repl);	# Clashes are expected in MySQL is shared
 if ($d->{'provision_mysql'}) {
 	# DB clash on provisioning server
 	my ($ok, $msg) = &provision_api_call(
@@ -1478,6 +1497,7 @@ sub create_mysql_database
 {
 local ($d, $dbname, $opts) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 local @dbs = split(/\s+/, $d->{'db_mysql'});
 
 if ($d->{'provision_mysql'}) {
@@ -1492,6 +1512,7 @@ if ($d->{'provision_mysql'}) {
 	my ($ok, $msg) = &provision_api_call(
 		"provision-mysql-database", $info, 0);
 	if (!$ok) {
+		&release_lock_mysql($d);
 		&$second_print(&text('setup_emysqldb_provision', $msg));
 		return 0;
 		}
@@ -1518,6 +1539,7 @@ else {
 	}
 push(@dbs, $dbname);
 $d->{'db_mysql'} = join(" ", &unique(@dbs));
+&release_lock_mysql($d);
 return 1;
 }
 
@@ -1528,6 +1550,7 @@ sub grant_mysql_database
 {
 local ($d, $dbname) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 
 if ($d->{'provision_mysql'}) {
 	# Call remote API to grant access
@@ -1558,6 +1581,7 @@ else {
 		&system_logged("chmod +s ".quotemeta($dd));
 		}
 	}
+&release_lock_mysql($d);
 }
 
 # delete_mysql_database(&domain, dbname, ...)
@@ -1566,6 +1590,7 @@ sub delete_mysql_database
 {
 local ($d, @dbnames) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 local @dbs = split(/\s+/, $d->{'db_mysql'});
 local @missing;
 local $failed = 0;
@@ -1617,6 +1642,7 @@ else {
 	}
 
 $d->{'db_mysql'} = join(" ", &unique(@dbs));
+&release_lock_mysql($d);
 if (!$failed) {
 	&$second_print($text{'setup_done'});
 	}
@@ -1629,6 +1655,7 @@ sub revoke_mysql_database
 {
 local ($d, $dbname) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 local @oldusers = &list_mysql_database_users($d, $dbname);
 local @users = &list_domain_users($d, 1, 1, 1, 0);
 local @unames = ( &mysql_user($d),
@@ -1663,6 +1690,7 @@ if ($tmpl->{'mysql_chgrp'} && $dd && -d $dd) {
 	local $group = scalar(@st) ? $st[5] : "mysql";
 	&system_logged("chgrp -R $group ".quotemeta($dd));
 	}
+&release_lock_mysql($d);
 }
 
 # get_mysql_database_dir(&domain, db)
@@ -1812,6 +1840,7 @@ sub create_mysql_database_user
 {
 local ($d, $dbs, $user, $pass, $encpass, $restored) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 if ($d->{'provision_mysql'}) {
 	# Create on provisioning server
 	my $info = { 'user' => $user };
@@ -1852,6 +1881,7 @@ else {
 		};
 	&execute_for_all_mysql_servers($cfunc);
 	}
+&release_lock_mysql($d);
 }
 
 # delete_mysql_database_user(&domain, username)
@@ -1860,6 +1890,7 @@ sub delete_mysql_database_user
 {
 local ($d, $user) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 local $myuser = &mysql_username($user);
 if ($d->{'provision_mysql'}) {
 	# Delete on provisioning server
@@ -1877,6 +1908,7 @@ else {
 		};
 	&execute_for_all_mysql_servers($dfunc);
 	}
+&release_lock_mysql($d);
 }
 
 # modify_mysql_database_user(&domain, &olddbs, &dbs, oldusername, username,
@@ -1887,6 +1919,7 @@ sub modify_mysql_database_user
 {
 local ($d, $olddbs, $dbs, $olduser, $user, $pass, $encpass) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 local $myuser = &mysql_username($user);
 local $myolduser = &mysql_username($olduser);
 if ($d->{'provision_mysql'}) {
@@ -1950,6 +1983,7 @@ else {
 		};
 	&execute_for_all_mysql_servers($mfunc);
 	}
+&release_lock_mysql($d);
 }
 
 # list_mysql_tables(&domain, database)
@@ -2312,6 +2346,7 @@ sub save_mysql_allowed_hosts
 {
 local ($d, $hosts) = @_;
 &require_mysql();
+&obtain_lock_mysql($d);
 local $user = &mysql_user($d);
 
 if ($d->{'provision_mysql'}) {
@@ -2381,6 +2416,7 @@ else {
 		};
 	&execute_for_all_mysql_servers($ufunc);
 	}
+&release_lock_mysql($d);
 
 return undef;
 }
@@ -2658,7 +2694,7 @@ return $conns;
 
 sub list_mysql_size_setting_types
 {
-return ("small", "medium", "large", "huge");
+return ("default", "small", "medium", "large", "huge");
 }
 
 # list_mysql_size_settings("small"|"medium"|"large"|"huge")
@@ -2671,100 +2707,61 @@ local ($size, $myver, $variant) = @_;
 ($myver, $variant) = &get_dom_remote_mysql_version() if (!$myver && !$variant);
 my $cachedir = &compare_versions($myver, "5.1.3") > 0 ? "table_open_cache"
 						      : "table_cache";
-my $tc = &compare_versions($myver, "5.7") < 0;
 my $mysql8 = &compare_versions($myver, "8.0") >= 0 && $variant ne "mariadb";
-my $buffer_suffix = $mysql8 ? "_size" : "";
-if ($size eq "small") {
-	return ([ "key_buffer_size", "16K" ],
-		[ $cachedir, "4" ],
-		[ "sort_buffer_size", "64K" ],
-		[ "read_buffer_size", "256K" ],
-		[ "read_rnd_buffer_size", "256K" ],
-		[ "net_buffer_length", "2K" ],
+if ($size eq "default") {
+	return ([ "key_buffer_size", undef ],
+		[ $cachedir, undef ],
+		[ "sort_buffer_size", undef ],
+		[ "read_buffer_size", undef ],
+		[ "read_rnd_buffer_size", undef ],
+		[ "net_buffer_length", undef ],
 		[ "myisam_sort_buffer_size", undef ],
-		[ "thread_stack", "128K" ],
 		[ "thread_cache_size", undef ],
-		[ "query_cache_size", undef ],
-		[ "thread_concurrency", undef ],
-
-		[ "key_buffer_size", "8M", "isamchk" ],
-		[ "sort_buffer_size", "8M", "isamchk" ],
-		[ "read_buffer", undef, "isamchk" ],
-		[ "write_buffer", undef, "isamchk" ],
-
-		[ "key_buffer_size", "8M", "myisamchk" ],
-		[ "sort_buffer_size", "8M", "myisamchk" ],
-		[ "read_buffer", undef, "myisamchk" ],
-		[ "write_buffer", undef, "myisamchk" ]);
+		[ "query_cache_size", undef ]);
+	}
+elsif ($size eq "small") {
+	return ([ "key_buffer_size", "128M" ],
+		[ $cachedir, undef ],
+		[ "sort_buffer_size", "2M" ],
+		[ "read_buffer_size", undef ],
+		[ "read_rnd_buffer_size", "256K" ],
+		[ "net_buffer_length", undef ],
+		[ "myisam_sort_buffer_size", undef ],
+		[ "thread_cache_size", undef ],
+		[ "query_cache_size", undef ]);
 	}
 elsif ($size eq "medium") {
-	return ([ "key_buffer_size", "16M" ],
-		[ $cachedir, "64" ],
-		[ "sort_buffer_size", "512K" ],
+	return ([ "key_buffer_size", "192M" ],
+		[ $cachedir, "4000" ],
+		[ "sort_buffer_size", "3M" ],
 		[ "read_buffer_size", "256K" ],
-		[ "net_buffer_length", "8K" ],
+		[ "net_buffer_length", undef ],
 		[ "read_rnd_buffer_size", "512K" ],
-		[ "myisam_sort_buffer_size", "8M" ],
-		[ "thread_stack", undef ],
+		[ "myisam_sort_buffer_size", undef ],
 		[ "thread_cache_size", undef ],
-		[ "query_cache_size", undef ],
-		[ "thread_concurrency", undef ],
-
-		[ "key_buffer_size", "20M", "isamchk" ],
-		[ "sort_buffer_size", "20M", "isamchk" ],
-		[ "read_buffer$buffer_suffix", "2M", "isamchk" ],
-		[ "write_buffer", $mysql8 ? undef : "2M", "isamchk" ],
-
-		[ "key_buffer_size", "20M", "myisamchk" ],
-		[ "sort_buffer_size", "20M", "myisamchk" ],
-		[ "read_buffer$buffer_suffix", "2M", "myisamchk" ],
-		[ "write_buffer", $mysql8 ? undef : "2M", "myisamchk" ]);
+		[ "query_cache_size", undef ]);
 	}
 elsif ($size eq "large") {
 	return ([ "key_buffer_size", "256M" ],
-		[ $cachedir, "256" ],
-		[ "sort_buffer_size", "1M" ],
-		[ "read_buffer_size", "1M" ],
+		[ $cachedir, "6000" ],
+		[ "sort_buffer_size", "4M" ],
+		[ "read_buffer_size", "512K" ],
 		[ "net_buffer_length", undef ],
-		[ "read_rnd_buffer_size", "4M" ],
-		[ "myisam_sort_buffer_size", "64M" ],
-		[ "thread_stack", undef ],
-		[ "thread_cache_size", "8" ],
-		[ "query_cache_size", $mysql8 ? undef : "16M" ],
-		[ "thread_concurrency", $tc ? "8" : undef ],
-
-		[ "key_buffer_size", "128M", "isamchk" ],
-		[ "sort_buffer_size", "128M", "isamchk" ],
-		[ "read_buffer$buffer_suffix", "2M", "isamchk" ],
-		[ "write_buffer", $mysql8 ? undef : "2M", "isamchk" ],
-
-		[ "key_buffer_size", "128M", "myisamchk" ],
-		[ "sort_buffer_size", "128M", "myisamchk" ],
-		[ "read_buffer$buffer_suffix", "2M", "myisamchk" ],
-		[ "write_buffer", $mysql8 ? undef : "2M", "myisamchk" ]);
+		[ "read_rnd_buffer_size", "1M" ],
+		[ "myisam_sort_buffer_size", "256M" ],
+		[ "thread_cache_size", "512" ],
+		[ "query_cache_size", $mysql8 ? undef : "4M" ]);
 	}
 elsif ($size eq "huge") {
 	return ([ "key_buffer_size", "384M" ],
-		[ $cachedir, "512" ],
-		[ "sort_buffer_size", "2M" ],
-		[ "read_buffer_size", "2M" ],
+		[ $cachedir, "8000" ],
+		[ "sort_buffer_size", "6M" ],
+		[ "read_buffer_size", "768K" ],
 		[ "net_buffer_length", undef ],
-		[ "read_rnd_buffer_size", "8M" ],
-		[ "myisam_sort_buffer_size", "64M" ],
-		[ "thread_stack", undef ],
-		[ "thread_cache_size", "8" ],
-		[ "query_cache_size", $mysql8 ? undef : "32M" ],
-		[ "thread_concurrency", $tc ? "8" : undef ],
-
-		[ "key_buffer_size", "256M", "isamchk" ],
-		[ "sort_buffer_size", "256M", "isamchk" ],
-		[ "read_buffer$buffer_suffix", "2M", "isamchk" ],
-		[ "write_buffer", $mysql8 ? undef : "2M", "isamchk" ],
-
-		[ "key_buffer_size", "256M", "myisamchk" ],
-		[ "sort_buffer_size", "256M", "myisamchk" ],
-		[ "read_buffer$buffer_suffix", "2M", "myisamchk" ],
-		[ "write_buffer", $mysql8 ? undef : "2M", "myisamchk" ]);
+		[ "read_rnd_buffer_size", "2M" ],
+		[ "myisam_sort_buffer_size", "384M" ],
+		[ "thread_cache_size", "768" ],
+		[ "query_cache_size", $mysql8 ? undef : "8M" ]);
 	}
 return ( );
 }

@@ -24,7 +24,7 @@ foreach my $lib ("scripts", "resellers", "admins", "simple", "s3",
 		 "dkim", "provision", "stats", "bkeys", "rs", "cron",
 		 "ratelimit", "cloud", "google", "gcs", "dropbox", "copycert",
 		 "jailkit", "ports", "bb", "dnscloud", "dnscloudpro",
-		 "smtpcloud", "pro-tip") {
+		 "smtpcloud", "pro-tip", "azure") {
 	my $libfile = "$virtual_server_root/pro/$lib-lib.pl";
 	if (!-r $libfile) {
 		$libfile = "$virtual_server_root/$lib-lib.pl";
@@ -578,6 +578,7 @@ my $id = $d->{'id'};
 &unlink_file("$plainpass_dir/$id");
 &unlink_file("$hashpass_dir/$id");
 &unlink_file("$nospam_dir/$id");
+&unlink_file("$quota_cache_dir/$id");
 
 if (defined(&get_autoreply_file_dir)) {
 	# Delete any autoreply file links
@@ -706,24 +707,24 @@ if ($config{'mail'} && !$novirts) {
 
 # Get all virtusers to look for those for users
 local @virts;
-if (!$_[2]) {
+if (!$novirts) {
 	@virts = &list_virtusers();
 	}
 
 # Are we setting quotas individually?
 local $ind_quota = 0;
-if (&has_quota_commands() && $config{'quota_get_user_command'} && $_[0]) {
+if (&has_quota_commands() && $config{'quota_get_user_command'} && $d) {
 	$ind_quota = 1;
 	}
 
 local @users = &list_all_users_quotas($noquotas || $ind_quota);
-if ($_[0]) {
+if ($d) {
 	# Limit to domain users.
-	@users = grep { $_[0]->{'gid'} ne '' &&
-			$_->{'gid'} == $_[0]->{'gid'} ||
-			$_->{'user'} eq $_[0]->{'user'} } @users;
+	@users = grep { $d->{'gid'} ne '' &&
+			$_->{'gid'} == $d->{'gid'} ||
+			$_->{'user'} eq $d->{'user'} } @users;
 	foreach my $u (@users) {
-		if ($u->{'user'} eq $_[0]->{'user'} && $u->{'unix'}) {
+		if ($u->{'user'} eq $d->{'user'} && $u->{'unix'}) {
 			# Virtual server owner
 			$u->{'domainowner'} = 1;
 			if ($config{'mail_system'} == 5) {
@@ -736,7 +737,7 @@ if ($_[0]) {
 				$u->{'pass_digest'} = $d->{'digest_enc_pass'};
 				}
 			}
-		elsif ($u->{'uid'} == $_[0]->{'uid'} && $u->{'unix'}) {
+		elsif ($u->{'uid'} == $d->{'uid'} && $u->{'unix'}) {
 			# Web management user
 			$u->{'webowner'} = 1;
 			$u->{'noquota'} = 1;
@@ -758,16 +759,16 @@ if ($_[0]) {
 			}
 		}
 	local @subdoms;
-	if ($_[0]->{'parent'}) {
+	if ($d->{'parent'}) {
 		# This is a subdomain - exclude parent domain users
-		@users = grep { $_->{'home'} =~ /^$_[0]->{'home'}\// } @users;
+		@users = grep { $_->{'home'} =~ /^$d->{'home'}\// } @users;
 		}
-	elsif (@subdoms = &get_domain_by("parent", $_[0]->{'id'})) {
+	elsif (@subdoms = &get_domain_by("parent", $d->{'id'})) {
 		# This domain has subdomains - exclude their users
-		@users = grep { $_->{'home'} !~ /^$_[0]->{'home'}\/domains\// } @users;
+		@users = grep { $_->{'home'} !~ /^$d->{'home'}\/domains\// } @users;
 		}
 	@users = grep { !$_->{'domainowner'} } @users
-		if ($_[1] || $_[0]->{'parent'});
+		if ($skipunix || $d->{'parent'});
 
 	# Remove users with @ in their names for whom a user with the @ replace
 	# already exists (for Postfix)
@@ -788,7 +789,7 @@ if ($_[0]) {
 				   );
 		local $user;
 		local $_;
-		open(UINFO, "$vpopbin/vuserinfo -D $_[0]->{'dom'} |");
+		open(UINFO, "$vpopbin/vuserinfo -D $d->{'dom'} |");
 		while(<UINFO>) {
 			s/\r|\n//g;
 			if (/^([^:]+):\s+(.*)$/) {
@@ -818,7 +819,7 @@ if ($_[0]) {
 				if ($amapped eq "user") {
 					# Email is fixed with vpopmail
 					$user->{'email'} =
-						$value."\@".$_[0]->{'dom'};
+						$value."\@".$d->{'dom'};
 					}
 				}
 			}
@@ -910,7 +911,7 @@ else {
 	}
 
 # Set appropriate quota field
-local $tmpl = &get_template($_[0] ? $_[0]->{'template'} : 0);
+local $tmpl = &get_template($d ? $d->{'template'} : 0);
 local $qtype = $tmpl->{'quotatype'};
 local $u;
 foreach $u (@users) {
@@ -918,10 +919,21 @@ foreach $u (@users) {
 	$u->{'mquota'} = $u->{$qtype.'mquota'} if (!defined($u->{'mquota'}));
 	}
 
+# Merge in cached quotas
+if ($d) {
+	my $qfile = $quota_cache_dir."/".$d->{'id'};
+	my %qcache;
+	&read_file_cached($qfile, \%qcache);
+	foreach $u (@users) {
+		$u->{'quota_cache'} = $qcache{$u->{'user'}."_quota"};
+		$u->{'mquota_cache'} = $qcache{$u->{'user'}."_mquota"};
+		}
+	}
+
 # Check if spamc is being used
 local $spamc;
-if ($_[0] && $_[0]->{'spam'}) {
-	local $spamclient = &get_domain_spam_client($_[0]);
+if ($d && $d->{'spam'}) {
+	local $spamclient = &get_domain_spam_client($d);
 	$spamc = 1 if ($spamclient =~ /spamc/);
 	}
 
@@ -931,7 +943,7 @@ if (&has_home_quotas()) {
 	foreach $u (@users) {
 		local $diff = $u->{'quota'}*$bsize - $u->{'uquota'}*$bsize;
 		if ($u->{'quota'} && $diff < $quota_spam_margin &&
-		    $_[0]->{'spam'} && !$spamc) {
+		    $d->{'spam'} && !$spamc) {
 			# Close to quota, which will block spamassassin ..
 			$u->{'spam_quota'} = 1;
 			$u->{'spam_quota_diff'} = $diff < 0 ? 0 : $diff;
@@ -960,7 +972,7 @@ if (!$novirts) {
 		}
 	}
 
-if (!$_[2]) {
+if (!$novirts) {
 	# Add email addresses and forwarding addresses to user structures
 	foreach my $u (@users) {
 		$u->{'email'} = $u->{'virt'} = undef;
@@ -971,7 +983,7 @@ if (!$_[2]) {
 			$u->{'alias'} = $al;
 			$u->{'to'} = $al->{'values'};
 			}
-		elsif ($va = $valiases{"$u->{'user'}\@$_[0]->{'dom'}"}) {
+		elsif ($va = $valiases{"$u->{'user'}\@$d->{'dom'}"}) {
 			$u->{'valias'} = $va;
 			$u->{'to'} = $va->{'to'};
 			}
@@ -985,9 +997,9 @@ if (!$_[2]) {
 				}
 			}
 		$u->{'generic'} = $generics{$u->{'user'}};
-		local $pop3 = $_[0] ? &remove_userdom($u->{'user'}, $_[0])
+		local $pop3 = $d ? &remove_userdom($u->{'user'}, $d)
 				    : $u->{'user'};
-		local $email = $_[0] ? "$pop3\@$_[0]->{'dom'}" : undef;
+		local $email = $d ? "$pop3\@$d->{'dom'}" : undef;
 		local $escuser = &escape_user($u->{'user'});
 		local $escalias = &escape_alias($u->{'user'});
 		local $v;
@@ -999,7 +1011,7 @@ if (!$_[2]) {
 			      $config{'mail_system'} != 5) ||
 			     $v->{'from'} eq $email &&
 			      $v->{'to'}->[0] =~ /^BOUNCE/) &&
-			    (!$_[0] || $v->{'from'} ne $_[0]->{'dom'})) {
+			    (!$d || $v->{'from'} ne $d->{'dom'})) {
 				if ($v->{'from'} eq $email) {
 					if ($v->{'to'}->[0] !~ /^BOUNCE/) {
 						$u->{'email'} = $email;
@@ -1016,9 +1028,9 @@ if (!$_[2]) {
 		}
 	}
 
-if (!$_[4] && $_[0]) {
+if (!$_[4] && $d) {
 	# Add accessible databases
-	local @dbs = &domain_databases($_[0]);
+	local @dbs = &domain_databases($d);
 	local $db;
 	local %dbdone;
 	foreach $u (@users) {
@@ -1032,22 +1044,22 @@ if (!$_[4] && $_[0]) {
 			local $dfunc = "list_".$db->{'type'}."_database_users";
 			next if (!defined(&$dfunc));
 			$ufunc = $db->{'type'}."_username";
-			@dbu = &$dfunc($_[0], $db->{'name'});
+			@dbu = &$dfunc($d, $db->{'name'});
 			}
 		else {
 			# Plugin database
 			next if (!&plugin_defined($db->{'type'},
 						  "database_users"));
 			@dbu = &plugin_call($db->{'type'}, "database_users",
-					    $_[0], $db->{'name'});
+					    $d, $db->{'name'});
 			}
 		local %dbu = map { $_->[0], $_->[1] } @dbu;
 		local $u;
 		local $domufunc = $db->{'type'}.'_user';
-		local $domu = defined(&$domufunc) ? &$domufunc($_[0]) : undef;
+		local $domu = defined(&$domufunc) ? &$domufunc($d) : undef;
 		foreach $u (@users) {
 			# Domain owner always gets all databases
-			next if ($u->{'user'} eq $_[0]->{'user'} &&
+			next if ($u->{'user'} eq $d->{'user'} &&
 				 $u->{'unix'});
 
 			# For each user, add this DB to his list if there
@@ -1067,14 +1079,14 @@ if (!$_[4] && $_[0]) {
 		}
 
 	# Add plugin databases
-	local @dbs = &domain_databases($_[0]);
+	local @dbs = &domain_databases($d);
 	foreach $db (@dbs) {
 		next if (&indexof($db->{'type'}, &list_database_plugins()) == -1);
 		}
 	}
 
 # Add any secondary groups in the template
-local @sgroups = &allowed_secondary_groups($_[0]);
+local @sgroups = &allowed_secondary_groups($d);
 if (@sgroups) {
 	local @groups = &list_all_groups();
 	foreach my $u (@users) {
@@ -1095,9 +1107,9 @@ if (@sgroups) {
 	}
 
 # Add no-spam flags
-if ($_[0]) {
+if ($d) {
 	local %nospam;
-	&read_file_cached("$nospam_dir/$_[0]->{'id'}", \%nospam);
+	&read_file_cached("$nospam_dir/$d->{'id'}", \%nospam);
 	foreach my $u (@users) {
 		if (!defined($u->{'nospam'})) {
 			$u->{'nospam'} = $nospam{$u->{'user'}};
@@ -1207,12 +1219,21 @@ foreach my $u (@users) {
 		}
 	else {
 		# Set quotas based on quota commands
-		$u->{'softquota'} = $main::soft_home_quota{$u->{'user'}};
-		$u->{'hardquota'} = $main::hard_home_quota{$u->{'user'}};
-		$u->{'uquota'} = $main::used_home_quota{$u->{'user'}};
-		$u->{'softmquota'} = $main::soft_mail_quota{$u->{'user'}};
-		$u->{'hardmquota'} = $main::hard_mail_quota{$u->{'user'}};
-		$u->{'umquota'} = $main::used_mail_quota{$u->{'user'}};
+		my $altuser = $u->{'user'} =~ /\@/ ?
+				&replace_atsign($u->{'user'}) :
+				&add_atsign($u->{'user'});
+		$u->{'softquota'} = $main::soft_home_quota{$u->{'user'}} ||
+				    $main::soft_home_quota{$altuser};
+		$u->{'hardquota'} = $main::hard_home_quota{$u->{'user'}} ||
+				    $main::hard_home_quota{$altuser};
+		$u->{'uquota'} = $main::used_home_quota{$u->{'user'}} ||
+				 $main::used_home_quota{$altuser};
+		$u->{'softmquota'} = $main::soft_mail_quota{$u->{'user'}} ||
+				     $main::soft_mail_quota{$altuser};
+		$u->{'hardmquota'} = $main::hard_mail_quota{$u->{'user'}} ||
+				     $main::hard_mail_quota{$altuser};
+		$u->{'umquota'} = $main::used_mail_quota{$u->{'user'}} ||
+				  $main::used_mail_quota{$altuser};
 		}
 	$u->{'unix'} = 1;
 	$u->{'person'} = 1;
@@ -1408,6 +1429,7 @@ if ($_[0]->{'unix'} && !$_[0]->{'noquota'}) {
 	# Set his initial quotas
 	&set_user_quotas($_[0]->{'user'}, $_[0]->{'quota'}, $_[0]->{'mquota'},
 			 $_[1]);
+	&update_user_quota_cache($_[1], $_[0], 0);
 	}
 
 # Grant access to databases (unless this is the domain owner)
@@ -1800,6 +1822,10 @@ if ($_[0]->{'unix'} && $_[2] && $_[0]->{'user'} ne $_[2]->{'user'} &&
      $_[0]->{'mquota'} != $_[1]->{'mquota'})) {
 	&set_user_quotas($_[0]->{'user'}, $_[0]->{'quota'}, $_[0]->{'mquota'},
 			 $_[2]);
+	if ($_[0]->{'user'} ne $_[1]->{'user'}) {
+		&update_user_quota_cache($_[1], $_[0], 1);
+		}
+	&update_user_quota_cache($_[2], $_[0], 0);
 	}
 
 # Update the plain-text password file, except for a domain owner
@@ -2031,6 +2057,7 @@ sub delete_user
 # Zero out his quotas
 if ($_[0]->{'unix'} && !$_[0]->{'noquota'}) {
 	&set_user_quotas($_[0]->{'user'}, 0, 0, $_[1]);
+	&update_user_quota_cache($_[1], $_[0], 1);
 	}
 
 # Delete any of his cron jobs
@@ -2476,6 +2503,37 @@ else {
 			   $tmpl->{'quotatype'} eq 'hard');
 		}
 	}
+}
+
+# update_user_quota_cache(&domain, &user|&users, [deleting])
+# Updates the cache file of mailbox quotas for this virtual server
+sub update_user_quota_cache
+{
+my ($d, $userlist, $deleting) = @_;
+my $users = ref($userlist) eq 'ARRAY' ? $userlist : [ $userlist ];
+&make_dir($quota_cache_dir, 0755) if (!-d $quota_cache_dir);
+my $qfile = $quota_cache_dir."/".$d->{'id'};
+my %cache;
+&lock_file($qfile);
+&read_file_cached($qfile, \%cache);
+foreach my $user (@$users) {
+	my $u = $user->{'user'};
+	if ($deleting) {
+		delete($cache{$u."_quota"});
+		delete($cache{$u."_mquota"});
+		}
+	else {
+		$cache{$u."_quota"} = $user->{'quota'};
+		if (defined($user->{'mquota'})) {
+			$cache{$u."_mquota"} = $user->{'mquota'}
+			}
+		else {
+			delete($cache{$u."_mquota"});
+			}
+		}
+	}
+&write_file($qfile, \%cache);
+&unlock_file($qfile);
 }
 
 # run_quota_command(config-suffix, arg, ...)
@@ -3454,7 +3512,7 @@ foreach my $d (&sort_indent_domains($doms)) {
 			my $prog = &can_config_domain($d) ? "edit_domain.cgi"
 							  : "view_domain.cgi";
 			my $dn = &shorten_domain_name($d);
-			$dn = $d->{'disabled'} ? "<i>$dn</i>" : $dn;
+			$dn = $d->{'disabled'} ? &ui_text_color("<i>$dn</i>", 'danger') : $dn;
 			my $proxy = $d->{'proxy_pass_mode'} == 2 ?
 			 " <a href='frame_form.cgi?dom=$d->{'id'}'>(F)</a>" :
 				    $d->{'proxy_pass_mode'} == 1 ?
@@ -3736,6 +3794,9 @@ return $err if ($err);
 if ($name eq "domains" || $name eq "logs" || $name eq $home_virtualmin_backup) {
 	return &text('user_ereserved', $name);
 	}
+if ($name =~ /^\d+/) {
+	return $text{'user_enumeric'};
+	}
 $err = &useradmin::check_username_restrictions($name);
 if ($err) {
 	return $err;
@@ -3963,6 +4024,7 @@ if ($disallow_newlines) {
 	$rv =~ s/\n/ /g;
 	}
 $rv =~ s/<tt>|<\/tt>//g;
+$rv =~ s/<span.*?>|<\/span>//g;
 $rv =~ s/<b>|<\/b>//g;
 $rv =~ s/<i>|<\/i>//g;
 $rv =~ s/<u>|<\/u>//g;
@@ -4238,6 +4300,9 @@ if (%ids) {
 	local @servers = grep { $ids{$_->{'id'}} } &list_mx_servers();
 	$hash{'mx_slaves'} = join(" ", map { $_->{'host'} } @servers);
 	}
+else {
+	$hash{'mx_slaves'} = '';
+	}
 
 # Add secondary nameservers
 if ($config{'dns'}) {
@@ -4247,6 +4312,9 @@ if ($config{'dns'}) {
 	$hash{'dns_server'} = &get_master_nameserver($tmpl);
 	$hash{'dns_slave'} = join(" ", map { $_->{'nsname'} || $_->{'host'} }
 					   @servers);
+	}
+else {
+	$hash{'dns_slave'} = '';
 	}
 
 # If any website feature is enabled (like Nginx), set the web variable
@@ -4270,9 +4338,10 @@ return %hash;
 sub will_send_user_email
 {
 local ($d, $isnew) = @_;
-local $tmode = !$d ? "local" : $isnew ? "user" : "update";
-if ($config{$tmode.'_template'} eq 'none' ||
-    $tmode eq "user" && !$config{'new'.$tmode.'_to_mailbox'}) {
+local $tmpl = &get_template($d ? $d->{'template'} : 0);
+local $tmode = !$d || $isnew ? "user" : "update";
+if ($tmpl->{'new'.$tmode.'_on'} eq 'none' ||
+    $tmode eq "user" && !$tmpl->{'new'.$tmode.'_to_mailbox'}) {
         return 0;
         }
 else {
@@ -4287,14 +4356,15 @@ else {
 sub send_user_email
 {
 local ($d, $user, $userto, $mode) = @_;
-local $tmode = $mode ? "update" : $d ? "user" : "local";
+local $tmpl = &get_template($d ? $d->{'template'} : 0);
+local $tmode = $mode ? "update" : "user";
 local $subject = $config{'new'.$tmode.'_subject'};
 
 # Work out who we CC to
 local @ccs;
-push(@ccs, $config{'new'.$tmode.'_cc'}) if ($config{'new'.$tmode.'_cc'});
-push(@ccs, $d->{'emailto'}) if ($config{'new'.$tmode.'_to_owner'});
-if ($config{'new'.$tmode.'_to_reseller'} && $d->{'reseller'} &&
+push(@ccs, $tmpl->{'new'.$tmode.'_cc'}) if ($tmpl->{'new'.$tmode.'_cc'});
+push(@ccs, $d->{'emailto'}) if ($tmpl->{'new'.$tmode.'_to_owner'});
+if ($tmpl->{'new'.$tmode.'_to_reseller'} && $d->{'reseller'} &&
     defined(&get_reseller)) {
 	foreach my $r (split(/\s+/, $d->{'reseller'})) {
 		local $resel = &get_reseller($r);
@@ -4305,13 +4375,10 @@ if ($config{'new'.$tmode.'_to_reseller'} && $d->{'reseller'} &&
 		}
 	}
 local $cc = join(",", @ccs);
-local $bcc = $config{'new'.$tmode.'_bcc'};
+local $bcc = $tmpl->{'new'.$tmode.'_bcc'};
 
-&ensure_template($tmode."-template");
-return (1, undef) if ($config{$tmode.'_template'} eq 'none');
-local $tmpl = $config{$tmode.'_template'} eq 'default' ?
-	"$module_config_directory/$tmode-template" :
-	$config{$tmode.'_template'};
+local $mail = $tmpl->{'new'.$tmode};
+return (1, undef) if ($mail eq 'none');
 local %hash = &make_user_substitutions($user, $d);
 local $email = $d ? $hash{'mailbox'}.'@'.$hash{'dom'}
 		  : $hash{'user'}.'@'.&get_system_hostname();
@@ -4321,13 +4388,13 @@ if ($userto) {
 	$email = $userto eq 'none' ? undef : $userto;
 	}
 if (($tmode eq 'user' || $tmode eq 'update') &&
-    !$config{'new'.$tmode.'_to_mailbox'}) {
+    !$tmpl->{'new'.$tmode.'_to_mailbox'}) {
 	# Don't email domain owner if disabled
 	$email = undef;
 	}
 return (1, undef) if (!$email && !$cc && !$bcc);
 
-return &send_template_email(&cat_file($tmpl), $email, \%hash,
+return &send_template_email($mail, $email, \%hash,
 			    $subject ||
 			    &entities_to_ascii($mode ? $text{'mail_upsubject'}
 						     : $text{'mail_usubject'}),
@@ -4395,21 +4462,33 @@ if (!-s $cpath) {
 }
 
 # get_miniserv_port_proto()
-# Returns the port number and protocol (http or https) for Webmin
+# Returns the port number, protocol (http or https) and hostname for Webmin
 sub get_miniserv_port_proto
 {
 if ($ENV{'SERVER_PORT'}) {
 	# Running under miniserv
 	return ( $ENV{'SERVER_PORT'},
-		 $ENV{'HTTPS'} eq 'ON' ? 'https' : 'http' );
+		 $ENV{'HTTPS'} eq 'ON' ? 'https' : 'http',
+	         $ENV{'SERVER_NAME'} );
 	}
 else {
 	# Get from miniserv config
 	local %miniserv;
 	&get_miniserv_config(\%miniserv);
 	return ( $miniserv{'port'},
-		 $miniserv{'ssl'} ? 'https' : 'http' );
+		 $miniserv{'ssl'} ? 'https' : 'http',
+		 &get_system_hostname() );
 	}
+}
+
+# get_miniserv_base_url()
+# Returns the base URL for this Virtualmin install, without the trailing /
+sub get_miniserv_base_url
+{
+my ($port, $proto, $host) = &get_miniserv_port_proto();
+my $portstr = $proto eq "http" && $port == 80 ? "" :
+	      $proto eq "https" && $port == 443 ? "" : ":".$port;
+return $proto."://".$host.$portstr;
 }
 
 # send_template_email(data, address, &substitions, subject, cc, bcc,
@@ -4780,6 +4859,7 @@ foreach my $v (&get_global_template_variables()) {
 if ($others) {
 	foreach my $e (keys %$others) {
 		$ENV{uc($e)} = $others->{$e};
+		$ENV{"VIRTUALSERVER_".uc($e)} = $others->{$e};
 		}
 	}
 }
@@ -5508,6 +5588,9 @@ foreach $u (sort { $b->{'domainowner'} <=> $a->{'domainowner'} ||
 		}
 
 	# Show shell access level
+	if ($u->{'domainowner'}) {
+		$u->{'shell'} = &get_domain_shell($d, $u);
+		}
 	local ($shell) = grep { $_->{'shell'} eq $u->{'shell'} } @ashells;
 	push(@cols, !$u->{'shell'} ? $text{'users_qmail'} :
 		    !$shell ? &text('users_shell', "<tt>$u->{'shell'}</tt>") :
@@ -5727,106 +5810,108 @@ return $rv;
 # Adds a domain's configuration file to the backup
 sub backup_virtualmin
 {
+my ($d, $file) = @_;
 &$first_print($text{'backup_virtualmincp'});
 
 # Record parent's domain name, which can be used when restoring
-if ($_[0]->{'parent'}) {
-	local $parent = &get_domain($_[0]->{'parent'});
-	$_[0]->{'backup_parent_dom'} = $parent->{'dom'};
-	if ($_[0]->{'alias'}) {
-		local $alias = &get_domain($_[0]->{'alias'});
-		$_[0]->{'backup_alias_dom'} = $alias->{'dom'};
+if ($d->{'parent'}) {
+	local $parent = &get_domain($d->{'parent'});
+	$d->{'backup_parent_dom'} = $parent->{'dom'};
+	if ($d->{'alias'}) {
+		local $alias = &get_domain($d->{'alias'});
+		$d->{'backup_alias_dom'} = $alias->{'dom'};
 		}
-	if ($_[0]->{'subdom'}) {
-		local $subdom = &get_domain($_[0]->{'subdom'});
-		$_[0]->{'backup_subdom_dom'} = $subdom->{'dom'};
+	if ($d->{'subdom'}) {
+		local $subdom = &get_domain($d->{'subdom'});
+		$d->{'backup_subdom_dom'} = $subdom->{'dom'};
 		}
 	}
 
 # Record sub-directory for mail folders, used during mail restores
 local %mconfig = &foreign_config("mailboxes");
 if ($mconfig{'mail_usermin'}) {
-	$_[0]->{'backup_mail_folders'} = $mconfig{'mail_usermin'};
+	$d->{'backup_mail_folders'} = $mconfig{'mail_usermin'};
 	}
 else {
-	delete($_[0]->{'backup_mail_folders'});
+	delete($d->{'backup_mail_folders'});
 	}
 
 # Record encrypted Unix password
-delete($_[0]->{'backup_encpass'});
-if ($_[0]->{'unix'} && !$_[0]->{'parent'} && !$_[0]->{'disabled'}) {
+delete($d->{'backup_encpass'});
+if ($d->{'unix'} && !$d->{'parent'} && !$d->{'disabled'}) {
 	local @users = &list_all_users();
-	local ($user) = grep { $_->{'user'} eq $_[0]->{'user'} } @users;
+	local ($user) = grep { $_->{'user'} eq $d->{'user'} } @users;
 	if ($user) {
-		$_[0]->{'backup_encpass'} = $user->{'pass'};
+		$d->{'backup_encpass'} = $user->{'pass'};
 		}
 	}
 
 # Record if default for the IP
-if (&domain_has_website($_[0])) {
-	$_[0]->{'backup_web_default'} = &is_default_website($_[0]);
+if (&domain_has_website($d)) {
+	$d->{'backup_web_default'} = &is_default_website($d);
 	}
 else {
-	delete($_[0]->{'backup_web_default'});
+	delete($d->{'backup_web_default'});
 	}
 
 # Record webserver type
-$_[0]->{'backup_web_type'} = &domain_has_website($_[0]);
-$_[0]->{'backup_ssl_type'} = &domain_has_ssl($_[0]);
+$d->{'backup_web_type'} = &domain_has_website($d);
+$d->{'backup_ssl_type'} = &domain_has_ssl($d);
 
-&save_domain($_[0]);
+&save_domain($d);
 
 # Save the domain's data file
-&copy_source_dest($_[0]->{'file'}, $_[1]);
+&copy_source_dest($d->{'file'}, $file);
 
-if (-r "$initial_users_dir/$_[0]->{'id'}") {
+if (-r "$initial_users_dir/$d->{'id'}") {
 	# Initial user settings
-	&copy_source_dest("$initial_users_dir/$_[0]->{'id'}", $_[1]."_initial");
+	&copy_source_dest("$initial_users_dir/$d->{'id'}", $file."_initial");
 	}
-if (-d "$extra_admins_dir/$_[0]->{'id'}") {
+if (-d "$extra_admins_dir/$d->{'id'}") {
 	# Extra admin details
 	&execute_command(
-	    "cd ".quotemeta("$extra_admins_dir/$_[0]->{'id'}").
-	    " && ".&make_tar_command("cf", $_[1]."_admins", "."));
+	    "cd ".quotemeta("$extra_admins_dir/$d->{'id'}").
+	    " && ".&make_tar_command("cf", $file."_admins", "."));
 	}
 if ($config{'bw_active'}) {
 	# Bandwidth logs
-	if (-r "$bandwidth_dir/$_[0]->{'id'}") {
-		&copy_source_dest("$bandwidth_dir/$_[0]->{'id'}", $_[1]."_bw");
+	if (-r "$bandwidth_dir/$d->{'id'}") {
+		&copy_source_dest("$bandwidth_dir/$d->{'id'}", $file."_bw");
 		}
 	else {
 		# Create an empty file to indicate that we have no data
-		&open_tempfile(EMPTY, ">".$_[1]."_bw");
+		&open_tempfile(EMPTY, ">".$file."_bw");
 		&close_tempfile(EMPTY);
 		}
 	}
+
 # Script logs
-if (-d "$script_log_directory/$_[0]->{'id'}") {
+if (-d "$script_log_directory/$d->{'id'}") {
 	&execute_command(
-	    "cd ".quotemeta("$script_log_directory/$_[0]->{'id'}").
-	    " && ".&make_tar_command("cf", $_[1]."_scripts", "."));
+	    "cd ".quotemeta("$script_log_directory/$d->{'id'}").
+	    " && ".&make_tar_command("cf", $file."_scripts", "."));
 	}
 else {
 	# Create an empty file to indicate that we have no scripts
-	&open_tempfile(EMPTY, ">".$_[1]."_scripts");
+	&open_tempfile(EMPTY, ">".$file."_scripts");
 	&close_tempfile(EMPTY);
 	}
 
 # Include template, in case the restore target doesn't have it
-local ($tmpl) = grep { $_->{'id'} == $_[0]->{'template'} } &list_templates();
+local ($tmpl) = grep { $_->{'id'} == $d->{'template'} } &list_templates();
 if (!$tmpl->{'standard'}) {
-	&copy_source_dest($tmpl->{'file'}, $_[1]."_template");
+	&copy_source_dest($tmpl->{'file'}, $file."_template");
 	}
 
 # Include plan too
-local $plan = &get_plan($_[0]->{'plan'});
+local $plan = &get_plan($d->{'plan'});
 if ($plan) {
-	&copy_source_dest($plan->{'file'}, $_[1]."_plan");
+	&copy_source_dest($plan->{'file'}, $file."_plan");
 	}
 
 # Save deleted aliases file
-&copy_source_dest("$saved_aliases_dir/$_[0]->{'id'}",
-		  $_[1]."_saved_aliases");
+&copy_source_dest("$saved_aliases_dir/$d->{'id'}",
+		  $file."_saved_aliases");
 
 &$second_print($text{'setup_done'});
 return 1;
@@ -6642,32 +6727,33 @@ return 1;
 # selected settings are copied from the backup, such as limits.
 sub restore_virtualmin
 {
-if (!$_[3]->{'fix'}) {
+my ($d, $file, $opts, $allopts) = @_;
+if (!$allopts->{'fix'}) {
 	# Merge current and backup configs
 	&$first_print($text{'restore_virtualmincp'});
 	local %oldd;
-	&read_file($_[1], \%oldd);
-	$_[0]->{'quota'} = $oldd{'quota'};
-	$_[0]->{'uquota'} = $oldd{'uquota'};
-	$_[0]->{'bw_limit'} = $oldd{'bw_limit'};
-	$_[0]->{'pass'} = $oldd{'pass'};
-	$_[0]->{'email'} = $oldd{'email'};
+	&read_file($file, \%oldd);
+	$d->{'quota'} = $oldd{'quota'};
+	$d->{'uquota'} = $oldd{'uquota'};
+	$d->{'bw_limit'} = $oldd{'bw_limit'};
+	$d->{'pass'} = $oldd{'pass'};
+	$d->{'email'} = $oldd{'email'};
 	foreach my $l (@limit_types) {
-		$_[0]->{$l} = $oldd{$l};
+		$d->{$l} = $oldd{$l};
 		}
-	$_[0]->{'nodbname'} = $oldd{'nodbname'};
-	$_[0]->{'norename'} = $oldd{'norename'};
-	$_[0]->{'forceunder'} = $oldd{'forceunder'};
-	$_[0]->{'safeunder'} = $oldd{'safeunder'};
-	$_[0]->{'ipfollow'} = $oldd{'ipfollow'};
+	$d->{'nodbname'} = $oldd{'nodbname'};
+	$d->{'norename'} = $oldd{'norename'};
+	$d->{'forceunder'} = $oldd{'forceunder'};
+	$d->{'safeunder'} = $oldd{'safeunder'};
+	$d->{'ipfollow'} = $oldd{'ipfollow'};
 	foreach my $f (@opt_features, &list_feature_plugins(), "virt") {
-		$_[0]->{'limit_'.$f} = $oldd{'limit_'.$f};
+		$d->{'limit_'.$f} = $oldd{'limit_'.$f};
 		}
-	$_[0]->{'owner'} = $oldd{'owner'};
-	$_[0]->{'proxy_pass_mode'} = $oldd{'proxy_pass_mode'};
-	$_[0]->{'proxy_pass'} = $oldd{'proxy_pass'};
+	$d->{'owner'} = $oldd{'owner'};
+	$d->{'proxy_pass_mode'} = $oldd{'proxy_pass_mode'};
+	$d->{'proxy_pass'} = $oldd{'proxy_pass'};
 	foreach my $f (&list_custom_fields()) {
-		$_[0]->{$f->{'name'}} = $oldd{$f->{'name'}};
+		$d->{$f->{'name'}} = $oldd{$f->{'name'}};
 		}
 	# Disable any features that are not on this system, as they can't
 	# be restored from the backup anyway.
@@ -6677,63 +6763,64 @@ if (!$_[3]->{'fix'}) {
 			$d->{$f} = 0;
 			}
 		}
-	&save_domain($_[0]);
-	if (-r $_[1]."_initial") {
+	&save_domain($d);
+	if (-r $file."_initial") {
 		# Also restore user defaults file
-		&copy_source_dest($_[1]."_initial",
-				  "$initial_users_dir/$_[0]->{'id'}");
+		&copy_source_dest($file."_initial",
+				  "$initial_users_dir/$d->{'id'}");
 		}
-	if (-r $_[1]."_admins") {
+	if (-r $file."_admins") {
 		# Also restore extra admins
 		&execute_command(
-			"rm -rf ".quotemeta("$extra_admins_dir/$_[0]->{'id'}"));
+			"rm -rf ".quotemeta("$extra_admins_dir/$d->{'id'}"));
 		if (!-d $extra_admins_dir) {
 			&make_dir($extra_admins_dir, 755);
 			}
-		&make_dir("$extra_admins_dir/$_[0]->{'id'}", 0755);
+		&make_dir("$extra_admins_dir/$d->{'id'}", 0755);
 		&execute_command(
-		    "cd ".quotemeta("$extra_admins_dir/$_[0]->{'id'}")." && ".
-		    &make_tar_command("xf", $_[1]."_admins", "."));
+		    "cd ".quotemeta("$extra_admins_dir/$d->{'id'}")." && ".
+		    &make_tar_command("xf", $file."_admins", "."));
 		}
-	if ($config{'bw_active'} && -r $_[1]."_bw" &&
-	    !-r "$bandwidth_dir/$_[0]->{'id'}") {
+	if ($config{'bw_active'} && -r $file."_bw" &&
+	    !-r "$bandwidth_dir/$d->{'id'}") {
 		# Also restore bandwidth files for the domain, but only
 		# if missing.
 		&make_dir($bandwidth_dir, 0700);
-		&copy_source_dest($_[1]."_bw", "$bandwidth_dir/$_[0]->{'id'}");
+		&copy_source_dest($file."_bw", "$bandwidth_dir/$d->{'id'}");
 		}
-	if (-r $_[1]."_scripts") {
+	if (-r $file."_scripts") {
 		# Also restore script logs
 		&execute_command("rm -rf ".
-			quotemeta("$script_log_directory/$_[0]->{'id'}"));
-		if (-s $_[1]."_scripts") {
+			quotemeta("$script_log_directory/$d->{'id'}"));
+		if (-s $file."_scripts") {
 			if (!-d $script_log_directory) {
 				&make_dir($script_log_directory, 0755);
 				}
-			&make_dir("$script_log_directory/$_[0]->{'id'}", 0755);
+			&make_dir("$script_log_directory/$d->{'id'}", 0755);
 			&execute_command(
-			 "cd ".quotemeta("$script_log_directory/$_[0]->{'id'}").
+			 "cd ".quotemeta("$script_log_directory/$d->{'id'}").
 			 " && ".
 			 &make_tar_command("xf",
-				$_[1]."_scripts", "."));
+				$file."_scripts", "."));
 			}
 
 		# Fix up home dir on scripts
-		if ($_[5]->{'home'} && $_[5]->{'home'} ne $_[0]->{'home'}) {
+		if ($_[5]->{'home'} && $_[5]->{'home'} ne $d->{'home'}) {
 			local $olddir = $_[5]->{'home'};
-			local $newdir = $_[0]->{'home'};
-			foreach my $sinfo (&list_domain_scripts($_[0])) {
+			local $newdir = $d->{'home'};
+			foreach my $sinfo (&list_domain_scripts($d)) {
 				$sinfo->{'opts'}->{'dir'} =~
 				       s/^\Q$olddir\E\//$newdir\//;
-				&save_domain_script($_[0], $sinfo);
+				&save_domain_script($d, $sinfo);
 				}
 			}
 		}
-	if (-r $_[1]."_saved_aliases") {
+	
+	if (-r $file."_saved_aliases") {
 		# Restore saved aliases
 		&make_dir($saved_aliases_dir, 0700);
-		&copy_source_dest($_[1]."_saved_aliases",
-				  "$saved_aliases_dir/$_[0]->{'id'}");
+		&copy_source_dest($file."_saved_aliases",
+				  "$saved_aliases_dir/$d->{'id'}");
 		}
 	&$second_print($text{'setup_done'});
 	}
@@ -7385,12 +7472,12 @@ sub unixuser_name
 my ($dname) = @_;
 my ($dname_, $config_longname, $try1, $user) = ($dname, $config{'longname'});
 
-# Extract random username based on the user pattern
 if ($config_longname && $config_longname !~ /^[0-9]$/) {
+	# Extract random username based on the user pattern
 	$user = &generate_random_available_user($config_longname);
 	}
-# Use one based on actual domain name
 else {
+	# Use one based on actual domain name
 	$dname =~ s/^xn(-+)//;
 	$dname = &remove_numeric_prefix($dname);
 	$dname =~ /^([^\.]+)/;
@@ -7447,18 +7534,20 @@ else {
 return ($group);
 }
 
-# virtual_server_clashes(&dom, [&features-to-check], [field-to-check])
+# virtual_server_clashes(&dom, [&features-to-check], [field-to-check],
+# 			 [replication-mode])
 # Returns a clash error message if any were found for some new domain
 sub virtual_server_clashes
 {
-local ($dom, $check, $field) = @_;
+local ($dom, $check, $field, $repl) = @_;
 my $f;
 foreach $f (@features) {
 	next if ($dom->{'parent'} && $f eq "webmin");
 	next if ($dom->{'parent'} && $f eq "unix");
 	if ($dom->{$f} && (!$check || $check->{$f})) {
 		local $cfunc = "check_${f}_clash";
-		local $err = defined(&$cfunc) ? &$cfunc($dom, $field) : undef;
+		local $err = defined(&$cfunc) ? &$cfunc($dom, $field, $repl)
+					      : undef;
 		if ($err) {
 			if ($err eq '1') {
 				# Use a built-in error
@@ -7584,19 +7673,19 @@ if (!$oldd) {
 return undef;
 }
 
-# virtual_server_warnings(&domain, [&old-domain])
+# virtual_server_warnings(&domain, [&old-domain], [replication-mode])
 # Returns a list of warning messages related to the creation or modification
 # of some virtual server.
 sub virtual_server_warnings
 {
-local ($d, $oldd) = @_;
+local ($d, $oldd, $repl) = @_;
 local @rv;
 
 # Check core features
 foreach my $f (grep { $d->{$_} } @features) {
 	local $wfunc = "check_warnings_$f";
 	if (defined(&$wfunc)) {
-		local $err = &$wfunc($d, $oldd);
+		local $err = &$wfunc($d, $oldd, $repl);
 		push(@rv, $err) if ($err);
 		}
 	}
@@ -7717,6 +7806,12 @@ elsif ($tmpl->{'mysql_nopass'} == 2 && !$dom->{'parent'} &&
 # MySQL module comes from parent always
 if ($parentdom) {
 	$dom->{'mysql_module'} = $parentdom->{'mysql_module'};
+	}
+
+# Was this originally the default domain?
+if (!defined($dom->{'defaultdomain'})) {
+	$dom->{'defaultdomain'} = 1
+		if ($dom->{'dom'} eq $config{'defaultdomain_name'});
 	}
 
 # Set up all the selected features (except Webmin login)
@@ -7902,12 +7997,12 @@ if (@scripts && !$dom->{'alias'} && !$noscripts &&
 		&setup_script_packages($script, $d, $ver);
 
 		# Check PHP version
-		local $phpver;
+		local ($phpver, $phperr);
 		if (&indexof("php", @{$script->{'uses'}}) >= 0) {
-			$phpver = &setup_php_version($dom, $script, $ver,
-						     $opts->{'path'});
+			($phpver, $phperr) = &setup_php_version(
+				$dom, $script, $ver, $opts->{'path'});
 			if (!$phpver) {
-				&$second_print($text{'scripts_ephpvers2'});
+				&$second_print($phperr);
 				next;
 				}
 			$opts->{'phpver'} = $phpver;
@@ -8005,6 +8100,43 @@ if (@scripts && !$dom->{'alias'} && !$noscripts &&
 	&save_domain($dom);
 	}
 
+# Create any redirects or aliases specified in the template
+my @redirs = map { [ split(/\s+/, $_, 3) ] }
+		 split(/\t+/, $tmpl->{'web_redirects'});
+if (@redirs && !$dom->{'alias'} &&  &domain_has_website($dom) &&
+    !$noscripts && !$dom->{'nocreationscripts'}) {
+	&$first_print($text{'setup_redirects'});
+	&$indent_print();
+	foreach my $r (@redirs) {
+		my %protos = map { $_, 1 } split(/,/, $r->[2]);
+		next if ($protos{'https'} && !$protos{'http'} &&
+			 !&domain_has_ssl($dom));
+		my $path = &substitute_domain_template($r->[0], $dom);
+		my $dest = &substitute_domain_template($r->[1], $dom);
+		&$first_print(&text('setup_redirecting', $path, $dest));
+		if ($dest !~ /^(http|https):/) {
+			$dest = &public_html_dir($dom).$dest;
+			}
+		my $redirect = { 'path' => $path,
+				 'dest' => $dest,
+				 'alias' => $dest =~ /^(http|https):/ ? 0 : 1,
+				 'regexp' => 0,
+				 'http' => $protos{'http'},
+				 'https' => $protos{'https'},
+			       };
+		$redirect = &add_wellknown_redirect($redirect);
+		my $err = &create_redirect($dom, $redirect);
+		if ($err) {
+			&$second_print(&text('setup_redirecterr', $err));
+			}
+		else {
+			&$second_print($text{'setup_redirected'});
+			}
+		}
+	&$outdent_print();
+	&$second_print($text{'setup_done'});
+	}
+
 # If this was an alias domain, notify all features in the original domain. This
 # is useful for things like awstats, which need to add the alias domain to those
 # supported for the main site.
@@ -8051,6 +8183,9 @@ if (!&domain_has_ssl($dom) && $always_ssl && !$dom->{'alias'}) {
 # new website.
 if (!defined($dom->{'auto_letsencrypt'})) {
 	$dom->{'auto_letsencrypt'} = $config{'auto_letsencrypt'};
+	if ($dom->{'dns'}) {
+		$dom->{'letsencrypt_wild'} = $config{'letsencrypt_wild'};
+		}
 	}
 if ($dom->{'auto_letsencrypt'} && &domain_has_website($dom) &&
     !$dom->{'disabled'} && !$dom->{'alias'} && !$dom->{'ssl_same'}) {
@@ -8157,6 +8292,7 @@ if ($d->{'letsencrypt_dname'}) {
 else {
 	@dnames = &get_hostnames_for_ssl($d);
 	}
+push(@dnames, "*.".$d->{'dom'}) if ($d->{'letsencrypt_dwild'});
 &$first_print(&text('letsencrypt_doing2',
 		    join(", ", map { "<tt>$_</tt>" } @dnames)));
 if ($valid) {
@@ -8903,7 +9039,7 @@ return $escuser;
 # Converts a username into a suitable alias name
 sub escape_alias
 {
-local $escuser = $_[0];
+local ($escuser) = @_;
 $escuser =~ s/\@/-/g;
 return $escuser;
 }
@@ -8912,8 +9048,17 @@ return $escuser;
 # Replace an @ in a username with -
 sub replace_atsign
 {
-local $rv = $_[0];
+local ($rv) = @_;
 $rv =~ s/\@/-/g;
+return $rv;
+}
+
+# add_atsign(username)
+# Given a username like foo-bar.com, return foo@bar.com
+sub add_atsign
+{
+local ($rv) = @_;
+$rv =~ s/\-/\@/;
 return $rv;
 }
 
@@ -8982,6 +9127,7 @@ local @rv;
 &ensure_template("domain-template");
 &ensure_template("subdomain-template");
 &ensure_template("framefwd-template");
+&ensure_template("user-template");
 push(@rv, { 'id' => 0,
 	    'name' => $text{'newtmpl_name0'},
 	    'standard' => 1,
@@ -9012,6 +9158,8 @@ push(@rv, { 'id' => 0,
 	    'php_vars' => $config{'php_vars'} || "none",
 	    'php_fpm' => $config{'php_fpm'} || "none",
 	    'php_sock' => $config{'php_sock'} || 0,
+	    'php_log' => $config{'php_log'} || 0,
+	    'php_log_path' => $config{'php_log_path'},
 	    'web_php_suexec' => int($config{'php_suexec'}),
 	    'web_ruby_suexec' => $config{'ruby_suexec'} eq '' ? -1 :
 					int($config{'ruby_suexec'}),
@@ -9023,6 +9171,8 @@ push(@rv, { 'id' => 0,
 	    'web_dovecot_ssl' => $config{'dovecot_ssl'},
 	    'web_postfix_ssl' => $config{'postfix_ssl'},
 	    'web_http2' => $config{'web_http2'},
+	    'web_redirects' => $config{'web_redirects'},
+	    'web_sslredirect' => $config{'auto_redirect'},
 	    'webalizer' => $config{'def_webalizer'} || "none",
 	    'disabled_web' => $config{'disabled_web'} || "none",
 	    'disabled_url' => $config{'disabled_url'} || "none",
@@ -9078,6 +9228,18 @@ push(@rv, { 'id' => 0,
 	    'mail_cc' => $config{'newdom_cc'},
 	    'mail_bcc' => $config{'newdom_bcc'},
 	    'mail_cloud' => $config{'mail_cloud'},
+	    'newuser_on' => $config{'user_template'} eq "none" ? "none" : "yes",
+	    'newuser' => $config{'user_template'} eq "none" ||
+		      $config{'user_template'} eq "default" ?
+				&cat_file("user-template") :
+				&cat_file($config{'user_template'}),
+	    'newuser_subject' => $config{'newuser_subject'} ||
+			         &entities_to_ascii($text{'mail_usubject'}),
+	    'newuser_cc' => $config{'newuser_cc'},
+	    'newuser_bcc' => $config{'newuser_bcc'},
+	    'newuser_to_mailbox' => $config{'newuser_to_mailbox'} || 0,
+	    'newuser_to_owner' => $config{'newuser_to_owner'} || 0,
+	    'newuser_to_reseller' => $config{'newuser_to_reseller'} || 0,
 	    'aliascopy' => $config{'aliascopy'} || 0,
 	    'bccto' => $config{'bccto'} || 'none',
 	    'spamclear' => $config{'spamclear'} || 'none',
@@ -9220,6 +9382,7 @@ while(defined($f = readdir(DIR))) {
 		&read_file("$templates_dir/$f", \%tmpl);
 		$tmpl{'file'} = "$templates_dir/$f";
 		$tmpl{'mail'} =~ s/\t/\n/g;
+		$tmpl{'newuser'} =~ s/\t/\n/g;
 		if ($tmpl{'id'} == 1 || $tmpl{'id'} == 0) {
 			foreach $k (keys %tmpl) {
 				$rv[$tmpl{'id'}]->{$k} = $tmpl{$k}
@@ -9313,11 +9476,15 @@ if ($tmpl->{'id'} == 0) {
 	$config{'web_admin'} = $tmpl->{'web_admin'};
 	$config{'web_admindom'} = $tmpl->{'web_admindom'};
 	$config{'web_http2'} = $tmpl->{'web_http2'};
+	$config{'web_redirects'} = $tmpl->{'web_redirects'};
+	$config{'auto_redirect'} = $tmpl->{'web_sslredirect'};
 	$config{'php_vars'} = $tmpl->{'php_vars'} eq "none" ? "" :
 				$tmpl->{'php_vars'};
 	$config{'php_fpm'} = $tmpl->{'php_fpm'} eq "none" ? "" :
 				$tmpl->{'php_fpm'};
 	$config{'php_sock'} = $tmpl->{'php_sock'};
+	$config{'php_log'} = $tmpl->{'php_log'};
+	$config{'php_log_path'} = $tmpl->{'php_log_path'};
 	$config{'php_suexec'} = $tmpl->{'web_php_suexec'};
 	$config{'ruby_suexec'} = $tmpl->{'web_ruby_suexec'};
 	$config{'phpver'} = $tmpl->{'web_phpver'};
@@ -9396,11 +9563,9 @@ if ($tmpl->{'id'} == 0) {
 		# Don't send
 		$config{'domain_template'} = 'none';
 		}
-	else {
+	elsif ($config{'domain_template'} eq 'none') {
 		# Sending, but need to set a valid mail file
-		if ($config{'domain_template'} eq 'none') {
-			$config{'domain_template'} = 'default';
-			}
+		$config{'domain_template'} = 'default';
 		}
 	# Write message to default template file, or custom if set
 	&uncat_file($config{'domain_template'} eq "none" ||
@@ -9410,6 +9575,22 @@ if ($tmpl->{'id'} == 0) {
 	$config{'newdom_subject'} = $tmpl->{'mail_subject'};
 	$config{'newdom_cc'} = $tmpl->{'mail_cc'};
 	$config{'newdom_bcc'} = $tmpl->{'mail_bcc'};
+	if ($tmpl->{'newuser_on'} eq 'none') {
+		$config{'user_template'} = 'none';
+		}
+	elsif ($config{'user_template'} eq 'none') {
+		$config{'user_template'} = 'default';
+		}
+	&uncat_file($config{'user_template'} eq "none" ||
+		    $config{'user_template'} eq "default" ?
+			"user-template" :
+			$config{'user_template'}, $tmpl->{'newuser'});
+	$config{'newuser_subject'} = $tmpl->{'newuser_subject'};
+	$config{'newuser_cc'} = $tmpl->{'newuser_cc'};
+	$config{'newuser_bcc'} = $tmpl->{'newuser_bcc'};
+	$config{'newuser_to_mailbox'} = $tmpl->{'newuser_to_mailbox'};
+	$config{'newuser_to_owner'} = $tmpl->{'newuser_to_owner'};
+	$config{'newuser_to_reseller'} = $tmpl->{'newuser_to_reseller'};
 	$config{'mail_cloud'} = $tmpl->{'mail_cloud'};
 	$config{'aliascopy'} = $tmpl->{'aliascopy'};
 	$config{'bccto'} = $tmpl->{'bccto'};
@@ -9553,6 +9734,7 @@ if ($tmpl->{'id'} != 0) {
 	&make_dir($templates_dir, 0700);
 	$tmpl->{'created'} ||= time();
 	$tmpl->{'mail'} =~ s/\n/\t/g;
+	$tmpl->{'newuser'} =~ s/\n/\t/g;
 	&lock_file("$templates_dir/$tmpl->{'id'}");
 	&write_file("$templates_dir/$tmpl->{'id'}", $tmpl);
 	&unlock_file("$templates_dir/$tmpl->{'id'}");
@@ -9595,6 +9777,7 @@ if (!$tmpl->{'default'}) {
 	local %done;
 	foreach $p ("dns_spf", "dns_sub", "dns_master", "dns_mx", "dns_dmarc",
 		    "web_webmail", "web_admin", "web_http2",
+		    "web_redirects", "web_sslredirect",
 		    "web", "dns", "ftp", "frame", "user_aliases",
 		    "ugroup", "sgroup", "quota", "uquota", "ushell", "ujail",
 		    "mailboxlimit", "domslimit",
@@ -9607,7 +9790,8 @@ if (!$tmpl->{'default'}) {
 		    "othergroups", "defmquota", "quotatype", "append_style",
 		    "domalias", "logrotate_files", "logrotate_shared",
 		    "logrotate", "disabled_web", "disabled_url", "php_sock",
-		    "php_fpm", "php", "status", "extra_prefix", "capabilities",
+		    "php_fpm", "php_log", "php", "newuser",
+		    "status", "extra_prefix", "capabilities",
 		    "webmin_group", "spamclear", "spamtrap", "namedconf",
 		    "nodbname", "norename", "forceunder", "safeunder",
 		    "ipfollow", "exclude", "cert_key_tmpl", "cert_cert_tmpl",
@@ -9625,7 +9809,7 @@ if (!$tmpl->{'default'}) {
 			foreach $k (keys %$def) {
 				next if ($p eq "dns" && $k =~ /^dns_spf/);
 				next if ($p eq "php" && $k =~ /^php_(fpm|sock)/);
-				next if ($p eq "web" && $k =~ /^web_(webmail|admin|http2)/);
+				next if ($p eq "web" && $k =~ /^web_(webmail|admin|http2|redirects|sslredirect)/);
 				if (!$done{$k} &&
 				    ($k =~ /^\Q$p\E_/ || $k eq $p)) {
 					$tmpl->{$k} = $def->{$k};
@@ -9815,7 +9999,7 @@ local $main::error_must_die = 1;
 eval { &plugin_call($mod, $func, @args) };
 if ($@) {
         &$second_print(&text('setup_failure',
-			     &plugin_call($f, "feature_name"), "$@"));
+			     &plugin_call($mod, "feature_name"), "$@"));
         return 0;
         }
 return 1;
@@ -10154,8 +10338,12 @@ if ($d && !$notmpl) {
 		$user->{'to'} = [ map { &substitute_domain_template($_, $d) }
 				      split(/\t+/, $tmpl->{'user_aliases'}) ];
 		}
-	$user->{'quota'} = $tmpl->{'defmquota'};
-	$user->{'mquota'} = $tmpl->{'defmquota'};
+	if (&has_home_quotas()) {
+		$user->{'quota'} = $tmpl->{'defmquota'};
+		}
+	if (&has_mail_quotas()) {
+		$user->{'mquota'} = $tmpl->{'defmquota'};
+		}
 	}
 if (!$user->{'noprimary'}) {
 	$user->{'email'} = !$d ? "newuser\@".&get_system_hostname() :
@@ -11323,6 +11511,18 @@ if (@expired || @nearly) {
 		$expiry_text .= $nl . &text('index_expirynearly',
 			join($gluechar, map { "<a href=\"@{[&get_webprefix_safe()]}/$module_name/summary_domain.cgi?dom=$_->{'id'}\">@{[&show_domain_name($_)]}</a>" } @nearly));
 		}
+	if (@expired || @nearly) {
+		my @edoms;
+		push(@edoms, map { $_->{'dom'} } @expired) if (@expired);
+		push(@edoms, map { $_->{'dom'} } @nearly) if (@nearly);
+		@edoms = &unique(@edoms);
+		my $expiry_form .= &ui_form_start(
+			"@{[&get_webprefix_safe()]}/$module_name/recollect_whois.cgi");
+		$expiry_form .= &ui_hidden("doms", "@edoms")."\n".
+		$expiry_form .= &ui_submit($text{'index_drefresh'});
+		$expiry_form .= &ui_form_end();
+		$expiry_text .= $expiry_form;
+		}
 	push(@rv, $expiry_text);
 	}
 
@@ -11577,12 +11777,12 @@ else {
 	}
 }
 
-# get_domain_shell(&domain)
+# get_domain_shell(&domain, [&user])
 # Return the real shell for a domain's unix user
 sub get_domain_shell
 {
-my ($d) = @_;
-my $user = &get_domain_owner($d, 1, 1, 1);
+my ($d, $user) = @_;
+$user ||= &get_domain_owner($d, 1, 1, 1);
 if ($user->{'shell'} =~ /\/jk_chrootsh$/) {
 	return $d->{'unjailed_shell'};
 	}
@@ -11613,23 +11813,25 @@ else {
 sub new_password_input
 {
 local ($name) = @_;
-my $attrnoauto = "autocomplete='off' autocorrect='off' spellcheck='false'";
 if ($config{'passwd_mode'} == 1) {
 	# Random but editable password
-	return &ui_textbox($name, &random_password(), 21, 0, undef, $attrnoauto);
+	return &ui_textbox($name, &random_password(), 21, 0, undef,
+	         &vui_ui_input_noauto_attrs());
 	}
 elsif ($config{'passwd_mode'} == 0) {
 	# One hidden password
-	return &ui_password($name, undef, 21, 0, undef, $attrnoauto);
+	return &ui_password($name, undef, 21, 0, undef,
+	         &vui_ui_input_noauto_attrs());
 	}
 elsif ($config{'passwd_mode'} == 2) {
 	# Two hidden passwords
-	return "<table>\n".
-	       "<tr><td>$text{'form_passf'}</td> ".
-	       "<td>".&ui_password($name, undef, 21, 0, undef, $attrnoauto)."</td> </tr>\n".
-	       "<tr><td>$text{'form_passa'}</td> ".
-	       "<td>".&ui_password($name."_again", undef, 21, 0, undef, $attrnoauto)."</td> </tr>\n".
-	       "</table>";
+	return "<div style='display: inline-grid;'>".
+	          &ui_password($name, undef, undef, 0, undef,
+	            &vui_ui_input_noauto_attrs().
+	              " placeholder='$text{'form_passf'}'").
+	          &ui_password($name."_again", undef, undef, 0, undef,
+	            &vui_ui_input_noauto_attrs().
+	              " data-password-again placeholder='$text{'form_passa'}'")."</div>\n";
 	}
 }
 
@@ -12215,11 +12417,14 @@ foreach my $f (@plugins) {
 if (!&master_admin() && !&reseller_admin()) {
 	local @ot;
 	foreach my $k (keys %config) {
-		if ($k =~ /^avail_(\S+)$/ && &indexof($1, @features) < 0 &&
-					     &indexof($1, @plugins) < 0) {
-			if (&foreign_available($1)) {
-				local %minfo = &get_module_info($1);
-				push(@ot, { 'mod' => $1,
+		if ($k =~ /^avail_(\S+)$/ &&
+		    &indexof($1, @features) < 0 &&
+		    &indexof($1, @plugins) < 0 &&
+		    $1 ne "phpini") {
+			my $mod = $1;
+			if (&foreign_available($mod)) {
+				local %minfo = &get_module_info($mod);
+				push(@ot, { 'mod' => $mod,
 					    'page' => 'index.cgi',
 					    'title' => $minfo{'desc'},
 					    'desc' => $minfo{'desc'},
@@ -12549,7 +12754,7 @@ if ($d->{'dns'} && !$d->{'dns_submode'} && $config{'dns'} &&
 		  });
 	}
 
-if (&can_edit_records($d)) {
+if (&can_edit_records($d) && !&copy_alias_records($d)) {
 	if ($d->{'dns'}) {
 		# DNS edit records button
 		push(@rv, { 'page' => 'list_records.cgi',
@@ -12729,6 +12934,19 @@ if (&domain_has_website($d) && $d->{'dir'} && !$d->{'alias'} &&
 		    'icon' => 'page_edit',
 		  });
 	}
+
+if (&foreign_available("xterm") &&
+    !$d->{'alias'} && $d->{'unix'} && $d->{'user'}) {
+	# Link to Terminal for master admin
+	push(@rv, { 'page' => 'index.cgi?user='.&urlize($d->{'user'}).
+			      '&dir='.&urlize($d->{'home'}),
+		    'mod' => 'xterm',
+		    'title' => $text{'edit_terminal'},
+		    'desc' => $text{'edit_terminaldesc'},
+		    'cat' => 'objects',
+		    'icon' => 'page_edit',
+		  });
+	}
 &menu_link_pro_tips(\@rv, $d) if (!$virtualmin_pro);
 &save_links_cache($ckey, $v, \@rv);
 return @rv;
@@ -12850,11 +13068,10 @@ local ($d, $refresh) = @_;
 # categories and codes
 sub get_template_pages
 {
-local @tmpls = ( 'features', 'tmpl', 'plan', 'user', 'update',
-   $config{'localgroup'} ? ( 'local' ) : ( ),
+local @tmpls = ( 'features', 'tmpl', 'plan', 'update',
    'bw',
    $virtualmin_pro ? ( 'fields', 'links', 'ips', 'sharedips', 'dynip', 'resels',
-		       'reseller', 'notify', 'scripts', )
+		       'notify', 'scripts', )
 		   : ( 'fields', 'ips', 'sharedips', 'scripts', 'dynip' ),
    'shells',
    $config{'spam'} || $config{'virus'} ? ( 'sv' ) : ( ),
@@ -12876,10 +13093,7 @@ local @tmpls = ( 'features', 'tmpl', 'plan', 'user', 'update',
    );
 local %tmplcat = (
 	'features' => 'setting',
-	'user' => 'email',
 	'update' => 'email',
-	'local' => 'email',
-	'reseller' => 'email',
 	'notify' => 'email',
 	'sv' => 'email',
 	'ips' => 'ip',
@@ -13225,6 +13439,33 @@ sub can_domain_have_scripts
 local ($d) = @_;
 return ($d->{'web'} && $config{'web'} ||
 	&domain_has_website($d)) && !$d->{'subdom'} && !$d->{'alias'};
+}
+
+# can_chained_feature(feature, [check-chaining-enabled?])
+# Returns a list of parent features if some feature or plugin type gets enabled
+# when another feature is. If the second param is set, also check if chaining
+# is active for this feature right now.
+sub can_chained_feature
+{
+my ($f, $check) = @_;
+if (&indexof($f, @plugins) >= 0) {
+	if ($check && &indexof($f, @plugins_inactive) >= 0) {
+		# Chaining not currently active for this plugin
+		return ();
+		}
+	if (&plugin_defined($f, "feature_can_chained")) {
+		return &plugin_call($f, "feature_can_chained");
+		}
+	return ();
+	}
+else {
+	if ($check && $config{$f} != 3) {
+		# Chaining not currently active for this feature
+		return ();
+		}
+	my $cfunc = "can_chained_".$f;
+	return defined(&$cfunc) ? &$cfunc() : ();
+	}
 }
 
 # call_feature_func(feature, &domain, &olddomain)
@@ -14097,8 +14338,9 @@ if ($group) {
 	}
 
 # Find any sub-server objects and update them
+my @subs;
 if (!$d->{'parent'}) {
-	my @subs = &get_domain_by("parent", $d->{'id'});
+	@subs = &get_domain_by("parent", $d->{'id'});
 	foreach my $sd (@subs) {
 		my %oldsd = %$sd;
 		push(@oldsubs, \%oldsd);
@@ -14116,6 +14358,9 @@ if (!$d->{'parent'}) {
 					       &server_home_directory($sd, $d));
 			}
 		if ($group) {
+			if ($sd->{'ugroup'} eq $sd->{'group'}) {
+				$sd->{'ugroup'} = $group;
+				}
 			$sd->{'group'} = $group;
 			}
 		}
@@ -14194,15 +14439,6 @@ my @doms = ( $d );
 my @olddoms = ( \%oldd );
 push(@doms, @subs, @aliases);
 push(@olddoms, @oldsubs, @oldaliases);
-
-# Setup print function to include domain name
-sub first_html_withdom
-{
-print &text('rename_dd', $doing_dom->{'dom'})," : ",@_,"<br>\n";
-}
-if (@doms > 1) {
-	$first_print = \&first_html_withdom;
-	}
 
 # Update all features in all domains. Include the mail feature always, as this
 # covers FTP users
@@ -14355,19 +14591,19 @@ if (&foreign_check("proc")) {
 		local $beans = &get_beancounters();
 		if ($mem[0]*1024 < $rmem) {
 			# Memory is less than 512 MB (768 on 64-bit)
-			&$second_print("<b>".&text('check_lowmemory',
+			&$second_print(&ui_text_color(&text('check_lowmemory',
 				&nice_size($mem[0]*1024),
-				&nice_size($rmem))."</b>");
+				&nice_size($rmem)), 'warn'));
 			}
 		elsif ($beans->{'vmguarpages'} &&
 		       $beans->{'vmguarpages'}*4096 < $rmem &&
 		       $beans->{'vmguarpages'} < $beans->{'privvmpages'}) {
 			# OpenVZ guaranteed memory is lower than max memory,
 			# and is less than 256 M
-			&$second_print("<b>".&text('check_lowgmemory',
+			&$second_print(&ui_text_color(&text('check_lowgmemory',
 				&nice_size($mem[0]*1024),
 				&nice_size($beans->{'vmguarpages'}*4096),
-				&nice_size($rmem))."</b>");
+				&nice_size($rmem)), 'warn'));
 			}
 		elsif ($beans->{'vmguarpages'} &&
 		       $beans->{'vmguarpages'} < $beans->{'privvmpages'}) {
@@ -14761,7 +14997,7 @@ if (&domain_has_website()) {
 					     join(", ", @msg)));
 			}
 		else {
-			&$second_print("<b>$text{'check_webphpnovers'}</b>");
+			&$second_print(&ui_text_color($text{'check_webphpnovers'}, 'warn'));
 			}
 		}
 
@@ -15248,8 +15484,10 @@ if (!&running_in_zone()) {
 if ($config{'ip6enabled'} && &supports_ip6()) {
 	!$config{'netmask6'} || $config{'netmask6'} =~ /^\d+$/ ||
 		return &text('check_enetmask6', $config{'netmask6'});
-	&$second_print(&text('check_iface6',
-		"<tt>".($config{'iface6'} || $config{'iface'})."</tt>"));
+	if (&supports_ip6() == 2) {
+		&$second_print(&text('check_iface6',
+		    "<tt>".($config{'iface6'} || $config{'iface'})."</tt>"));
+		}
 	}
 
 # Show the default IPv4 address
@@ -15265,11 +15503,7 @@ $config{'old_defip'} ||= $defip;
 # Show the default IPv6 address
 if ($config{'ip6enabled'} && &supports_ip6()) {
 	local $defip6 = &get_default_ip6();
-	if (!$defip6) {
-		&$second_print(&ui_text_color(&text('index_edefip6',
-			"../config.cgi?module=$module_name&section=line1.3"), 'warn'));
-		}
-	else {
+	if ($defip6) {
 		&$second_print(&text('check_defip6', $defip6));
 		}
 	$config{'old_defip6'} ||= $defip6;
@@ -15286,9 +15520,9 @@ if ($config{'dns_ip'} ne '*') {
 		}
 	elsif ($ext_ip && $ext_ip ne $dns_ip) {
 		# Mis-match .. warn user
-		&$second_print("<b>".&text($config{'dns_ip'} ? 'check_ednsip1' :
+		&$second_print(&ui_text_color(&text($config{'dns_ip'} ? 'check_ednsip1' :
 				'check_ednsip2', $dns_ip, $ext_ip,
-				"../config.cgi?$module_name")."</b>");
+				"../config.cgi?$module_name"), 'warn'));
 		}
 	}
 
@@ -15429,15 +15663,15 @@ elsif ($config{'quotas'}) {
 	if ($qerr) {
 		# Check if a reboot is needed to enable XFS quotas on /
 		if (&needs_xfs_quota_fix() == 1) {
-			my $reboot_msg = "\n<b>$text{'licence_xfsreboot'}</b>&nbsp;";
+			my $reboot_msg = "\n$text{'licence_xfsreboot'}&nbsp;";
 			if (&foreign_available("init")) {
 				$reboot_msg .= ui_link("@{[&get_webprefix_safe()]}/init/reboot.cgi", $text{'licence_xfsrebootok'});
 				$reboot_msg .= ".";
 				}
-			&$second_print($reboot_msg);
+			&$second_print(&ui_text_color($reboot_msg, 'warn'));
 			}
 			else {
-				&$second_print("<b>$qerr</b>");
+				&$second_print(&ui_text_color($qerr, 'warn'));
 				}
 		}
 	elsif (!$config{'group_quotas'}) {
@@ -15673,6 +15907,35 @@ if ($virtualmin_pro &&
 			else {
 				&$second_print(&text('check_aptrepomissing', $virtualmin_apt_repo));
 				}
+			}
+		}
+	}
+
+# Display a message about deprecated repos
+if ($gconfig{'os_type'} =~ /^(redhat-linux|debian-linux)$/) {
+	my $repolines;
+	if ($gconfig{'os_type'} eq 'redhat-linux') {
+		# File exists, but does it contain correct repo links
+		$repolines = &read_file_lines($virtualmin_yum_repo, 1)
+			if (-r $virtualmin_yum_repo);
+		}
+	elsif ($gconfig{'os_type'} eq 'debian-linux') {
+		# File exists, but does it contain correct repo links
+		$repolines = &read_file_lines($virtualmin_apt_repo, 1)
+			if (-r $virtualmin_apt_repo);
+		}
+	# Does repo file has correct links?
+	my $repofound;
+	if (defined($repolines)) {
+		foreach my $repoline (@$repolines) {
+			$repofound++
+				# If repo file contains /vm/6/ or /vm/7/ consider valid
+				if ($repoline =~ /\/(vm\/(?|([6-9])|([0-9]{2,4})))\//);
+			}
+		if (!$repofound) {
+			&$second_print(&ui_text_color(
+				&text('check_repoeoutdate',
+					"$virtualmin_link/documentation/repositories/"), 'warn'));
 			}
 		}
 	}
@@ -16105,16 +16368,17 @@ foreach my $f (@plugins) {
 # with module name, description and list of options (optional) entries.
 sub list_domain_owner_modules
 {
+&require_mysql();
+my $mytype = $mysql::mysql_version =~ /mariadb/i ? "MariaDB" : "MySQL";
 local @rv = (
         [ 'dns', 'BIND DNS Server (for DNS domain)' ],
         [ 'mail', 'Virtual Email (for mailboxes and aliases)' ],
         [ 'web', 'Apache Webserver (for virtual host)' ],
         [ 'webalizer', 'Webalizer Logfile Analysis (for website\'s logs)' ],
-        [ 'mysql', 'MySQL Database Server (for database)' ],
+        [ 'mysql', $mytype.' Database Server (for database)' ],
         [ 'postgres', 'PostgreSQL Database Server (for database)' ],
         [ 'spam', 'SpamAssassin Mail Filter (for domain\'s config file)' ],
-        [ 'file', 'Java File Manager (home directory only)' ],
-        [ 'filemin', 'Filemin File Manager (home directory only)' ],
+        [ 'filemin', 'File Manager (home directory only)' ],
         [ 'passwd', 'Change Password',
 	  [ [ 2, 'User and mailbox passwords' ],
 	    [ 1, 'User password' ],
@@ -16126,6 +16390,7 @@ local @rv = (
         [ 'cron', 'Scheduled Cron Jobs (user\'s Cron jobs)' ],
         [ 'at', 'Scheduled Commands (user\'s commands)' ],
         [ 'telnet', 'SSH Login' ],
+        [ 'xterm', 'Terminal' ],
         [ 'updown', 'Upload and Download (as user)',
 	  [ [ 1, 'Yes' ],
 	    [ 0, 'No' ],
@@ -16387,6 +16652,12 @@ if ($escape) {
 		$ghash{$v} = &html_escape($ghash{$v});
 		}
 	}
+$ghash{'MYSQL_TYPE'} = "MySQL";
+if ($config{'mysql'}) {
+	&require_mysql();
+	$ghash{'MYSQL_TYPE'} = "MariaDB"
+		if ($mysql::mysql_version =~ /mariadb/i);
+	}
 return &substitute_template($str, \%ghash);
 }
 
@@ -16396,12 +16667,10 @@ return &substitute_template($str, \%ghash);
 sub populate_default_index_page
 {
 	my (%h) = @_;
-	$h{'TMPLTTITLE'}		= $text{'deftmplt_under_construction'} if (!$h{'TMPLTTITLE'});
-	$h{'TMPLTERROR'}		= $text{'deftmplt_error'};
-	$h{'TMPLTSLOGAN'}		= $text{'deftmplt_slogan2'} if (!$h{'TMPLTSLOGAN'});
-	$h{'TMPLTMADEWITH1'}	= $text{'deftmplt_made_with_love1'};
-	$h{'TMPLTMADEWITH2'}	= $text{'deftmplt_made_with_love2'};
-	$h{'TMPLTMADEWITH3'}	= $text{'deftmplt_made_with_love_disclamer'};
+	$h{'TMPLTPAGETITLE'} = $text{'deftmplt_default_page'} if (!$h{'TMPLTPAGETITLE'});
+	$h{'TMPLTERROR'}     = $text{'deftmplt_error'} if (!$h{'TMPLTERROR'});
+	$h{'TMPLTTITLE'}     = $text{'deftmplt_website_enabled'} if (!$h{'TMPLTTITLE'});
+	$h{'TMPLTSLOGAN'}    = $text{'deftmplt_default_slog'} if (!$h{'TMPLTSLOGAN'});
 	return %h;
 }
 
@@ -16445,13 +16714,19 @@ sub set_chained_features
 {
 local ($d, $oldd) = @_;
 foreach my $f (@features) {
-	if ($config{$f} == 3) {
-		local $cfunc = "chained_$f";
-		if (defined(&$cfunc)) {
-			local $c = &$cfunc($d, $oldd);
-			if (defined($c)) {
-				$d->{$f} = $c;
-				}
+	local $cfunc = "chained_$f";
+	if (defined(&$cfunc)) {
+		local $c = &$cfunc($d, $oldd);
+		if (defined($c)) {
+			$d->{$f} = $c;
+			}
+		}
+	}
+foreach my $f (@plugins) {
+	if (&plugin_defined($f, "feature_chained")) {
+		my $c = &plugin_call($f, "feature_chained", $d, $oldd);
+		if (defined($c)) {
+			$d->{$f} = $c;
 			}
 		}
 	}
@@ -16844,7 +17119,7 @@ local @plug = grep { &plugin_call($_, "feature_suitable",
 if ($aliasdom) {
 	@plug = grep { $aliasdom->{$_} } @plug;
 	}
-local %inactive = map { $_, 1 } split(/\s+/, $config{'plugins_inactive'});
+local %inactive = map { $_, 1 } @plugins_inactive;
 push(@rv, map { { 'feature' => $_,
 		  'desc' => &plugin_call($_, "feature_name", 0),
 		  'plugin' => 1,
@@ -17107,14 +17382,6 @@ if (!@rv) {
 		    'mailbox' => 1,
 		    'avail' => 1,
 		    'id' => 'ftp' });
-	if ($config{'jail_shell'}) {
-		push(@rv, { 'shell' => $config{'jail_shell'},
-			    'desc' => $mail ? $text{'shells_mailboxjail'}
-					    : $text{'shells_mailboxjail2'},
-			    'mailbox' => 1,
-			    'avail' => 1,
-			    'id' => 'ftp' });
-		}
 	if (&has_command("scponly")) {
 		push(@rv, { 'shell' => &has_command("scponly"),
 			    'desc' => $mail ? $text{'shells_mailboxscp'}
@@ -17649,21 +17916,12 @@ if ($config{'scriptwarn_url'} && !$main::calling_get_virtualmin_url) {
 	$rv = &substitute_domain_template($config{'scriptwarn_url'}, $d);
 	$rv =~ s/\/$//;
 	$main::calling_get_virtualmin_url = 0;
+	return $rv;
 	}
-elsif (defined(&get_webmin_email_url)) {
+else {
 	# Use new standard function
 	return &get_webmin_email_url(undef, undef, 0, $d->{'dom'});
 	}
-else {
-	# Work out from miniserv
-	# XXX remove this after get_webmin_email_url is widely available
-	local %miniserv;
-	&get_miniserv_config(\%miniserv);
-	local $proto = $miniserv{'ssl'} ? 'https' : 'http';
-	local $port = $miniserv{'port'};
-	$rv = $proto."://$d->{'dom'}:$port";
-	}
-return $rv;
 }
 
 # get_domain_url(&domain, [ssl-if-enabled])
@@ -18754,7 +19012,7 @@ sub get_module_version_and_type
 my ($list, $gpl) = @_;
 my $mver = $module_info{'version'};
 my ($v_major, $v_minor, $v_type);
-if ($mver =~ /(\d+)\.(\d+)\.(\w+)/) {
+if ($mver =~ /(?|(\d+)\.(\d+\.\d+)\.(\w+)|(\d+)\.(\d+)\.(\w+))/) {
 	($v_major, $v_minor, $v_type) = ($1, $2, $3);
 	}
 else {
@@ -18771,8 +19029,8 @@ else {
 		$v_type = "";
 		}
 	}
-	return $list ? ($v_major, $v_minor, $v_type) : 
-                  "$v_major.$v_minor$v_type";
+return $list ? ($v_major, $v_minor, $v_type) : 
+	  "$v_major.$v_minor$v_type";
 }
 
 # set_provision_features(&domain)
@@ -18816,6 +19074,28 @@ if ($cloud eq 'local') {
 	}
 else {
 	$d->{'smtp_cloud'} = $cloud;
+	}
+}
+# update_edit_limits(&dom, limit-name, limit-value)
+# Updates dependencies for given feature 
+# when limits for a domain changed
+sub update_edit_limits {
+my ($d, $lname, $lvalue) = @_;
+
+# Update FPM pool file perms
+if ($lname eq 'phpmode') {
+	my $fpmconf = &get_php_fpm_config($d);
+	my $fpmfile = $fpmconf->{'dir'}."/".$d->{'id'}.".conf";
+	if (-r $fpmfile) {
+		if ($lvalue) {
+			# Allow virtual server owner to change FPM pool config
+			&set_ownership_permissions($d->{'user'}, $d->{'ugroup'}, undef, $fpmfile);
+			}
+		else {
+			# Forbid virtual server owner to change FPM pool config
+			&set_ownership_permissions(0, 0, undef, $fpmfile)
+			}
+		}
 	}
 }
 

@@ -204,11 +204,6 @@ else {
 		&find_html_cgi_dirs($d);
 		}
 
-	# Add <Proxy *> section, to ensure that proxypass works
-	if ($proxying) {
-		&add_proxy_allow_directives($d);
-		}
-
 	# Redirect webmail and admin to Usermin and Webmin
 	if (&has_webmail_rewrite($d)) {
 		&add_webmail_redirect_directives($d, $tmpl);
@@ -691,7 +686,7 @@ else {
 			&$second_print($text{'delete_noapache'});
 			goto VIRTFAILED;
 			}
-		&modify_web_home_directory($d, $oldd, $virt, $vconf, $conf);
+		&modify_web_home_directory($d, $oldd, $virt, $vconf, $conf, $mode);
 		($virt, $vconf, $conf) = &get_apache_virtual($oldd->{'dom'},
 						      $oldd->{'web_port'});
 		$rv++;
@@ -912,7 +907,6 @@ else {
 		  [ "upload_tmp_dir", $oldd->{'home'}, $d->{'home'}, 1 ],
 		  );
 		&fix_php_ini_files($d, \@fixes);
-		&fix_php_fpm_pool_file($d, \@fixes);
 		}
 	&release_lock_web($d);
 	&create_framefwd_file($d);
@@ -1149,7 +1143,7 @@ if ($tmpl->{'disabled_url'} eq 'none') {
 	local $def_tpl = &read_file_contents("$default_content_dir/index.html");
 	local %hashtmp = %$d;
 	$hashtmp{'TMPLTTITLE'} = $text{'deftmplt_website_disabled'};
-	$hashtmp{'TMPLTSLOGAN'} = $text{'deftmplt_slogan'};
+	$hashtmp{'TMPLTSLOGAN'} = $text{'deftmplt_disable_slog'};
 	if ($d->{'disabled_why'}) {
 		$hashtmp{'TMPLTCONTENT'} = $d->{'disabled_why'};
 		}
@@ -1508,6 +1502,10 @@ if ($tmpl->{'web_http2'} && &supports_http2()) {
 	# Enable HTTPv2 if supported by Apache
 	push(@dirs, "Protocols h2 h2c http/1.1");
 	}
+if (!&supports_suexec()) {
+	# Remove unsupported SuexecUserGroup directive
+	@dirs = grep { !/^\s*SuexecUserGroup\s/i } @dirs;
+	}
 return @dirs;
 }
 
@@ -1526,12 +1524,6 @@ if ($d->{'proxy_pass_mode'} == 1) {
 	    $apache::httpd_modules{'core'} >= 2.0) {
 		# SSL proxy mode
 		push(@dirs, "SSLProxyEngine on");
-		}
-	if ($apache::httpd_modules{'core'} >= 2.0) {
-		# Ensure that proxying works
-		push(@dirs, "<Proxy *>",
-			    "allow from all",
-			    "</Proxy>");
 		}
 	}
 elsif ($d->{'proxy_pass_mode'} == 2) {
@@ -1852,6 +1844,9 @@ if ($virt) {
 	if ($virt) {
 		&fix_options_directives($vconf, $conf, 0);
 		}
+
+	# Handle case where there are DAV directives, but it isn't enabled
+	&remove_dav_directives($d, $virt, $vconf, $conf);
 
 	&register_post_action(\&restart_apache);
 	$rv = 1;
@@ -2435,8 +2430,7 @@ foreach my $log ([ 0, $text{'links_alog'} ],
 	local $lf = &get_apache_log($d->{'dom'},
 				    $d->{'web_port'}, $log->[0]);
 	if ($lf) {
-		local $param = &master_admin() ? "file"
-					       : "extra";
+		local $param = &master_admin() ? "file" : "extra";
 		push(@rv, { 'mod' => 'syslog',
 			    'desc' => $log->[1],
 			    'page' => "save_log.cgi?view=1&nonavlinks=1".
@@ -2445,6 +2439,19 @@ foreach my $log ([ 0, $text{'links_alog'} ],
 			    'cat' => 'logs',
 			  });
 		}
+	}
+
+# Link to PHP log, if enabled
+my $phplog = &get_domain_php_error_log($d);
+if ($phplog) {
+	my $param = &master_admin() ? "file" : "extra";
+	push(@rv, { 'mod' => 'syslog',
+		    'desc' => $text{'links_phplog'},
+		    'page' => "save_log.cgi?view=1&nonavlinks=1".
+			      "&linktitle=".&urlize($text{'links_phplog'})."&".
+			      "$param=".&urlize($phplog),
+		    'cat' => 'logs',
+		  });
 	}
 
 # Links to edit PHP configs (if per-domain files exist)
@@ -2805,6 +2812,29 @@ if ($config{'proxy_pass'} == 2) {
 # Enable HTTP2 for new websites
 print &ui_table_row(&hlink($text{'newweb_http2'}, 'template_web_http2'),
 	&ui_yesno_radio("web_http2", $tmpl->{'web_http2'}));
+
+# Default redirects
+print &ui_table_hr();
+my @redirs = map { [ split(/\s+/, $_, 3) ] }
+		 split(/\t+/, $tmpl->{'web_redirects'});
+push(@redirs, [ "", "", "http,https" ]);
+my $rtable = &ui_columns_start(
+    [ $text{'newweb_rfrom'}, $text{'newweb_rto'}, $text{'newweb_rprotos'} ]);
+for(my $i=0; $i<@redirs; $i++) {
+	my %protos = map { $_, 1 } split(/,/, $redirs[$i]->[2]);
+	$rtable .= &ui_columns_row([
+		&ui_textbox("rfrom_$i", $redirs[$i]->[0], 30),
+		&ui_textbox("rto_$i", $redirs[$i]->[1], 40),
+		&vui_ui_block_no_wrap(
+			&ui_checkbox("rprotos_$i", "http", "HTTP", $protos{'http'})." ".
+			&ui_checkbox("rprotos_$i", "https", "HTTPS", $protos{'https'}), 1)
+		]);
+	}
+$rtable .= &ui_columns_end();
+$rtable .= &ui_checkbox("sslredirect", 1, $text{'newweb_sslredirect'},
+			$tmpl->{'web_sslredirect'});
+print &ui_table_row(&hlink($text{'newweb_redirects'}, 'template_web_redirects'),
+	$rtable);
 }
 
 # parse_template_web(&tmpl)
@@ -2946,6 +2976,22 @@ if ($config{'proxy_pass'} == 2) {
 
 # Save HTTP2 option
 $tmpl->{'web_http2'} = $in{'web_http2'};
+
+# Save default redirects
+my @redirs;
+my ($rfrom, $rto);
+for(my $i=0; defined($rfrom = $in{"rfrom_$i"}); $i++) {
+	$rto = $in{"rto_$i"};
+	next if (!$rfrom && !$rto);
+	$rfrom =~ /^\// || &error(&text('newweb_efrom', $i+1));
+	$rto =~ /^\// || $rto =~ /^(http|https):/ ||
+		&error(&text('newweb_eto', $i+1));
+	$rprotos = join(",", split(/\0/, $in{"rprotos_$i"}));
+	$rprotos || &error(&text('newweb_eprotos', $i+1));
+	push(@redirs, [ $rfrom, $rto, $rprotos ]);
+	}
+$tmpl->{'web_redirects'} = join("\t", map { join(" ", @$_) } @redirs);
+$tmpl->{'web_sslredirect'} = $in{'sslredirect'};
 }
 
 # postsave_template_web(&template)
@@ -2994,10 +3040,14 @@ print &ui_table_row(
 		     &list_available_php_versions() ]));
 
 # Default number of PHP child processes
-print &ui_table_row(
-    &hlink($text{'tmpl_phpchildren'}, "template_phpchildren"),
-    &ui_opt_textbox("web_phpchildren", $tmpl->{'web_phpchildren'},
-	    5, $text{'tmpl_phpchildrennone'}));
+if (int($tmpl->{'web_php_suexec'}) >= 2) {
+	print &ui_table_row(
+	    &hlink($text{'tmpl_phpchildren'}, "template_phpchildren"),
+	    &ui_opt_textbox("web_phpchildren", $tmpl->{'web_phpchildren'}, 5,
+	    	int($tmpl->{'web_php_suexec'}) == 2 ? 
+	    	$text{'tmpl_phpchildrenauto'} :
+	        &text('tmpl_phpchildrennone', &get_php_max_childred_allowed())));
+	}
 
 # Source php.ini files
 foreach my $phpver (@allvers) {
@@ -3062,6 +3112,19 @@ if (&indexof("fpm", &supported_php_modes()) >= 0) {
 		    [ 0, $text{'tmpl_php_sock0'} ],
 		    [ 1, $text{'tmpl_php_sock1'} ] ]));
 	}
+
+# Default PHP log file
+print &ui_table_row(
+	&hlink($text{'tmpl_php_log'}, "template_php_log"),
+	&ui_radio("php_log", $tmpl->{'php_log'},
+	  [ $tmpl->{'default'} ? ( ) : ( [ "", $text{'default'} ] ),
+	    [ 1, $text{'yes'} ],
+	    [ 0, $text{'no'} ] ]));
+
+print &ui_table_row(
+	&hlink($text{'tmpl_php_log_path'}, "template_php_log_path"),
+	&ui_opt_textbox("php_log_path", $tmpl->{'php_log_path'}, 60,
+			$text{'default'}." (<tt>logs/php_log</tt>)"));
 }
 
 # parse_template_php(&tmpl)
@@ -3131,6 +3194,8 @@ if (&indexof("fpm", &supported_php_modes()) >= 0) {
 		}
 	$tmpl->{'php_sock'} = $in{'php_sock'};
 	}
+$tmpl->{'php_log'} = $in{'php_log'};
+$tmpl->{'php_log_path'} = $in{'php_log_path_def'} ? undef : $in{'php_log_path'};
 }
 
 # list_php_wrapper_templates([only-installed])
@@ -3222,6 +3287,7 @@ sub add_script_language_directives
 local ($d, $tmpl, $port) = @_;
 my $err;
 
+# Find a usable PHP mode
 &require_apache();
 my $mode = $d->{'default_php_mode'} || &template_to_php_mode($tmpl);
 delete($d->{'default_php_mode'});
@@ -3237,6 +3303,9 @@ if (&indexof($mode, @supp) < 0) {
 	}
 if ($mode) {
 	&save_domain_php_mode($d, $mode, $port, 1);
+	if ($tmpl->{'php_log'}) {
+		&save_domain_php_error_log($d, &get_default_php_error_log($d));
+		}
 	}
 
 if (defined(&save_domain_ruby_mode)) {
@@ -3250,37 +3319,6 @@ if (defined(&save_domain_ruby_mode)) {
 	}
 
 return $err;
-}
-
-# add_proxy_allow_directives(&domain)
-# Adds a <Proxy *> section to allow ProxyPass to work, in case it is overridden
-# at a higher level (as seen on Ubuntu).
-sub add_proxy_allow_directives
-{
-local ($d) = @_;
-&require_apache();
-return 0 if ($apache::httpd_modules{'core'} < 2);	# Not supported in 1.3
-local @ports;
-push(@ports, $d->{'web_port'}) if ($d->{'web'});
-push(@ports, $d->{'web_sslport'}) if ($d->{'ssl'});
-local $added = 0;
-foreach my $port (@ports) {
-	local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $port);
-	next if (!$virt);
-	local @proxy = grep { $_ eq "*" }
-			    &apache::find_directive("Proxy", $vconf);
-	if (!@proxy) {
-		local $lref = &read_file_lines($virt->{'file'});
-		splice(@$lref, $virt->{'eline'}, 0,
-		       "    <Proxy *>",
-		       "        allow from all",
-		       "    </Proxy>");
-		&flush_file_lines($virt->{'file'});
-		undef(@apache::get_config_cache);
-		$added++;
-		}
-	}
-return $added;
 }
 
 # add_webmail_redirect_directives(&domain, &template)
@@ -4383,13 +4421,14 @@ if ($d->{'logrotate'}) {
 return undef;
 }
 
-# modify_web_home_directory(&domain, &old-domain, &virt, &vconf, &apache-config)
+# modify_web_home_directory(&domain, &old-domain, &virt, &vconf, &apache-config,
+# 			    [php-mode])
 # Updates all directives that refer to the old home directory, by modifying
 # the Apache config files directly. Also updates PHP config files. Invalidates
 # the Apache config cache.
 sub modify_web_home_directory
 {
-local ($d, $oldd, $virt, $vconf, $conf) = @_;
+local ($d, $oldd, $virt, $vconf, $conf, $mode) = @_;
 local $lref = &read_file_lines($virt->{'file'});
 for(my $i=$virt->{'line'}; $i<=$virt->{'eline'}; $i++) {
 	$lref->[$i] =~ s/\Q$oldd->{'home'}\E/$d->{'home'}/g;
@@ -4398,18 +4437,19 @@ for(my $i=$virt->{'line'}; $i<=$virt->{'eline'}; $i++) {
 undef(@apache::get_config_cache);
 
 # Fix all php.ini files that use old path
+$mode ||= &get_domain_php_mode($d);
 if (&foreign_check("phpini")) {
 	&foreign_require("phpini");
-	my $mode = &get_domain_php_mode($d);
-	$mode = "cgi" if ($mode eq "mod_php" || $mode eq "fpm");
-	foreach my $ini (&list_domain_php_inis($d, $mode)) {
+	my $inimode = $mode;
+	$inimode = "cgi" if ($inimode eq "mod_php" || $inimode eq "fpm");
+	foreach my $ini (&list_domain_php_inis($d, $inimode)) {
 		&lock_file($ini->[1]);
 		my $conf = &phpini::get_config($ini->[1]);
 		my $fixed = 0;
 		foreach my $c (@$conf) {
-			if ($c->{'value'} =~ /\Q$oldd->{'home'}\E/) {
+			if ($c->{'value'} =~ /^\Q$oldd->{'home'}\E\//) {
 				$c->{'value'} =~
-				    s/\Q$oldd->{'home'}\E/$d->{'home'}/g;
+				    s/^\Q$oldd->{'home'}\E\//$d->{'home'}\//g;
 				&phpini::save_directive($conf,
 				   $c->{'name'}, $c->{'value'});
 				$fixed++;
@@ -4419,6 +4459,17 @@ if (&foreign_check("phpini")) {
 			&flush_file_lines($ini->[1]);
 			}
 		&unlock_file($ini->[1]);
+		}
+	}
+
+# Fix all PHP settings in FPM files that use the old path
+if ($mode eq "fpm") {
+	my $inis = &list_php_fpm_ini_values($d);
+	foreach my $v (@$inis) {
+		if ($v->[1] =~ /^\Q$oldd->{'home'}\E\//) {
+			$v->[1] =~ s/^\Q$oldd->{'home'}\E\//$d->{'home'}\//g;
+			&save_php_fpm_ini_value($d, $v->[0], $v->[1], $v->[2]);
+			}
 		}
 	}
 
@@ -4852,6 +4903,34 @@ foreach my $dir (&apache::find_directive_struct("Directory", $vconf)) {
 	$changed += &fix_options_directives($dir->{'members'}, $conf, $ignore);
 	}
 return $changed;
+}
+
+# remove_dav_directives(&domain, &virt, &vconf, &conf)
+# Remove DAV related directives from an Apache virtualhost
+sub remove_dav_directives
+{
+my ($d, $virt, $vconf, $conf) = @_;
+return 0 if ($d->{'virtualmin-dav'} &&
+	     &indexof('virtualmin-dav', @plugins) >= 0);
+my @locs = &apache::find_directive_struct("Location", $vconf);
+my ($dav) = grep { $_->{'value'} eq '/dav' } @locs;
+return 0 if (!$dav);
+&apache::save_directive_struct($dav, undef, $vconf, $conf);
+
+my @al = &apache::find_directive("Alias", $vconf);
+@al = grep { !/^\/dav\s/ } @al;
+&apache::save_directive("Alias", \@al, $vconf, $conf);
+
+my @pp = &apache::find_directive("ProxyPass", $vconf);
+@pp = grep { !/^\/dav\/\s/ } @pp;
+&apache::save_directive("ProxyPass", \@pp, $vconf, $conf);
+
+my @ppr = &apache::find_directive("ProxyPassReverse", $vconf);
+@ppr = grep { !/^\/dav\/\s/ } @ppr;
+&apache::save_directive("ProxyPassReverse", \@ppr, $vconf, $conf);
+
+&flush_file_lines($virt->{'file'});
+return 1;
 }
 
 # list_mod_php_directives()

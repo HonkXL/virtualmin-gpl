@@ -364,6 +364,10 @@ if ($multi) {
 		print "    User ID: $d->{'uid'}\n";
 		print "    Group name: $d->{'group'}\n";
 		print "    Group ID: $d->{'gid'}\n";
+		if ($d->{'ugroup'} && $d->{'ugroup'} ne $d->{'group'}) {
+			print "    User group name: $d->{'ugroup'}\n";
+			print "    User group ID: $d->{'ugid'}\n";
+			}
 		print "    Mailbox username prefix: $d->{'prefix'}\n";
 		print "    Password storage: ",
 		      ($d->{'hashpass'} ? "Hashed" : "Plain text"),"\n";
@@ -568,18 +572,19 @@ if ($multi) {
 			}
 
 		# Show PHP and suexec execution mode
-		if (!$d->{'alias'} &&
-		    &domain_has_website($d) && $multi == 1) {
+		my $p = &domain_has_website($d);
+		my $showphp = !$d->{'alias'} && $p && $multi == 1;
+		if ($showphp) {
 			$p = &get_domain_php_mode($d);
 			print "    PHP execution mode: $p\n";
 			@modes = &supported_php_modes($d);
 			print "    Possible PHP execution modes: ",
 				join(" ", @modes),"\n";
 			$s = &get_domain_suexec($d);
-			print "    SuExec for CGIs: ",
+			print "    suEXEC for CGIs: ",
 			      ($s ? "enabled" : "disabled"),"\n";
 			if ($d->{'fcgiwrap_port'}) {
-				print "    Fcgiwrap port for CGIs: ",$d->{'fcgiwrap_port'},"\n";
+				print "    FCGIwrap port for CGIs: ",$d->{'fcgiwrap_port'},"\n";
 				}
 			if ($p eq "fpm") {
 				($ok, $port) = &get_domain_php_fpm_port($d);
@@ -589,20 +594,22 @@ if ($multi) {
 							  "Error $port";
 					print "    PHP FPM socket: $msg\n";
 					}
+				my $cfile = &get_php_fpm_config_file($d);
+				if ($cfile) {
+					print "    PHP FPM config file: $cfile\n";
+					}
 				}
 			}
 		elsif (!$d->{'alias'} && $multi == 2 && $d->{'php_mode'}) {
 			print "    PHP execution mode: $d->{'php_mode'}\n";
 			}
-		if (!$d->{'alias'} &&
-		    &domain_has_website($d) &&
-		    defined(&get_domain_php_children) && $multi == 1) {
+		if ($showphp &&
+		    defined(&get_domain_php_children)) {
 			$childs = &get_domain_php_children($d);
 			print "    PHP fCGId subprocesses: ",
 				$childs < 0 ? "Not set" :
 				$childs == 0 ? "None" : $childs,"\n";
 			}
-		$p = &domain_has_website($d);
 		if (!$d->{'alias'} &&
 		    ($p eq 'web' ||
 		     &plugin_defined($p, "feature_get_fcgid_max_execution_time"))) {
@@ -612,39 +619,42 @@ if ($multi) {
 			print "    PHP max execution time: ",
 			      ($max || "Unlimited"),"\n";
 			}
-		if (!$d->{'alias'} &&
-		    &domain_has_website($d) &&
-		    defined(&list_domain_php_directories) && $multi == 1) {
+		if ($showphp &&
+		    defined(&list_domain_php_directories)) {
 			($dir) = &list_domain_php_directories($d);
 			if ($dir) {
 				print "    PHP version: $dir->{'version'}\n";
 				}
 			}
-		if (!$d->{'alias'} &&
-		    &domain_has_website($d) &&
-		    defined(&get_domain_ruby_mode) && $multi == 1) {
+		if ($showphp) {
+			my $log = &get_domain_php_error_log($d);
+			if ($log) {
+				print "    PHP error log: ",$log,"\n";
+				}
+			}
+		if ($showphp &&
+		    defined(&get_domain_ruby_mode)) {
 			$p = &get_domain_ruby_mode($d) || "none";
 			print "    Ruby execution mode: $p\n";
 			}
 
 		# Show webmail redirects
-		if (!$d->{'alias'} &&
-		    &has_webmail_rewrite($d) && &domain_has_website($d) &&
-		    !$d->{'alias'} && $multi == 1) {
+		if ($showphp &&
+		    &has_webmail_rewrite($d)) {
 			@wm = &get_webmail_redirect_directives($d);
 			print "    Webmail redirects: ",
 				(@wm ? "Yes" : "No"),"\n";
 			}
 
 		# Show star web server alias
-		if (&domain_has_website($d) && !$d->{'alias'} && $multi == 1) {
+		if ($showphp) {
 			$star = &get_domain_web_star($d);
 			print "    Match all web sub-domains: ",
 			      ($star ? "Yes" : "No"),"\n";
 			}
 
 		# Show HTTP protocols
-		if (&domain_has_website($d) && !$d->{'alias'} && $multi == 1) {
+		if ($showphp) {
 			$canprots = &get_domain_supported_http_protocols($d);
 			$prots = &get_domain_http_protocols($d);
 			if (@$canprots) {
@@ -656,7 +666,7 @@ if ($multi) {
 			}
 
 		# Show SSI setting
-		if (&domain_has_website($d) && !$d->{'alias'} && $multi == 1) {
+		if ($showphp) {
 			($ssi, $suffix) = &get_domain_web_ssi($d);
 			print "    Server-side includes: ",
 			      ($ssi == 0 ? "Disabled" : 

@@ -35,7 +35,6 @@ index_list=Liste..
 index_enet=Le module de configuration du réseau n'est pas supporté pour votre système d'exploitation. Virtualmin a besoin de ce module pour gérer les interfaces réseau virtuelles.
 index_edefip=Virtualmin ne pouvait pas résoudre l'adresse IPv4 par défaut pour les serveurs virtuels sur votre système. Vous aurez besoin de mettre à jour soit le champs <b>Interface réseau pour les adresses virtuelles</b> ou <b>L'adresse IP par défaut du serveur virtuel</b> de la <a href='$1'>configuration du module</a>.
 
-index_edefip6=Virtualmin ne pouvait pas résoudre l'adresse IPv6 par défaut pour les serveurs virtuels sur votre système. Vous aurez besoin de mettre à jour soit le champs <b>Interface réseau pour les adresses virtuelles</b> ou <b>L'adresse IP par défaut  du serveur virtuel</b> de la <a href='$1'>configuration du module</a>.
 index_eapache=Le serveur web Apache ne semble pas etre installé sur votre systeme, ou n'a pas été correctement configuré dans le module Webmin <a href='$1'>Serveur web Apache</a>. Si votre système n'utilise pas Apache, il doit etre désactivé dans la page de configuration du <a href='$2'>module Virtualmin</a>.
 index_eproftpd=Le serveur ProFTPd ne semble pas installé sur votre système, ou n'a pas encore été configuré dans le module Webmin de <a href='$1'>Serveur ProFTPd</a>. Si votre système n'utilise pas ProFTPd, cette fonctionnalité doit être désactivée dans la page de <a href='$2'>configuration du module</a> Virtualmin.
 index_ebind=Le serveur DNS BIND version 8 ou 9 ne semble pas etre installé sur votre systeme, ou n'a pas été correctement configuré dans le module Webmin <a href='$1'>Serveur DNS BIND</a>. Si votre système n'utilise pas BIND, il doit être désactivé dans la page de configuration du <a href='$2'>module Virtualmin</a>.
@@ -1398,10 +1397,8 @@ backup_mode0a=Fichier ou répertoire sous <tt>virtualmin-backup/</tt>
 backup_mode1=Serveur FTP
 backup_mode2=Serveur SSH
 backup_mode3=Amazon S3 bucket
-backup_mode4=Télécharger dans le navigateur
 backup_mode5=Télécharger sur le serveur
 backup_mode6=Rackspace Cloud Fichiers
-backup_mode4desc=Le fichier résultant de sauvegarde Virtualmin sera téléchargé dans votre navigateur, pour enregistrer sur votre PC.
 backup_akey=ID clé d'accès
 backup_skey=ID Clé secrète
 backup_nos3path=Au plus haut niveau
@@ -1677,7 +1674,7 @@ restore_enone=La source indiquée ne contient aucun domaine ou n'est pas une sau
 restore_etar=Ce n'est pas une archive .tar ou .tar.gz valide
 restore_edup=Le serveur $1 apparaît deux fois dans le répertoire de sauvegarde
 restore_from=Voulez-vous vraiment restaurer les domaine sélectionnés et leurs fonctionnalités à partir de $1 ? Toutes les données existantes pour ces fonctionnalités dans ces domaines seront écrasées.
-restore_fmissing=Avertissement - Les caractéristiques suivantes ont été activés dans un ou plusieurs des domaines de la sauvegarde, mais ne sont pas activés sur ce système : <i>$1</i>
+restore_fmissing=Les caractéristiques suivantes ont été activés dans un ou plusieurs des domaines de la sauvegarde, mais ne sont pas activés sur ce système : <i>$1</i>
 restore_fmissing2=Sans eux, certaines fonctions des serveurs virtuels restaurés peuvent ne pas fonctionner.
 restore_fmissing3=Cette sauvegarde ne peut être restaurée sans casser la configuration de ce système.
 restore_rerrors=Cette sauvegarde ne peut être restaurée en raison des erreurs suivantes : $1
@@ -2039,7 +2036,6 @@ tmpl_gaclg=Groupes visibles dans la liste de choix
 tmpl_gaclr=Répertoire racine dans la liste de choix de fichiers
 tmpl_mysql_nosuffix=Aucun
 tmpl_resellers_none=Aucun
-tmpl_phpchildrennone=Aucun
 newplugin_title=Greffons
 newplugin_desc=Les greffons sont des modules Webmin fournissant des fonctionnalités supplémentaires à Virtualmin (serveur et boîtes de courrier). A la différence des fonctionnalités de base, elles peuvent être installées séparément, et/ou être écrites par d'autres développeurs que ceux de Webmin.
 newplugin_mods=Greffons activés
@@ -2206,8 +2202,6 @@ scripts_faking=Feindre d'installation de $1 version $2 ..
 scripts_failed=.. échoué! Voir le message d'erreur ci-dessus pour la raison.
 scripts_utitle=Désinstaller Script
 scripts_egone=Script n'existe plus!
-scripts_rusure=Etes-vous sûr que vous voulez désinstaller le script $1 version $2? Tous les fichiers sous <tt>$3</tt> seront supprimés ($4).
-scripts_rusuredb=Les tables liées à ce script dans la $1 base de données $2 seront également supprimés.
 scripts_rusurei=Etes-vous sûr que vous voulez installer $1 dans le répertoire $2? $3 fichiers totalisant $4 existent déjà, et seront supprimées si le script est désinstallé.
 scripts_rusurehome=Parce que ce script est installé dans le répertoire Web de haut niveau du serveur virtuel, <b>tous</b> les fichiers sous <tt>$1</tt> seront supprimés quand il est désinstallé!
 scripts_uok2=Désinstaller maintenant
@@ -2551,7 +2545,6 @@ phpmode_emodsuexec=L'option <b>Exécuter Scripts CGI en tant que propriétaire d
 phpmode_rubymode=Ruby script Mode d'exécution
 phpmode_mod_ruby=Apache <tt>mod_ruby</tt> (fonctionner comme utilisateur d'Apache)
 phpmode_noruby=Ruby scripts désactivées
-phpmode_children=PHP FCGId sous-processus
 phpmode_echildren=Nombre de sous-processus PHP doit être comprise entre 1 et $1
 phpmode_maxtime=Maximal de l'exécution du script PHP
 phpmode_maxing=Changer le maximal de l'exécution du script PHP pour $1 secondes ..

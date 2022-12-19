@@ -62,9 +62,7 @@ elsif ($dns_submode && $d->{'parent'}) {
 
 # Create domain info object
 my $info;
-my @inforecs;
 if ($d->{'provision_dns'} || $d->{'dns_cloud'}) {
-	# XXX populate $recs, don't create it
 	$info = { 'domain' => $d->{'dom'} };
 	if (@extra_slaves) {
 		$info->{'slave'} = [ grep { $_ } map { &to_ipaddress($_) }
@@ -82,11 +80,14 @@ if ($d->{'provision_dns'} || $d->{'dns_cloud'}) {
 	else {
 		&create_standard_records($recs, $temp, $d, $ip);
 		}
-	$info->{'record'} = $recs;
+	$info->{'recs'} = $recs;
 	}
 
 if ($d->{'provision_dns'}) {
 	# Create on provisioning server
+	my @precs = grep { $_->{'type'} ne 'NS' } @{$info->{'recs'}};
+	$info->{'record'} = [ &records_to_text($d, \@precs) ];
+	delete($info->{'recs'});
 	&$first_print($text{'setup_bind_provision'});
 	my ($ok, $msg) = &provision_api_call(
 		"provision-dns-zone", $info, 0);
@@ -98,7 +99,7 @@ if ($d->{'provision_dns'}) {
 	&$second_print(&text('setup_bind_provisioned',
 			     $d->{'provision_dns_host'}));
 	}
-elsif ($d->{'dns_cloud'}) {
+elsif ($d->{'dns_cloud'} && !$dnsparent) {
 	# Create on Cloud DNS service
 	my $ctype = $d->{'dns_cloud'};
 	my ($cloud) = grep { $_->{'name'} eq $ctype } &list_dns_clouds();
@@ -110,7 +111,6 @@ elsif ($d->{'dns_cloud'}) {
 		return 0;
 		}
 	my $cfunc = "dnscloud_".$ctype."_create_domain";
-	$info->{'recs'} = \@inforecs;
 	my ($ok, $msg, $location, $err2) = &$cfunc($d, $info);
 	if ($ok == 0) {
 		&$second_print(&text('setup_ebind_cloud', $msg));
@@ -253,14 +253,7 @@ elsif (!$dnsparent) {
 	# is a sub-domain, as they don't have their own domain. Also not
 	# possible if target uses another domain's zone file to store its
 	# records.
-	local $copyfromalias = 0;
-	if ($d->{'alias'}) {
-		local $target = &get_domain($d->{'alias'});
-		if ($target && !$target->{'subdom'} &&
-		    !$target->{'dns_submode'}) {
-			$copyfromalias = 1;
-			}
-		}
+	local $copyfromalias = &copy_alias_records($d);
 
 	# Create the records file
 	local $rootfile = &bind8::make_chroot($file);
@@ -306,27 +299,25 @@ elsif (!$dnsparent) {
 else {
 	# Creating a sub-domain - add to parent's DNS zone.
 	&$first_print(&text('setup_bindsub', $dnsparent->{'dom'}));
+	delete($d->{'dns_cloud'});	# Cloud always comes from parent
 	&obtain_lock_dns($dnsparent);
-	local $z = &get_bind_zone($dnsparent->{'dom'});
-	if (!$z) {
+	&pre_records_change($dnsparent);
+	local ($recs, $file) = &get_domain_dns_records_and_file($dnsparent);
+	if (!$file) {
 		&error(&text('setup_ednssub', $dnsparent->{'dom'}));
 		}
-	&pre_records_change($dnsparent);
-	local $file = &bind8::find("file", $z->{'members'});
-	local $fn = $file->{'values'}->[0];
-	local @recs = &bind8::read_zone_file($fn, $dnsparent->{'dom'});
 	$d->{'dns_submode'} = 1;	# So we know how this was done
 	$d->{'dns_subof'} = $dnsparent->{'id'};
 	local ($already) = grep { $_->{'name'} eq $d->{'dom'}."." }
-				grep { $_->{'type'} eq 'A' } @recs;
+				grep { $_->{'type'} eq 'A' } @$recs;
 	if ($already) {
 		# A record with the same name as the sub-domain exists .. we
 		# don't want to delete this later
 		$d->{'dns_subalready'} = 1;
 		}
 	local $ip = $d->{'dns_ip'} || $d->{'ip'};
-	&create_standard_records(\@recs, $fn, $d, $ip);
-	&post_records_change($dnsparent, \@recs);
+	&create_standard_records($recs, $file, $d, $ip);
+	&post_records_change($dnsparent, $recs, $file);
 
 	&release_lock_dns($dnsparent);
 	&add_parent_dnssec_ds_records($d);
@@ -347,7 +338,7 @@ sub delete_dns
 {
 local ($d) = @_;
 &require_bind();
-if ($d->{'dns_cloud'}) {
+if ($d->{'dns_cloud'} && !$d->{'dns_submode'}) {
 	# Delete from Cloud DNS provider
 	my $ctype = $d->{'dns_cloud'};
 	my ($cloud) = grep { $_->{'name'} eq $ctype } &list_dns_clouds();
@@ -363,6 +354,7 @@ if ($d->{'dns_cloud'}) {
 		}
 	delete($d->{'dns_cloud_id'});
 	delete($d->{'dns_cloud_location'});
+	delete($domain_dns_records_cache{$d->{'id'}});
 	&$second_print($text{'setup_done'});
 	}
 elsif ($d->{'provision_dns'}) {
@@ -383,6 +375,7 @@ elsif ($d->{'provision_dns'}) {
 	else {
 		&$second_print($text{'delete_bind_provision_none'});
 		}
+	delete($domain_dns_records_cache{$d->{'id'}});
 	}
 elsif (!$d->{'dns_submode'}) {
 	# Delete real domain
@@ -432,6 +425,7 @@ elsif (!$d->{'dns_submode'}) {
 
 	&delete_zone_on_slaves($d);
 	&release_lock_dns($d, 1);
+	delete($domain_dns_records_cache{$d->{'id'}});
 	}
 else {
 	# Delete records from parent zone
@@ -443,25 +437,25 @@ else {
 	&$first_print(&text('delete_bindsub', $dnsparent->{'dom'}));
 	&obtain_lock_dns($dnsparent);
 	&delete_parent_dnssec_ds_records($d);
-	local $z = &get_bind_zone($dnsparent->{'dom'});
-	if (!$z) {
+	local ($recs, $file) = &get_domain_dns_records_and_file($dnsparent);
+	if (!$file) {
 		&$second_print($text{'save_nobind'});
 		return;
 		}
 	&pre_records_change($dnsparent);
-	local $file = &bind8::find("file", $z->{'members'});
-	local $fn = $file->{'values'}->[0];
-	local @recs = &bind8::read_zone_file($fn, $dnsparent->{'dom'});
 	local $withdot = $d->{'dom'}.".";
-	foreach $r (reverse(@recs)) {
+	foreach $r (@$recs) {
 		# Don't delete if outside sub-domain
 		next if ($r->{'name'} !~ /\Q$withdot\E$/);
 		# Don't delete if the same as an existing record
 		next if ($r->{'name'} eq $withdot && $r->{'type'} eq 'A' &&
 			 $d->{'dns_subalready'});
-		&bind8::delete_record($fn, $r);
+		push(@delrecs, $r);
 		}
-	&post_records_change($dnsparent, \@recs);
+	foreach my $r (@delrecs) {
+		&delete_dns_record($recs, $file, $r);
+		}
+	&post_records_change($dnsparent, $recs, $file);
 	&release_lock_dns($dnsparent);
 	&$second_print($text{'setup_done'});
 	delete($d->{'dns_submode'});
@@ -494,12 +488,21 @@ if (!$recs) {
 	}
 &obtain_lock_dns($d);
 
-# Copy over the records file
-local $absfile = &bind8::make_chroot($file);
-local $absofile = &bind8::make_chroot($ofile);
-&copy_source_dest($absofile, $absfile);
+# Remove all existing records, and create new ones
 &pre_records_change($d);
-$recs = [ &bind8::read_zone_file($file, $oldd->{'dom'}) ];
+my @delrecs;
+foreach my $r (@$recs) {
+	next if ($r->{'type'} eq 'SOA');
+	push(@delrecs, $r);
+	}
+foreach my $r (@delrecs) {
+	&delete_dns_record($recs, $file, $r);
+	}
+foreach my $r (@$orecs) {
+	next if ($r->{'type'} eq 'SOA');
+	my $nr = { %$r };
+	&create_dns_record($recs, $file, $nr);
+	}
 &modify_records_domain_name($recs, $file, $oldd->{'dom'}, $d->{'dom'});
 local $oldip = $oldd->{'dns_ip'} || $oldd->{'ip'};
 local $newip = $d->{'dns_ip'} || $d->{'ip'};
@@ -516,16 +519,16 @@ local @sublist = grep { $_->{'id'} ne $oldd->{'id'} &&
 			$_->{'id'} ne $d->{'id'} &&
 			$_->{'dom'} =~ /\.\Q$oldd->{'dom'}\E$/ }
 		      &list_domains();
-RECORD: foreach my $r (reverse(@$recs)) {
+RECORD: foreach my $r (@$recs) {
 	foreach my $sd (@sublist) {
 		if ($r->{'name'} eq $sd->{'dom'}."." ||
 		    $r->{'name'} =~ /\.\Q$sd->{'dom'}\E\.$/) {
-			&bind8::delete_record($file, $r);
+			&delete_dns_record($recs, $file, $r);
 			next RECORD;
 			}
 		}
 	if (&is_dnssec_record($r)) {
-		&bind8::delete_record($file, $r);
+		&delete_dns_record($recs, $file, $r);
 		}
 	}
 
@@ -767,12 +770,12 @@ elsif ($d->{'dom'} ne $oldd->{'dom'} && $d->{'dns_cloud'}) {
 		}
 	else {
 		my $rfunc = "dnscloud_".$ctype."_rename_domain";
-		my ($ok, $msg) = &$rfunc($d, $info);
+		my ($ok, $id) = &$rfunc($d, $info);
 		if (!$ok) {
-			&$second_print(&text('save_bind_ecloud', $err));
+			&$second_print(&text('save_bind_ecloud', $id));
 			}
 		else {
-			$d->{'dns_cloud_id'} = $msg;
+			$d->{'dns_cloud_id'} = $id;
 			&$second_print($text{'setup_done'});
 			}
 		}
@@ -786,20 +789,19 @@ elsif ($d->{'dom'} ne $oldd->{'dom'}) {
 		&release_lock_dns($lockon, $lockconf);
 		return 0;
 		}
-	local $nfn;
-	local $file = &bind8::find("file", $z->{'members'});
+	local $f = &bind8::find("file", $z->{'members'});
 	if (!$d->{'dns_submode'}) {
 		# Domain name has changed .. rename zone file
 		&$first_print($text{'save_dns2'});
-		local $fn = $file->{'values'}->[0];
-		$nfn = $fn;
+		local $fn = $f->{'values'}->[0];
+		local $nfn = $fn;
 		$nfn =~ s/$oldd->{'dom'}/$d->{'dom'}/;
 		if ($fn ne $nfn) {
 			&rename_logged(&bind8::make_chroot($fn),
 				       &bind8::make_chroot($nfn))
 			}
-		$file->{'values'}->[0] = $nfn;
-		$file->{'value'} = $nfn;
+		$f->{'values'}->[0] = $nfn;
+		$f->{'value'} = $nfn;
 
 		# Change zone in .conf file
 		$z->{'values'}->[0] = $d->{'dom'};
@@ -810,19 +812,18 @@ elsif ($d->{'dom'} ne $oldd->{'dom'}) {
 		}
 	else {
 		&$first_print($text{'save_dns6'});
-		$nfn = $file->{'values'}->[0];
 		}
+	&clear_domain_dns_records_and_file($d);
 
 	# Modify any records containing the old name
 	&lock_file(&bind8::make_chroot($nfn));
 	&pre_records_change($d);
-        local @recs = &bind8::read_zone_file($nfn, $oldzonename);
-	&modify_records_domain_name(\@recs, $nfn,
+	($recs, $file) = &get_domain_dns_records_and_file($d);
+	&modify_records_domain_name($recs, $file,
 				    $oldd->{'dom'}, $d->{'dom'});
 
         # Update SOA record
-	&post_records_change($d, \@recs);
-	$recs = \@recs;
+	&post_records_change($d, $recs);
 	&unlock_file(&bind8::make_chroot($nfn));
 	$rv++;
 
@@ -930,8 +931,8 @@ elsif (!$d->{'mail'} && $oldd->{'mail'} && !$tmpl->{'dns_replace'}) {
 		}
 	if (@mx) {
 		&$first_print($text{'save_dns5'});
-		foreach my $r (reverse(@mx)) {
-			&bind8::delete_record($file, $r);
+		foreach my $r (@mx) {
+			&delete_dns_record($recs, $file, $r);
 			}
 		&$second_print($text{'setup_done'});
 		$rv++;
@@ -994,8 +995,8 @@ if ($d->{'mx_servers'} ne $oldd->{'mx_servers'} && $d->{'mail'} &&
 				}
 			}
 		}
-	foreach my $r (reverse(@mxs)) {
-		&bind8::delete_record($file, $r);
+	foreach my $r (@mxs) {
+		&delete_dns_record($recs, $file, $r);
 		}
 
 	&$second_print($text{'setup_done'});
@@ -1011,7 +1012,7 @@ if ($d->{'ip6'} && !$oldd->{'ip6'}) {
 		&release_lock_dns($lockon, $lockconf);
 		return 0;
 		}
-	&add_ip6_records($d, $file);
+	&add_ip6_records($d, $recs, $file);
 	&$second_print($text{'setup_done'});
 	$rv++;
 	}
@@ -1024,7 +1025,7 @@ elsif (!$d->{'ip6'} && $oldd->{'ip6'}) {
 		&release_lock_dns($lockon, $lockconf);
 		return 0;
 		}
-	&remove_ip6_records($oldd, $file);
+	&remove_ip6_records($oldd, $file, $recs);
 	&$second_print($text{'setup_done'});
 	$rv++;
 	}
@@ -1090,11 +1091,11 @@ else {
 	}
 }
 
-# split_long_txt_record(string)
+# split_long_txt_record(string, [no-brackets])
 # Split a TXT record at 80 char boundaries
 sub split_long_txt_record
 {
-local ($str) = @_;
+local ($str, $nobrackets) = @_;
 $str =~ s/^"//;
 $str =~ s/"$//;
 local @rv;
@@ -1103,8 +1104,9 @@ while($str) {
 	$str = substr($str, 80);
 	push(@rv, $first);
 	}
-return @rv == 1 ? '"'.$rv[0].'"'
-		: "( ".join("\n\t", map { '"'.$_.'"' } @rv)." )";
+return @rv == 1 ? '"'.$rv[0].'"' :
+       $nobrackets ? join(" ", map { '"'.$_.'"' } @rv) :
+		     "( ".join("\n\t", map { '"'.$_.'"' } @rv)." )";
 }
 
 # create_mail_records(&records, file, &domain, ip, ip6)
@@ -1136,6 +1138,7 @@ local $withdot = $d->{'dom'}.".";
 # MX for this system
 local $mxname = $tmpl->{'dns_mx'} && $tmpl->{'dns_mx'} ne 'none' ?
 			$tmpl->{'dns_mx'}."." : "mail.$withdot";
+$mxname = &substitute_domain_template($mxname, $d);
 my $r = { 'name' => $withdot,
 	  'type' => "MX",
 	  'values' => [ 5, $mxname ] };
@@ -1163,9 +1166,10 @@ if (!$config{'secmx_nodns'}) {
 sub create_standard_records
 {
 local ($recs, $file, $d, $ip) = @_;
+my $tmpl = &get_template($d->{'template'});
+my $proxied = $tmpl->{'dns_cloud_proxy'};
 &require_bind();
 local $rootfile = &bind8::make_chroot($file);
-local $tmpl = &get_template($d->{'template'});
 local $serial = $bconfig{'soa_style'} ?
 	&bind8::date_serial().sprintf("%2.2d", $bconfig{'soa_start'}) :
 	time();
@@ -1263,6 +1267,7 @@ if (!$tmpl->{'dns_replace'} || $d->{'dns_submode'}) {
 					&create_dns_record($recs, $file,
 						{ 'name' => $r,
 						  'type' => 'A',
+						  'proxied' => $proxied,
 						  'values' => [ $a ] });
 					$i++;
 					}
@@ -1285,8 +1290,7 @@ if (!$tmpl->{'dns_replace'} || $d->{'dns_submode'}) {
 		$rd = &get_domain($d->{'dns_subof'});
 		}
 	local %already = map { $_->{'name'}, $_ }
-			     grep { $_->{'type'} eq 'A' }
-				  &bind8::read_zone_file($file, $rd->{'dom'});
+			     grep { $_->{'type'} eq 'A' } @$recs;
 
 	# Work out which records to add
 	local $withdot = $d->{'dom'}.".";
@@ -1301,8 +1305,11 @@ if (!$tmpl->{'dns_replace'} || $d->{'dns_submode'}) {
 	# Add standard records we don't have yet
 	foreach my $n ($withdot, "www.$withdot", "ftp.$withdot", "m.$withdot") {
 		if (!$already{$n} && $addrecs{$n}) {
-			&bind8::create_record($file, $n, undef,
-					      "IN", "A", $ip);
+			&create_dns_record($recs, $file,
+				{ 'name' => $n,
+				  'type' => 'A',
+				  'proxied' => $proxied,
+				  'values' => [ $ip ] });
 			}
 		}
 
@@ -1313,8 +1320,11 @@ if (!$tmpl->{'dns_replace'} || $d->{'dns_submode'}) {
 			}
 		if ($ns =~ /^([^\.]+)\.(\S+\.)$/ && $2 eq $withdot &&
 		    !$already{$ns}) {
-			&bind8::create_record($file, $ns, undef,
-					      "IN", "A", $ip);
+			&create_dns_record($recs, $file,
+				{ 'name' => $ns,
+				  'type' => 'A',
+				  'proxied' => $proxied,
+				  'values' => [ $ip ] });
 			}
 		}
 
@@ -1322,16 +1332,22 @@ if (!$tmpl->{'dns_replace'} || $d->{'dns_submode'}) {
 	# registrars require it!
 	local $n = "localhost.$withdot";
 	if (!$already{$n} && $addrecs{$n}) {
-		&bind8::create_record($file, $n, undef,
-				      "IN", "A", "127.0.0.1");
+		&create_dns_record($recs, $file,
+			{ 'name' => $n,
+			  'type' => 'A',
+			  'proxied' => $proxied,
+			  'values' => [ "127.0.0.1" ] });
 		}
 
 	# If the hostname of the system is within this domain, add a record
 	# for it
 	my $hn = &get_system_hostname();
 	if ($hn =~ /\.\Q$d->{'dom'}\E$/ && !$already{$hn."."}) {
-		&bind8::create_record($file, $hn.".", undef,
-				      "IN", "A", &get_default_ip());
+		&create_dns_record($recs, $file,
+			{ 'name' => $hn.".",
+			  'type' => 'A',
+			  'proxied' => $proxied,
+			  'values' => [ &get_default_ip() ] });
 		}
 
 	# If requested, add webmail and admin records
@@ -1350,11 +1366,13 @@ if (!$tmpl->{'dns_replace'} || $d->{'dns_submode'}) {
 	if ($tmpl->{'dns_spf'} ne "none" &&
 	    !$d->{'dns_submode'}) {
 		local $str = &bind8::join_spf(&default_domain_spf($d));
-		&bind8::create_record($file, $withdot, undef,
-				      "IN", "TXT", "\"$str\"");
+		&create_dns_record($recs, $file,
+			{ 'name' => $withdot, type => 'TXT',
+			  'values' => [ $str ] });
 		if ($bind8::config{'spf_record'}) {
-			&bind8::create_record($file, $withdot, undef,
-					      "IN", "SPF", "\"$str\"");
+			&create_dns_record($recs, $file,
+				{ 'name' => $withdot, type => 'SPF',
+				  'values' => [ $str ] });
 			}
 		}
 
@@ -1362,8 +1380,9 @@ if (!$tmpl->{'dns_replace'} || $d->{'dns_submode'}) {
 	if ($tmpl->{'dns_dmarc'} ne "none" &&
 	    !$d->{'dns_submode'}) {
 		local $str = &bind8::join_dmarc(&default_domain_dmarc($d));
-		&bind8::create_record($file, "_dmarc.".$withdot, undef,
-				      "IN", "TXT", "\"$str\"");
+		&create_dns_record($recs, $file,
+			{ 'name' => "_dmarc.".$withdot, type => 'TXT',
+			  'values' => [ $str ] });
 		}
 	}
 
@@ -1372,28 +1391,30 @@ if ($tmpl->{'dns'} && $tmpl->{'dns'} ne 'none' &&
 	# Add or use the user-defined records template, if defined and if this
 	# isn't a sub-domain being added to an existing file OR if we are just
 	# adding records
-	&open_tempfile(RECS, ">>$rootfile");
 	local %subs = %$d;
 	$subs{'serial'} = $serial;
 	$subs{'dnsemail'} = $d->{'emailto_addr'};
 	$subs{'dnsemail'} =~ s/\@/./g;
-	local $recs = &substitute_domain_template(
+	local $recstxt = &substitute_domain_template(
 		join("\n", split(/\t+/, $tmpl->{'dns'}))."\n", \%subs);
-	&print_tempfile(RECS, $recs);
-	&close_tempfile(RECS);
+	local @tmplrecs = &text_to_dns_records($recstxt, $d->{'dom'});
+	foreach my $r (@tmplrecs) {
+		$r->{'proxied'} = $proxied;
+		&create_dns_record($recs, $file, $r);
+		}
 	}
 
 if ($d->{'ip6'}) {
 	# Create IPv6 records for IPv4
-	&add_ip6_records($d, $file);
+	&add_ip6_records($d, $recs, $file);
 	}
 }
 
-# create_alias_records(&records, file, &domain, ip)
+# create_alias_records(&records, file, &domain, ip, [diff-mode])
 # For a domain that is an alias, copy records from its target
 sub create_alias_records
 {
-local ($recs, $file, $d, $ip) = @_;
+local ($recs, $file, $d, $ip, $diff) = @_;
 local $tmpl = &get_template($d->{'template'});
 local $aliasd = &get_domain($d->{'alias'});
 local ($aliasrecs, $aliasfile) = &get_domain_dns_records_and_file($aliasd);
@@ -1405,7 +1426,31 @@ local $oldip = $aliasd->{'ip'};
 local @sublist = grep { $_->{'id'} ne $aliasd->{'id'} &&
 			$_->{'dom'} =~ /\.\Q$aliasd->{'dom'}\E$/ }
 		      &list_domains();
+
+# Find records we already have
+local %already;
+foreach my $r (@$recs) {
+	$already{&dns_record_key($r, 1)} = $r;
+	}
+local %keep;
+
+# Build list of master nameservers
+my %tmplns;
+my $master = &get_master_nameserver($tmpl, $d);
+$tmplns{$master} = 1;
+foreach my $ns (&get_slave_nameservers($tmpl)) {
+	$tmplns{$ns} = 1;
+	}
+local @slaves = &bind8::list_slave_servers();
+foreach my $slave (@slaves) {
+	local @bn = $slave->{'nsname'} ?
+		( $slave->{'nsname'} ) :
+		gethostbyname($slave->{'host'});
+	$tmplns{$bn[0]."."} = 1 if ($bn[0]);
+	}
+
 RECORD: foreach my $r (@$aliasrecs) {
+	my $nr = { %$r };
 	if ($d->{'dns_submode'} && ($r->{'type'} eq 'NS' || 
 				    $r->{'type'} eq 'SOA')) {
 		# Skip SOA and NS records for sub-domains in the same file
@@ -1417,7 +1462,8 @@ RECORD: foreach my $r (@$aliasrecs) {
 		}
 	if ($r->{'defttl'}) {
 		# Add default TTL
-		&create_dns_record($recs, $file, $r);
+		next if ($diff && $already{&dns_record_key($nr, 1)});
+		&create_dns_record($recs, $file, $nr);
 		next;
 		}
 	if (!$r->{'type'}) {
@@ -1431,39 +1477,37 @@ RECORD: foreach my $r (@$aliasrecs) {
 			next RECORD;
 			}
 		}
-	$r->{'name'} =~ s/\Q$olddom\E\.$/$dom\./i;
+	$nr->{'name'} =~ s/\Q$olddom\E\.$/$dom\./i;
 
 	# Change domain name to alias in record values, unless it is an NS
 	# that is set in the template
-	my %tmplns;
-	my $master = &get_master_nameserver($tmpl, $d);
-	$tmplns{$master} = 1;
-	foreach my $ns (&get_slave_nameservers($tmpl)) {
-		$tmplns{$ns} = 1;
-		}
-	local @slaves = &bind8::list_slave_servers();
-	foreach my $slave (@slaves) {
-		local @bn = $slave->{'nsname'} ?
-			( $slave->{'nsname'} ) :
-			gethostbyname($slave->{'host'});
-		$tmplns{$bn[0]."."} = 1 if ($bn[0]);
-		}
-	if ($r->{'type'} ne 'NS' || !$tmplns{$r->{'values'}->[0]}) {
-		foreach my $v (@{$r->{'values'}}) {
+	if ($nr->{'type'} ne 'NS' || !$tmplns{$nr->{'values'}->[0]}) {
+		foreach my $v (@{$nr->{'values'}}) {
 			$v =~ s/\Q$olddom\E/$dom/i;
 			$v =~ s/\Q$oldip\E$/$ip/i;
 			}
 		}
-	my $str;
-	my $joined = join("", @{$r->{'values'}});
-	if ($r->{'type'} eq 'TXT' && length($joined) > 80) {
-		$str = &split_long_txt_record($joined);
-		}
-	else {
-		$str = &join_record_values($r);
-		}
-	my $nr = { %$r };
+	$keep{&dns_record_key($nr, 1)} = 1;
+
+	# Create unless it already exists
+	next if ($diff && $already{&dns_record_key($nr, 1)});
+	next if ($diff && $nr->{'type'} eq 'SOA');
 	&create_dns_record($recs, $file, $nr);
+	}
+
+# Delete records that are missing now, if diffing
+if ($diff) {
+	my @delrecs;
+	foreach my $r (@$recs) {
+		next if (defined($r->{'defttl'}));
+		next if ($r->{'type'} eq 'SOA');
+		next if (&is_dnssec_record($r));
+		next if ($keep{&dns_record_key($r, 1)});
+		push(@delrecs, $r);
+		}
+	foreach my $r (@delrecs) {
+		&delete_dns_record($recs, $file, $r);
+		}
 	}
 }
 
@@ -1531,7 +1575,8 @@ foreach my $r ('webmail', 'admin') {
 	local $n = "$r.$d->{'dom'}.";
 	if ($tmpl->{'web_'.$r} && (!$already || !$already->{$n})) {
 		my $r = { 'name' => $n,
-			  'type' => "A",
+			  'type' => 'A',
+			  'proxied' => $tmpl->{'dns_cloud_proxy'},
 			  'values' => [ $ip ] };
 		&create_dns_record($recs, $file, $r);
 		$count++;
@@ -1601,8 +1646,9 @@ my $count = 0;
 my $withdot = $d->{'dom'}.".";
 my $domip = $d->{'dns_ip'} || $d->{'ip'};
 my $domip6 = $d->{'dns_ip6'} || $d->{'ip6'};
-foreach my $r (@recs) {
-	if ($r->{'type'} eq 'A' &&
+foreach my $r (@$recs) {
+	if ($r->{'type'} &&
+	    $r->{'type'} eq 'A' &&
 	    $r->{'values'}->[0] eq $domip &&
 	    !$already{$r->{'name'}} &&
 	    ($r->{'name'} eq $withdot || $r->{'name'} =~ /\.\Q$withdot\E$/)) {
@@ -1629,23 +1675,21 @@ foreach my $r (@recs) {
 return $count;
 }
 
-# remove_ip6_records(&domain, [file], [&records])
+# remove_ip6_records(&domain, file, &records)
 # Delete all AAAA records whose value is the domain's IP6 address
 sub remove_ip6_records
 {
 local ($d, $file, $recs) = @_;
 &require_bind();
-$file ||= &get_domain_dns_file($d);
-return 0 if (!$file);
-$recs ||= [ &bind8::read_zone_file($file, $d->{'dom'}) ];
 my $withdot = $d->{'dom'}.".";
-for(my $i=@$recs-1; $i>=0; $i--) {
-	my $r = $recs->[$i];
+foreach my $r (@$recs) {
 	if ($r->{'type'} eq 'AAAA' && $r->{'values'}->[0] eq $d->{'ip6'} &&
 	    ($r->{'name'} eq $withdot || $r->{'name'} =~ /\.\Q$withdot\E$/)) {
-		&bind8::delete_record($file, $r);
-		splice(@$recs, $i, 1);
+		push(@delrecs, $r);
 		}
+	}
+foreach my $r (@delrecs) {
+	&delete_dns_record($recs, $file, $r);
 	}
 }
 
@@ -1655,6 +1699,7 @@ for(my $i=@$recs-1; $i>=0; $i--) {
 sub save_domain_matchall_record
 {
 local ($d, $star) = @_;
+my $tmpl = &get_template($d->{'template'});
 &pre_records_change($d);
 local ($recs, $file) = &get_domain_dns_records_and_file($d);
 return 0 if (!$file);
@@ -1666,6 +1711,7 @@ if ($star && !$r) {
 	my $ip = $d->{'dns_ip'} || $d->{'ip'};
 	$r = { 'name' => $withstar,
 	       'type' => 'A',
+	       'proxied' => $tmpl->{'dns_cloud_proxy'},
 	       'values' => [ $ip ] };
 	&create_dns_record($recs, $file, $r);
 	$any++;
@@ -1864,6 +1910,30 @@ if (!$d->{'dns_submode'} && !$recsonly) {
 		}
 	}
 
+# If DNSSEC is enabled and the parent domain is hosted by Virtualmin, make
+# sure DS records exist
+my $pname = $d->{'dom'};
+$pname =~ s/^([^\.]+)\.//;
+my $superdom = &get_domain_by("dom", $pname);
+if (!$d->{'dns_submode'} && $superdom && &can_domain_dnssec($d)) {
+	my $dsrecs = &get_domain_dnssec_ds_records($d);
+	if (ref($dsrecs)) {
+		my ($srecs, $sfile) =
+			&get_domain_dns_records_and_file($superdom);
+		my @missing;
+		foreach my $dr (@$dsrecs) {
+			my $key = &dns_record_key($dr, 1);
+			my ($found) = grep { &dns_record_key($_, 1) eq $key }
+					   @$srecs;
+			push(@missing, $dr) if (!$found);
+			}
+		if (@missing) {
+			return &text('validate_edsrecs',
+			     &show_domain_name($superdom), scalar(@missing));
+			}
+		}
+	}
+
 return undef;
 }
 
@@ -1890,6 +1960,10 @@ elsif ($d->{'dns_cloud'}) {
 	my $ctype = $d->{'dns_cloud'};
 	my ($cloud) = grep { $_->{'name'} eq $ctype } &list_dns_clouds();
 	&$first_print(&text('disable_bind_cloud', $cloud->{'desc'}));
+	if (!$cloud->{'disable'}) {
+		&$second_print($text{'disable_ebind_discloud'});
+		return 0;
+		}
 	my $info = { 'domain' => $d->{'dom'},
 		     'id' => $d->{'dns_cloud_id'},
 		     'location' => $d->{'dns_cloud_location'} };
@@ -1920,29 +1994,23 @@ else {
 	local $z = &get_bind_zone($d->{'dom'});
 	local $ok;
 	if ($z) {
+		local ($recs, $file) = &get_domain_dns_records_and_file($d);
 		local $rootfile = &bind8::make_chroot($z->{'file'});
 		$z->{'values'}->[0] = $d->{'dom'}.".disabled";
 		&bind8::save_directive(&bind8::get_config_parent(),
 					[ $z ], [ $z ], 0);
-		&flush_file_lines();
+		&flush_file_lines($rootfile);
 
 		# Rename all records in the domain with the new .disabled name
-		local $file = &bind8::find("file", $z->{'members'});
-		local $fn = $file->{'values'}->[0];
-		local @recs = &bind8::read_zone_file(
-				$fn, $d->{'dom'}.".disabled");
-		foreach my $r (@recs) {
+		foreach my $r (@$recs) {
 			if ($r->{'name'} =~ /\.\Q$d->{'dom'}\E\.$/ ||
 			    $r->{'name'} eq $d->{'dom'}.".") {
 				# Need to rename
-				&bind8::modify_record($fn, $r,
-					      $r->{'name'}."disabled.",
-					      $r->{'ttl'}, $r->{'class'},
-					      $r->{'type'},
-					      &join_record_values($r),
-					      $r->{'comment'});
+				$r->{'name'} = $r->{'name'}."disabled.";
+				&modify_dns_record($recs, $file, $r);
 				}
 			}
+		&post_records_change($d, $recs, $file);
 
 		# Clear zone names caches
 		undef(@bind8::list_zone_names_cache);
@@ -1987,6 +2055,10 @@ elsif ($d->{'dns_cloud'}) {
 	my $ctype = $d->{'dns_cloud'};
 	my ($cloud) = grep { $_->{'name'} eq $ctype } &list_dns_clouds();
 	&$first_print(&text('enable_bind_cloud', $cloud->{'desc'}));
+	if (!$cloud->{'disable'}) {
+		&$second_print($text{'disable_ebind_discloud'});
+		return 0;
+		}
 	my $info = { 'domain' => $d->{'dom'},
 		     'id' => $d->{'dns_cloud_id'},
 		     'location' => $d->{'dns_cloud_location'} };
@@ -2016,30 +2088,23 @@ else {
 	local $z = &get_bind_zone($d->{'dom'});
 	local $ok;
 	if ($z) {
+		local ($recs, $file) = &get_domain_dns_records_and_file($d);
 		local $rootfile = &bind8::make_chroot($z->{'file'});
 		$z->{'values'}->[0] = $d->{'dom'};
 		&bind8::save_directive(
 			&bind8::get_config_parent(), [ $z ], [ $z ], 0);
-		&flush_file_lines();
+		&flush_file_lines($rootfile);
 
 		# Fix all records in the domain with the .disabled name
-		local $file = &bind8::find("file", $z->{'members'});
-		local $fn = $file->{'values'}->[0];
-		local @recs = &bind8::read_zone_file($fn, $d->{'dom'});
-		foreach my $r (@recs) {
-			if ($r->{'name'} =~ /\.\Q$d->{'dom'}\E\.disabled\.$/
-			    ||
+		foreach my $r (@$recs) {
+			if ($r->{'name'} =~ /\.\Q$d->{'dom'}\E\.disabled\.$/ ||
 			    $r->{'name'} eq $d->{'dom'}.".disabled.") {
 				# Need to rename
 				$r->{'name'} =~ s/\.disabled\.$/\./;
-				&bind8::modify_record($fn, $r,
-					      $r->{'name'},
-					      $r->{'ttl'}, $r->{'class'},
-					      $r->{'type'},
-					      &join_record_values($r),
-					      $r->{'comment'});
+				&modify_dns_record($recs, $file, $r);
 				}
 			}
+		&post_records_change($d, $recs, $file);
 
 		# Clear zone names caches
 		undef(@bind8::list_zone_names_cache);
@@ -2135,6 +2200,10 @@ return $rv;
 sub reload_bind_records
 {
 local ($d) = @_;
+if ($d->{'dns_submode'}) {
+	# Reload in parent, which might be cloud hosted
+	$d = &get_domain($d->{'dns_parent'});
+	}
 if ($d->{'provision_dns'} || $d->{'dns_cloud'}) {
 	# Done remotely when records are uploaded
 	return undef;
@@ -2290,37 +2359,45 @@ if (!$zonefile) {
 	&release_lock_dns($d, 1);
 	return 0;
 	}
-local $absfile = &bind8::make_chroot(&bind8::absolute_path($zonefile));
-local @thisrecs = &bind8::read_zone_file($zonefile,
-    $d->{'dom'}.($d->{'disabled'} ? ".disabled" : ""));
+local @thisrecs = @$recs;
+
+# Read records from the backup file
+local $brecs;
+local $rfile = $file."_records";
+if (-r $rfile && $d->{'dns_cloud'}) {
+	$brecs = &unserialise_variable(&read_file_contents($rfile));
+	}
+else {
+	$brecs = [ &bind8::read_zone_file($file,
+	    $d->{'dom'}.($d->{'disabled'} ? ".disabled" : ""), undef, 0, 1) ];
+	}
 
 if ($d->{'dns_submode'}) {
 	# Only replacing records for this sub-domain
 	my $oldsubrecs = &filter_domain_dns_records($d, $recs);
-	my @backuprecs = &bind8::read_zone_file($file, $d->{'dom'});
 	$oldsubrecs = &filter_domain_dns_records($d, $oldsubrecs);
-	my $newsubrecs = &filter_domain_dns_records($d, \@backuprecs);
-	foreach my $r (reverse(@$oldsubrecs)) {
+	my $newsubrecs = &filter_domain_dns_records($d, $brecs);
+	foreach my $r (@$oldsubrecs) {
 		&delete_dns_record($recs, $zonefile, $r);
 		}
 	foreach my $r (@$newsubrecs) {
 		&create_dns_record($recs, $zonefile, $r);
 		}
 	}
-elsif ($opts->{'wholefile'}) {
-	# Copy whole file
-	&copy_source_dest($file, $absfile);
-	&bind8::set_ownership($zonefile);
-	}
 else {
-	# Only copy section after SOA
-	local $srclref = &read_file_lines($file, 1);
-	local $dstlref = &read_file_lines($absfile);
-	local ($srcstart, $srcend) = &except_soa($d, $file);
-	local ($dststart, $dstend) = &except_soa($d, $absfile);
-	splice(@$dstlref, $dststart, $dstend - $dststart + 1,
-	       @$srclref[$srcstart .. $srcend]);
-	&flush_file_lines($absfile);
+	# Delete old records and create ones from the backup
+	my @delrecs;
+	foreach my $r (@$recs) {
+		next if ($r->{'type'} eq 'SOA' && !$opts->{'wholefile'});
+		push(@delrecs, $r);
+		}
+	foreach my $r (@delrecs) {
+		&delete_dns_record($recs, $zonefile, $r);
+		}
+	foreach my $r (@$brecs) {
+		next if ($r->{'type'} eq 'SOA' && !$opts->{'wholefile'});
+		&create_dns_record($recs, $zonefile, $r);
+		}
 	}
 
 if (!$d->{'dns_submode'} && &can_domain_dnssec($d)) {
@@ -2351,15 +2428,6 @@ if (!$d->{'dns_submode'} && &can_domain_dnssec($d)) {
 		}
 	}
 
-# Re-read records, bump SOA and upload records to provisioning server. If the
-# original records were saved, use them
-local $rfile = $file."_records";
-if (-r $rfile && $d->{'dns_cloud'}) {
-	$recs = &unserialise_variable(&read_file_contents($rfile));
-	}
-else {
-	$recs = [ &bind8::read_zone_file($zonefile, $d->{'dom'}) ];
-	}
 &post_records_change($d, $recs, $zonefile);
 
 # Need to update IP addresses
@@ -2391,9 +2459,9 @@ elsif ($baseip6 && !$ip6) {
 	&remove_ip6_records($d, $zonefile, $recs);
 	}
 
-# Replace NS records with those from new system
-if (!$opts->{'wholefile'}) {
-	local @thisns = grep { $_->{'type'} eq 'NS' } @thisrecs;
+# Replace NS records with those from new system (if there are any)
+local @thisns = grep { $_->{'type'} eq 'NS' } @thisrecs;
+if (!$opts->{'wholefile'} && @thisns) {
 	local @ns = grep { $_->{'type'} eq 'NS' } @$recs;
 	foreach my $r (@thisns) {
 		# Create NS records that were in new system's file
@@ -2402,14 +2470,11 @@ if (!$opts->{'wholefile'}) {
 		if (@ns && $ns[0]->{'name'} =~ /\.disabled\.$/) {
 			$name .= "disabled.";
 			}
-		&bind8::create_record($zonefile, $name, $r->{'ttl'},
-				      $r->{'class'}, $r->{'type'},
-				      &join_record_values($r),
-				      $r->{'comment'});
+		&create_dns_record($recs, $zonefile, $r);
 		}
-	foreach my $r (reverse(@ns)) {
+	foreach my $r (@ns) {
 		# Remove old NS records that we copied over
-		&bind8::delete_record($zonefile, $r);
+		&delete_dns_record($recs, $zonefile, $r);
 		}
 	}
 
@@ -2435,16 +2500,15 @@ foreach my $t (@types) {
 		}
 	if ($changed) {
 		local $str = &bind8::join_spf($spf);
-		&bind8::modify_record($r->{'file'}, $r, $r->{'name'},
-				      $r->{'ttl'}, $r->{'class'},
-				      $r->{'type'}, "\"$str\"",
-				      $r->{'comment'});
+		$r->{'values'} = [ $str ];
+		&modify_dns_record($recs, $file, $r);
 		}
 	}
 
+&post_records_change($d, $recs, $file);
+&register_post_action(\&restart_bind, $d);
 &$second_print($text{'setup_done'});
 
-&register_post_action(\&restart_bind, $d);
 &release_lock_dns($d, 1);
 return 1;
 }
@@ -2476,12 +2540,7 @@ foreach my $r (@$recs) {
 		$changed = 1;
 		}
 	if ($changed) {
-		&bind8::modify_record($fn, $r, $r->{'name'},
-				      $r->{'ttl'},$r->{'class'},
-				      $r->{'type'},
-				      &join_record_values($r,
-					$r->{'eline'} == $r->{'line'}),
-				      $r->{'comment'});
+		&modify_dns_record($recs, $fn, $r);
 		$count++;
 		}
 	}
@@ -2523,36 +2582,9 @@ foreach my $r (@$recs) {
 		$r->{'values'}->[1] =~ s/$olddom/$newdom/;
 		}
 	if ($fn) {
-		&bind8::modify_record($fn, $r, $r->{'name'},
-				      $r->{'ttl'}, $r->{'class'},
-				      $r->{'type'},
-				      &join_record_values($r,
-					$r->{'eline'} == $r->{'line'}),
-				      $r->{'comment'});
+		&modify_dns_record($recs, $fn, $r);
 		}
 	}
-}
-
-# except_soa(&domain, file)
-# Returns the start and end lines of a records file for the entries
-# after the SOA.
-sub except_soa
-{
-local ($d, $file) = @_;
-local $bind8::config{'chroot'} = "/";	# make sure path is absolute
-local $bind8::config{'auto_chroot'} = undef;
-undef($bind8::get_chroot_cache);
-local @recs = &bind8::read_zone_file($file, $d->{'dom'});
-local ($r, $start, $end);
-foreach $r (@recs) {
-	if ($r->{'type'} ne "SOA" && !$r->{'generate'} && !$r->{'defttl'} &&
-	    !defined($start)) {
-		$start = $r->{'line'};
-		}
-	$end = $r->{'eline'};
-	}
-undef($bind8::get_chroot_cache);	# Reset cache back
-return ($start, $end);
 }
 
 # get_bind_view([&conf], view)
@@ -2898,16 +2930,7 @@ if ($in{"dns_mode"} == 2) {
 			{ 'ip' => $fakeip,
 			  'dom' => $fakedom,
 		 	  'web' => 1, });
-	local $temp = &transname();
-	&open_tempfile(TEMP, ">$temp");
-	&print_tempfile(TEMP, $recs);
-	&close_tempfile(TEMP);
-	local $bind8::config{'short_names'} = 0;  # force canonicalization
-	local $bind8::config{'chroot'} = '/';	  # turn off chroot for temp path
-	local $bind8::config{'auto_chroot'} = undef;
-	undef($bind8::get_chroot_cache);
-	local @recs = &bind8::read_zone_file($temp, $fakedom);
-	unlink($temp);
+	local @recs = &text_to_dns_records($recs, "example.com");
 	foreach $r (@recs) {
 		$soa++ if ($r->{'name'} eq $fakedom."." &&
 			   $r->{'type'} eq "SOA");
@@ -2976,7 +2999,7 @@ $tmpl->{'dns_master'} = $in{'dns_master_mode'} == 0 ? "none" :
 $tmpl->{'dns_indom'} = $in{'dns_indom'};
 
 # Save MX hostname
-$in{'dns_mx_mode'} != 2 || $in{'dns_mx'} =~ /^[a-z0-9\.\-\_]+$/i ||
+$in{'dns_mx_mode'} != 2 || $in{'dns_mx'} =~ /^[a-z0-9\.\-\_\$\{\}]+$/i ||
 	&error($text{'tmpl_ednsmx'});
 $tmpl->{'dns_mx'} = $in{'dns_mx_mode'} == 0 ? "none" :
 		    $in{'dns_mx_mode'} == 1 ? undef : $in{'dns_mx'};
@@ -3063,39 +3086,43 @@ sub save_domain_spf
 {
 local ($d, $spf) = @_;
 &require_bind();
-local @types = $bind8::config{'spf_record'} ? ( "SPF", "TXT" ) : ( "SPF" );
-local ($recs, $file);
+local ($recs, $file) = &get_domain_dns_records_and_file($d);
+if (!$file) {
+	# Zone not found!
+	return;
+	}
+local @types = map { $_->{'type'} }
+		   grep { $_->{'values'}->[0] =~ /^v=spf/ &&
+			  $_->{'name'} eq $d->{'dom'}.'.' } @$recs;
+if (!@types) {
+	@types = $bind8::config{'spf_record'} ? ( "SPF", "TXT" ) : ( "SPF" );
+	}
 local $bump = 0;
 &pre_records_change($d);
-foreach my $t (@types) {
-	($recs, $file) = &get_domain_dns_records_and_file($d);
-	if (!$file) {
-		# Domain not found!
-		return;
-		}
+foreach my $t (&unique(@types)) {
 	local ($r) = grep { $_->{'type'} eq $t &&
 			    $_->{'values'}->[0] =~ /^v=spf/ &&
 			    $_->{'name'} eq $d->{'dom'}.'.' } @$recs;
 	local $str = $spf ? &bind8::join_spf($spf) : undef;
 	if ($r && $spf) {
 		# Update record
-		&bind8::modify_record(
-			$r->{'file'}, $r, $r->{'name'}, $r->{'ttl'},
-			$r->{'class'}, $r->{'type'}, "\"$str\"",
-			$r->{'comment'});
+		$r->{'values'} = [ $str ];
+		&modify_dns_record($recs, $file, $r);
 		$bump = 1;
 		}
 	elsif ($r && !$spf) {
 		# Remove record
-		&bind8::delete_record($r->{'file'}, $r);
+		&delete_dns_record($recs, $file, $r);
 		$d->{'domain_spf_enabled'} = 0;
 		&save_domain($d);
 		$bump = 1;
 		}
 	elsif (!$r && $spf) {
 		# Add record
-		&bind8::create_record($file, $d->{'dom'}.'.', undef,
-				      "IN", $t, "\"$str\"");
+		$r = { 'name' => $d->{'dom'}.'.',
+		       'type' => $t,
+		       'values' => [ $str ] };
+		&create_dns_record($recs, $file, $r);
 		$d->{'domain_spf_enabled'} = 1;
 		&save_domain($d);
 		$bump = 1;
@@ -3215,21 +3242,21 @@ local ($r) = grep { ($_->{'type'} eq 'TXT' ||
 local $str = $dmarc ? &bind8::join_dmarc($dmarc) : undef;
 if ($r && $dmarc) {
 	# Update record
-	&bind8::modify_record(
-		$r->{'file'}, $r, $r->{'name'}, $r->{'ttl'},
-		$r->{'class'}, $r->{'type'}, "\"$str\"",
-		$r->{'comment'});
+	$r->{'values'} = [ $str ];
+	&modify_dns_record($recs, $file, $r);
 	$bump = 1;
 	}
 elsif ($r && !$dmarc) {
 	# Remove record
-	&bind8::delete_record($r->{'file'}, $r);
+	&delete_dns_record($recs, $file, $r);
 	$bump = 1;
 	}
 elsif (!$r && $dmarc) {
 	# Add record
-	&bind8::create_record($file, '_dmarc.'.$d->{'dom'}.'.', undef,
-			      "IN", "TXT", "\"$str\"");
+	$r = { 'name' => '_dmarc.'.$d->{'dom'}.'.',
+	       'type' => 'TXT',
+	       'values' => [ $str ] };
+	&create_dns_record($recs, $file, $r);
 	$bump = 1;
 	}
 if ($bump) {
@@ -3304,12 +3331,22 @@ return undef if (!$file);
 return $file->{'values'}->[0];
 }
 
-# get_domain_dns_records_and_file(&domain)
+# get_domain_dns_records_and_file(&domain, [force-reread])
 # Returns an array ref of a domain's DNS records and the file they are in.
 # For a provisioned domain, this may be a local temp file.
 sub get_domain_dns_records_and_file
 {
-local ($d) = @_;
+local ($d, $force) = @_;
+if ($d->{'dns_submode'}) {
+	# Records are in the parent domain, so just call this same method for it
+	local $parent = &get_domain($d->{'dns_subof'});
+	return &get_domain_dns_records_and_file($parent);
+	}
+my $cid = $d->{'id'};
+if (defined($domain_dns_records_cache{$cid}) && !$force) {
+	# Use cached values
+	return @{$domain_dns_records_cache{$cid}};
+	}
 &require_bind();
 local $bind8::config{'short_names'} = 0;
 
@@ -3330,6 +3367,7 @@ if ($d->{'dns_cloud'} || $d->{'provision_dns'}) {
 		}
 	}
 
+my @rv;
 if ($d->{'dns_cloud'}) {
 	# Fetch from the cloud provider and write to temp file. The underlying
 	# BIND module API must be used here, because we need to write to an
@@ -3355,7 +3393,7 @@ if ($d->{'dns_cloud'}) {
 		$lnum++;
 		}
 	&set_record_ids($recs);
-	return ($recs, $temp);
+	@rv = ($recs, $temp);
 	}
 elsif ($d->{'provision_dns'}) {
 	# Fetch from cloudmin services and write to temp file. The underlying
@@ -3375,7 +3413,7 @@ elsif ($d->{'provision_dns'}) {
 		local $rec;
 		if ($r->{'name'} eq '$ttl') {
 			$rec = { 'defttl' => $r->{'values'}->{'value'}->[0] };
-			&ind8::create_defttl($temp, $rec->{'defttl'});
+			&bind8::create_defttl($temp, $rec->{'defttl'});
 			}
 		elsif ($r->{'name'} eq '$generate') {
 			$rec = { 'generate' => $r->{'values'}->{'value'} };
@@ -3404,7 +3442,7 @@ elsif ($d->{'provision_dns'}) {
 		$lnum++;
 		}
 	&set_record_ids(\@recs);
-	return (\@recs, $temp);
+	@rv = (\@recs, $temp);
 	}
 else {
 	# Find local file
@@ -3413,8 +3451,19 @@ else {
 	local $rd = $d->{'dns_submode'} ? &get_domain($d->{'dns_subof'}) : $d;
 	local @recs = &bind8::read_zone_file($file, $rd->{'dom'});
 	&set_record_ids(\@recs);
-	return (\@recs, $file);
+	@rv = (\@recs, $file);
 	}
+$domain_dns_records_cache{$cid} = \@rv;
+return @rv;
+}
+
+# clear_domain_dns_records_and_file(&domain)
+# Clear any cache of a domain's DNS records or filename
+sub clear_domain_dns_records_and_file
+{
+my ($d) = @_;
+my $cid = $d->{'dns_submode'} ? $d->{'dns_subof'} : $d->{'id'};
+delete($domain_dns_records_cache{$cid});
 }
 
 # set_record_ids(&records)
@@ -3599,8 +3648,8 @@ return $dmarc;
 # array of directive objects.
 sub text_to_named_conf
 {
-local ($str) = @_;
-local $temp = &transname();
+my ($str) = @_;
+my $temp = &transname();
 &open_tempfile(TEMP, ">$temp");
 &print_tempfile(TEMP, $str);
 &close_tempfile(TEMP);
@@ -3608,10 +3657,28 @@ local $temp = &transname();
 local $bind8::config{'chroot'} = undef;		# turn off chroot temporarily
 local $bind8::config{'auto_chroot'} = undef;
 undef($bind8::get_chroot_cache);
-local @rv = grep { $_->{'name'} ne 'dummy' }
+my @rv = grep { $_->{'name'} ne 'dummy' }
 	    &bind8::read_config_file($temp, 0);
 undef($bind8::get_chroot_cache);		# reset cache back
 return @rv;
+}
+
+# text_to_dns_records(text, domain-name)
+# Convert some text into an array of DNS records
+sub text_to_dns_records
+{
+my ($str, $dname) = @_;
+my $temp = &transname();
+&open_tempfile(TEMP, ">$temp");
+&print_tempfile(TEMP, $str);
+&close_tempfile(TEMP);
+&require_bind();
+local $bind8::config{'chroot'} = undef;		# turn off chroot temporarily
+local $bind8::config{'auto_chroot'} = undef;
+undef($bind8::get_chroot_cache);
+my @recs = &bind8::read_zone_file($temp, $dname, undef, 0, 1);
+undef($bind8::get_chroot_cache);		# reset cache back
+return @recs;
 }
 
 # pre_records_change(&domain)
@@ -3650,6 +3717,12 @@ if (!$d->{'provision_dns'} && !$d->{'dns_cloud'}) {
 sub post_records_change
 {
 local ($d, $recs, $fn) = @_;
+if ($d->{'dns_submode'}) {
+	# Apply change in the parent zone, which is actually connected to the
+	# Cloud DNS provider
+	my $parent = &get_domain($d->{'dns_subof'});
+	return &post_records_change($parent, $recs, $fn);
+	}
 &require_bind();
 local $z;
 if (!$fn) {
@@ -3664,27 +3737,10 @@ if (!$fn) {
 # Increase the SOA
 &bind8::bump_soa_record($fn, $recs);
 
-# If the domain is disabled, make sure all records end with .disabled
-if ($d->{'disabled'} && &indexof("dns", split(/,/, $d->{'disabled'})) >= 0) {
-	local @disrecs = &bind8::read_zone_file($fn, $d->{'dom'});
-	foreach my $r (@disrecs) {
-		if ($r->{'name'} =~ /\.\Q$d->{'dom'}\E\.$/ ||
-		    $r->{'name'} eq $d->{'dom'}.".") {
-			# Not disabled - make it so
-			&bind8::modify_record($fn, $r,
-				      $r->{'name'}."disabled.",
-				      $r->{'ttl'}, $r->{'class'},
-				      $r->{'type'},
-				      &join_record_values($r),
-				      $r->{'comment'});
-			}
-		}
-	}
-
 if (defined(&bind8::supports_dnssec) &&
     &bind8::supports_dnssec() &&
     &can_domain_dnssec($d)) {
-	# Re-sign too
+	# Re-sign DNSSEC, or remove records if no longer signed
 	$z ||= &get_bind_zone($d->{'dom'});
 	eval {
 		local $main::error_must_die = 1;
@@ -3723,34 +3779,16 @@ elsif ($d->{'dns_cloud'}) {
 # Un-freeeze the zone
 &after_records_change($d);
 
-# If this domain has aliases, update their DNS records too
+# If this domain has aliases, re-create their DNS records too
 if (!$d->{'subdom'} && !$d->{'dns_submode'}) {
-	local @aliases = grep { $_->{'dns'} && !$_>{'dns_submode'} }
+	local @aliases = grep { $_->{'dns'} && !$_->{'dns_submode'} }
 			      &get_domain_by("alias", $d->{'id'});
 	foreach my $ad (@aliases) {
 		&obtain_lock_dns($ad);
 		&pre_records_change($d);
-		local $file;
-		local $recs;
-		if ($ad->{'provision_dns'} || $ad->{'dns_cloud'}) {
-			# On provisioning server
-			# XXX do we need this check??
-			$file = &transname();
-			local $bind8::config{'auto_chroot'} = undef;
-			local $bind8::config{'chroot'} = undef;
-			&create_alias_records($recs, $file, $ad,
-					      $ad->{'dns_ip'} || $ad->{'ip'});
-			$recs = [ &bind8::read_zone_file($temp, $ad->{'dom'}) ];
-			}
-		else {
-			# On local BIND
-			$file = &get_domain_dns_file($ad);
-			&open_tempfile(EMPTY, ">$file", 0, 1);
-			&close_tempfile(EMPTY);
-			&create_alias_records($recs, $file, $ad,
-					      $ad->{'dns_ip'} || $ad->{'ip'});
-			$recs = [ get_domain_dns_records($ad) ];
-			}
+		local ($recs, $file) = &get_domain_dns_records_and_file($ad);
+		&create_alias_records($recs, $file, $ad,
+				      $ad->{'dns_ip'} || $ad->{'ip'}, 1);
 		&post_records_change($ad, $recs, $file);
 		&reload_bind_records($ad);
 		&release_lock_dns($ad);
@@ -3847,6 +3885,21 @@ elsif ($r->{'type'} eq 'SOA') {
 	return 0;
 	}
 return 1;
+}
+
+# copy_alias_records(&domain)
+# Returns 1 if an alias domain gets it's records copied from the target
+sub copy_alias_records
+{
+my ($d) = @_;
+if ($d->{'alias'}) {
+	local $target = &get_domain($d->{'alias'});
+	if ($target && !$target->{'subdom'} &&
+	    !$target->{'dns_submode'}) {
+		return 1;
+		}
+	}
+return 0;
 }
 
 # list_dns_record_types(&domain)
@@ -4016,6 +4069,20 @@ my ($d) = @_;
 return $d->{'provision_dns'} || $d->{'dns_cloud'} ? 0 : 1;
 }
 
+# has_domain_dnssec(&domain, [&records])
+# Returns 1 if DNSSEC is enabled for a domain
+sub has_domain_dnssec
+{
+my ($d, $recs) = @_;
+if (!$recs) {
+	($recs) = &get_domain_dns_records_and_file($d);
+	}
+local $withdot = $d->{'dom'}.".";
+local ($dnskey) = grep { $_->{'type'} eq 'DNSKEY' &&
+			 $_->{'name'} eq $withdot } @$recs;
+return $dnskey ? 1 : 0;
+}
+
 # disable_domain_dnssec(&domain)
 # Remove all DNSSEC records for a domain
 sub disable_domain_dnssec
@@ -4031,10 +4098,12 @@ if ($key) {
 foreach my $k (@keyfiles) {
         &lock_file($k);
         }
+&delete_parent_dnssec_ds_records($d);
 &bind8::delete_dnssec_key($zone, 1);
 foreach my $k (@keyfiles) {
         &unlock_file($k);
         }
+&get_domain_dns_records_and_file($d, 1);	# Force re-read of records
 &release_lock_dns($d);
 return undef;
 }
@@ -4076,8 +4145,13 @@ else {
 		return &text('setup_ednssecsign', $err);
 		}
 	$d->{'dnssec_alg'} = $tmpl->{'dnssec_alg'};
+
+	# Force re-read of records from file, since dnssec-tools will have
+	# changed them
+	&get_domain_dns_records_and_file($d, 1);
 	}
 &release_lock_dns($d);
+&add_parent_dnssec_ds_records($d);
 return undef;
 }
 
@@ -4092,6 +4166,7 @@ my $parent = &get_domain_by("dom", $pname);
 my $dsrecs = &get_domain_dnssec_ds_records($d);
 $dsrecs = [ ] if (!ref($dsrecs));
 if ($parent) {
+	@$dsrecs || return "Domain does not have DNSSEC enabled";
 	&obtain_lock_dns($parent);
 	&pre_records_change($parent);
 	my ($precs, $pfile) = &get_domain_dns_records_and_file($parent);
@@ -4112,13 +4187,15 @@ if ($parent) {
 		my $r = { 'name' => $d->{'dom'}.".",
 			  'type' => 'NS',
 			  'values' => [ $master ] };
-		&create_dns_record($precs, $pfile, $r);
+		if (!$already{$r->{'name'},$r->{'type'}}) {
+			&create_dns_record($precs, $pfile, $r);
+			}
 		}
 	&post_records_change($parent, $precs, $pfile);
 	&release_lock_dns($parent);
+	return undef;
 	}
-
-return undef;
+return "No parent DNS domain found";
 }
 
 # delete_parent_dnssec_ds_records(&domain)
@@ -4135,23 +4212,30 @@ if ($parent) {
 	&obtain_lock_dns($parent);
 	&pre_records_change($parent);
 	my ($precs, $pfile) = &get_domain_dns_records_and_file($parent);
-	foreach my $rec (reverse(@$precs)) {
+	my $deleted = 0;
+	my @delrecs;
+	foreach my $rec (@$precs) {
 		DS: foreach my $ds (@$dsrecs) {
 			if ($rec->{'name'} eq $ds->{'name'} &&
 			    $rec->{'type'} eq $ds->{'type'}) {
-				&bind8::delete_record($pfile, $rec);
+				push(@delrecs, $rec);
+				$deleted++;
 				last DS;
 				}
 			}
 		if ($rec->{'name'} eq $d->{'dom'}."." &&
 		    $rec->{'type'} eq 'NS') {
-			&bind8::delete_record($pfile, $rec);
+			push(@delrecs, $rec);
 			}
+		}
+	foreach my $rec (@delrecs) {
+		&delete_dns_record($precs, $pfile, $rec);
 		}
 	&post_records_change($parent, $precs, $pfile);
 	&release_lock_dns($parent);
+	return $deleted ? undef : "No DS records to remove found";
 	}
-return undef;
+return "No parent DNS domain found";
 }
 
 # get_domain_dnssec_ds_records(&domain)
@@ -4258,7 +4342,6 @@ if (!$file) {
 my @oldrecs = grep { $_->{'type'} =~ /^(TLSA|SSHFP)$/ &&
 		     ($_->{'name'} eq $d->{'dom'}."." ||
 		      $_->{'name'} =~ /\.\Q$d->{'dom'}\E\.$/) } @$recs;
-@oldrecs = map { my %r = %$_; delete($r{'ttl'}); \%r } @oldrecs;
 
 # Exit now if TLSA is not enabled globally, unless it's being forced on OR
 # there are already records
@@ -4329,7 +4412,7 @@ if (&dns_records_to_text(@oldrecs) ne &dns_records_to_text(@need)) {
 		&create_dns_record($recs, $file, $r);
 		}
 
-	&post_records_change($d, $recs);
+	&post_records_change($d, $recs, $file);
 	&release_lock_dns($d);
 	}
 else {
@@ -4358,10 +4441,49 @@ my $rv = "";
 &require_bind();
 foreach my $r (@_) {
 	$rv .= &bind8::make_record($r->{'name'}, $r->{'ttl'}, $r->{'class'},
-				   $r->{'type'}, join(" ", @{$r->{'values'}}));
-	$rv .= "\n";
+				   $r->{'type'}, &join_record_values($r));
+	$rv .= "\n" if ($rv && &trim($rv));
 	}
+
+# Format DNS records
+$rv = format_dns_text_records($rv);
 return $rv;
+}
+
+# format_dns_text_records($recs-text-list, [&opts])
+# Formats records to be column like 
+sub format_dns_text_records {
+my ($recs, $opts) = @_;
+return $recs if (!length(&trim($recs)));
+my $idelim =
+	$opts->{'in-delimiter'} ||= "	";
+my $odelim =
+	$opts->{'out-delimiter'} ||= $idelim;
+my @recs;
+my %cols;
+my @lines = split(/\n/, $recs);
+
+# Build columns meta
+foreach my $ln (@lines) {
+	my @lc = split(/$idelim/, $ln);
+	for my $x (0 .. $#lc) {
+	    my $cl = length($lc[$x]);
+	    $cols{"c${x}"} = $cl
+	    	if (!$cols{"c${x}"} || $cols{"c${x}"} < $cl);
+		}
+	}
+# Rebuild columns
+foreach my $ln (@lines) {
+	my @lc = split(/$odelim/, $ln);
+	my @rec;
+	for my $x (0 .. $#lc) {
+	    my $cl = length($lc[$x]);
+	    my $lm = $cols{"c${x}"} - $cl;
+	    push(@rec, $lc[$x] . " " x $lm);
+		}
+	push(@recs, join('	', @rec))
+	}
+return join("\n", @recs);
 }
 
 # obtain_lock_dns(&domain, [named-conf-too])
@@ -4471,6 +4593,20 @@ RECORD: foreach my $r (@$recs) {
 	# a sub-domain
 	next if ($r->{'name'} ne $d->{'dom'}."." &&
 		 $r->{'name'} !~ /\.$d->{'dom'}\.$/);
+	push(@rv, $r);
+	}
+return \@rv;
+}
+
+# filter_generated_dns_records(&domain, &recs)
+# Given a domain and a list of DNS records, return only the ones that are not
+# generated by Virtualmin
+sub filter_generated_dns_records
+{
+my ($d, $recs) = @_;
+my @rv;
+foreach my $r (@$recs) {
+	next if ($r->{'type'} =~ /^(CAA|TLSA|SSHFP)$/);
 	push(@rv, $r);
 	}
 return \@rv;
@@ -4586,7 +4722,7 @@ foreach my $r (@srecs) {
 		&create_dns_record($recs, $file, $r);
 		}
 	}
-&post_records_change($d, $recs);
+&post_records_change($d, $recs, $file);
 &release_lock_dns($d);
 &register_post_action(\&restart_bind, $d);
 &save_domain($d);
@@ -4621,18 +4757,27 @@ $ttl = $1*24*60*60 if ($ttl =~ /^(\d+)d$/);
 return int($ttl);
 }
 
-# dns_record_key(&rec, [value-too])
+# dns_record_key(&rec, [value-too], [leave-spf])
 # Returns a single string that represents a record for use in de-duping
 sub dns_record_key
 {
-my ($r, $val) = @_;
-my $ttl = &dns_ttl_to_seconds($r->{'ttl'} || 0);
-my $type = $r->{'type'};
-$type = "TXT" if ($type eq "SPF");
-my @r = ($r->{'name'}, $type, $ttl);
-push(@r, @{$r->{'values'}}) if ($val);
-if ($r->{'proxied'}) {
-	$r[0] = "proxied_".$r[0];
+my ($r, $val, $nospf) = @_;
+my @r;
+if (defined($r->{'defttl'})) {
+	# Default TTL
+	@r = ( '$ttl' );
+	push(@r, $r->{'defttl'}) if ($val);
+	}
+else {
+	# Regular record
+	my $ttl = &dns_ttl_to_seconds($r->{'ttl'} || 0);
+	my $type = $r->{'type'};
+	$type = "TXT" if ($type eq "SPF" && !$nospf);
+	@r = ($r->{'name'}, $type, $ttl);
+	push(@r, join("", @{$r->{'values'}})) if ($val);
+	if ($r->{'proxied'}) {
+		$r[0] = "proxied_".$r[0];
+		}
 	}
 return join("/", @r);
 }
@@ -4658,11 +4803,12 @@ if ($cloud ne "local") {
 
 # Get current records, then re-create the DNS config
 &push_all_print();
-&set_all_null_print();
+&set_all_capture_print();
+$print_output = "";
 my @oldrecs = &get_domain_dns_records($d);
 my $ok = &delete_dns($d);
 if (!$ok) {
-	return "Failed to remove existing DNS zone";
+	return "Failed to remove existing DNS zone : $print_output";
 	}
 my $oldcloud = $d->{'dns_cloud'};
 if ($cloud eq "local") {
@@ -4671,10 +4817,11 @@ if ($cloud eq "local") {
 else {
 	$d->{'dns_cloud'} = $cloud;
 	}
+$print_output = "";
 $ok = &setup_dns($d);
 if (!$ok) {
 	$d->{'dns_cloud'} = $oldcloud;
-	return "Failed to setup new DNS zone";
+	return "Failed to setup new DNS zone : $print_output";
 	}
 &save_domain($d);
 &pop_all_print();
@@ -4737,7 +4884,8 @@ return @list_public_dns_suffixes_cache;
 sub under_public_dns_suffix
 {
 my ($dname) = @_;
-foreach my $sfx (&list_public_dns_suffixes()) {
+foreach my $sfx (sort { length($b) <=> length($a) }
+		      &list_public_dns_suffixes()) {
 	if ($sfx =~ /^\*\.(\S+)$/) {
 		# Any sub-domain is a valid suffix
 		my $ssfx = $1;
@@ -4868,6 +5016,10 @@ return 0;
 sub supports_dns_comments
 {
 my ($d) = @_;
+if ($d->{'dns_submode'}) {
+	# Use super-domain cloud provider
+	$d = &get_domain($d->{'dns_subof'});
+	}
 return 1 if ($d->{'provision_dns'} || !$d->{'dns_cloud'});
 my ($c) = grep { $_->{'name'} eq $d->{'dns_cloud'} } &list_dns_clouds();
 return $c && $c->{'comments'};
@@ -4878,6 +5030,10 @@ return $c && $c->{'comments'};
 sub supports_dns_defttl
 {
 my ($d) = @_;
+if ($d->{'dns_submode'}) {
+	# TTL is per-file
+	return 0;
+	}
 return 1 if ($d->{'provision_dns'} || !$d->{'dns_cloud'});
 my ($c) = grep { $_->{'name'} eq $d->{'dns_cloud'} } &list_dns_clouds();
 return $c && $c->{'defttl'};

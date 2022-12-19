@@ -20,7 +20,7 @@ return "A semantic personal publishing platform with a focus on aesthetics, web 
 # script_wordpress_versions()
 sub script_wordpress_versions
 {
-return ( "6.0.1" );
+return ( "6.1.1" );
 }
 
 sub script_wordpress_category
@@ -44,6 +44,15 @@ return ( "curl", "ssh2", "pecl-ssh2", "date",
          "hash", "imagick", "pecl-imagick", 
          "iconv", "mbstring", "openssl",
          "posix", "sockets", "tokenizer" );
+}
+
+sub script_wordpress_php_vars
+{
+return ([ 'memory_limit', '128M', '+' ],
+        [ 'max_execution_time', 60, '+' ],
+        [ 'file_uploads', 'On' ],
+        [ 'upload_max_filesize', '10M', '+' ],
+        [ 'post_max_size', '10M', '+' ] );
 }
 
 sub script_wordpress_dbs
@@ -95,6 +104,8 @@ else {
 	my @dbs = domain_databases($d, [ "mysql" ]);
 	$rv .= ui_table_row("Database for WordPress tables",
 		     ui_database_select("db", undef, \@dbs, $d, "wordpress"));
+	$rv .= ui_table_row("WordPress table prefix",
+		     ui_textbox("dbtbpref", "wp_", 20));
 	$rv .= ui_table_row("Install sub-directory under <tt>$hdir</tt>",
 			   ui_opt_textbox("dir", &substitute_scriptname_template("wordpress", $d), 30, "At top level"));
 	if (script_wordpress_cli_virtualmin_support()) {
@@ -229,6 +240,7 @@ if (!$upgrade) {
 	# Configure the database
 	my $out = &run_as_domain_user($d,
 		"$wp config create --dbname=".quotemeta($dbname).
+		" --dbprefix=".quotemeta($opts->{'dbtbpref'}).
 		" --dbuser=".quotemeta($dbuser)." --dbpass=".quotemeta($dbpass).
 		" --dbhost=".quotemeta($dbhost)." 2>&1");
 	if ($?) {

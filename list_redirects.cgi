@@ -12,6 +12,14 @@ $d = &get_domain($in{'dom'});
 # Build table data
 @redirects = map { &remove_wellknown_redirect($_) } &list_redirects($d);
 foreach $r (@redirects) {
+	my @protos;
+	push(@protos, "HTTP") if ($r->{'http'});
+	push(@protos, "HTTPS") if ($r->{'https'});
+	my $dest = $r->{'dest'};
+	if (!$r->{'alias'} &&
+	    $dest =~ /^(http|https):\/\/%\{HTTP_HOST\}(\/.*)$/) {
+		$dest = &text('redirects_with', "$2", uc($1));
+		}
 	push(@table, [
 		{ 'type' => 'checkbox', 'name' => 'd',
 		  'value' => $r->{'id'} },
@@ -19,7 +27,8 @@ foreach $r (@redirects) {
 		  "id=$r->{'id'}'>$r->{'path'}</a>",
 		$r->{'alias'} ? $text{'redirects_alias'}
 			      : $text{'redirects_redirect'},
-		$r->{'dest'},
+		join(", ", @protos),
+		$dest,
 		]);
 	}
 
@@ -33,7 +42,9 @@ print &ui_form_columns_table(
 	[ [ "dom", $in{'dom'} ] ],
 	[ "", $text{'redirects_path'},
           $text{'redirects_type'},
-          $text{'redirects_dest'} ],
+          $text{'redirects_protos'},
+          $text{'redirects_dest'},
+	],
 	100,
 	\@table,
 	undef,

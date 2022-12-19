@@ -56,6 +56,9 @@ if (&can_webmin_modules()) {
 %sel_edits = map { $_, 1 } split(/\0/, $in{'edit'});
 foreach $ed (@edit_limits) {
 	$d->{"edit_".$ed} = $sel_edits{$ed};
+	
+	# Update edits dependencies
+	&update_edit_limits($d, $ed, $sel_edits{$ed});
 	}
 
 # Save plugin inputs
@@ -92,19 +95,26 @@ if (!&check_jailkit_support()) {
 		# Setup or re-sync jail for this user
 		$err = &enable_domain_jailkit($d);
 		&error(&text('limits_ejailon', $err)) if ($err);
-		$d->{'jail'} = 1, $jailupd++ if (!$err);
+		if (!$err) {
+			$d->{'jail'} = 1;
+			$jailupd++
+			}
 		}
 	elsif ($oldjail && !$in{'jail'}) {
 		# Tear down jail for this user
 		$err = &disable_domain_jailkit($d);
 		&error(&text('limits_ejailoff', $err)) if ($err);
-		$d->{'jail'} = 0, $jailupd++ if (!$err);
+		if (!$err) {
+			$d->{'jail'} = 0;
+			$jailupd++;
+			}
 		}
 	&save_domain($d);
 	
 	# Update scripts hostnames, if jail changed
 	if ($jailupd) {
-		foreach my $dbt (('mysql', 'psql')) {
+		&modify_webmin($d, $d);
+		foreach my $dbt ('mysql', 'psql') {
 			&update_all_installed_scripts_database_credentials($d, $d, 'dbhost', undef, $dbt);
 			}
 		}

@@ -9,7 +9,7 @@ $s3_groups_uri = "http://acs.amazonaws.com/groups/global/";
 sub check_s3
 {
 # Return no error if `aws_cmd` is set and installed
-if ($config{'aws_cmd'} && &has_command($config{'aws_cmd'})) {
+if (&has_aws_cmd()) {
 	if ($config{'s3_akey'}) {
 		my ($ok, $err) = &can_use_aws_s3_cmd(
 			$config{'s3_akey'}, $config{'s3_skey'});
@@ -51,7 +51,7 @@ if (!$err) {
 	}
 
 # Offer to install the aws command, even if other dependencies are available
-if (!$config{'aws_cmd'} || !&has_command($config{'aws_cmd'})) {
+if (!&has_aws_cmd()) {
 	$warn = $text{'cloud_s3_noawscli'};
 	if (&foreign_available("software")) {
 		$warn .= " ".&text('cloud_s3_noawscli_install',
@@ -1057,7 +1057,7 @@ return &can_use_aws_cmd($akey, $skey, $zone, \&call_aws_s3_cmd, "ls");
 sub can_use_aws_cmd
 {
 my ($akey, $skey, $zone, $func, @cmd) = @_;
-if (!$config{'aws_cmd'} || !&has_command($config{'aws_cmd'})) {
+if (!&has_aws_cmd()) {
 	return wantarray ? (0, "The <tt>aws</tt> command is not installed") : 0;
 	}
 if (defined($can_use_aws_cmd_cache{$akey})) {
@@ -1075,8 +1075,9 @@ if ($? || $out =~ /Unable to locate credentials/i ||
 	&print_tempfile(TEMP, $zone,"\n");
 	&print_tempfile(TEMP, "\n");
 	&close_tempfile(TEMP);
+	my $aws = $config{'aws_cmd'} || "aws";
 	$out = &backquote_command(
-		"$config{'aws_cmd'} configure --profile=".quotemeta($akey).
+		"$aws configure --profile=".quotemeta($akey).
 		" <$temp 2>&1");
 	my $ex = $?;
 	if (!$ex) {
@@ -1115,9 +1116,21 @@ if ($endpoint) {
 if (ref($params)) {
 	$params = join(" ", map { quotemeta($_) } @$params);
 	}
-return &backquote_command(
-	"TZ=GMT $config{'aws_cmd'} $cmd --profile=".quotemeta($akey)." ".
-	$endpoint_param." ".$params." 2>&1");
+my $aws = $config{'aws_cmd'} || "aws";
+my ($out, $err);
+&execute_command(
+	"TZ=GMT $aws $cmd --profile=".quotemeta($akey)." ".
+	$endpoint_param." ".$params, undef, \$out, \$err);
+return $out if (!$?);
+return $err || $out;
+}
+
+# has_aws_cmd()
+# Returns 1 if the configured "aws" command is installed, minus flags
+sub has_aws_cmd
+{
+my ($cmd) = &split_quoted_string($config{'aws_cmd'} || "aws");
+return &has_command($cmd);
 }
 
 1;

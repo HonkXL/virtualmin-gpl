@@ -23,15 +23,15 @@ $tmpl = &get_template($d->{'template'});
 					      $text{'edit_title'}, "");
 # Disabled, so tell the user that features cannot be changed
 if ($d->{'disabled'}) {
-	print "<font color=#ff0000>".
+	print &ui_alert_box("<span>".
 	      "<b>".$text{'edit_disabled_'.$d->{'disabled_reason'}}."\n".
-	      $text{'edit_disabled'}."<br>".
+	      $text{'edit_disabled'}."</b><br>".
 	      ($d->{'disabled_why'} ?
 		&text('edit_disabled_why', $d->{'disabled_why'})."<br>" : "").
 	      ($d->{'disabled_time'} ?
 		&text('edit_disabled_time',
 		      &make_date($d->{'disabled_time'}))."<br>" : "").
-	      "</b></font><p>\n";
+	      "</span>", 'warn', undef, undef, "");
 	}
 
 @tds = ( "width=30%" );
@@ -221,7 +221,7 @@ if (!$parentdom) {
 		&ui_opt_textbox("passwd", undef, 20,
 				$text{'edit_lv'}." ".&show_password_popup($d),
 				$text{'edit_set'}, undef, undef, undef,
-			 	"autocomplete=off").
+			 	"autocomplete=new-password").
 		$smsg);
 	}
 
@@ -330,8 +330,10 @@ if (!$d->{'disabled'}) {
 	@grid_order_initial = ( );
 	$i = 0;
 	foreach my $f (&list_possible_domain_features($d)) {
-		# Don't show features that are always enabled, if currently set
-		if ($config{$f} == 3 && $d->{$f}) {
+		# Don't show features that are chained from another, if both
+		# are in the same state
+		my @ch = &can_chained_feature($f, 1);
+		if (@ch && $d->{$ch[0]} == $d->{$f}) {
 			print &ui_hidden($f, $d->{$f}),"\n";
 			next;
 			}
@@ -362,6 +364,13 @@ if (!$d->{'disabled'}) {
 	foreach $f (&list_feature_plugins()) {
 		next if (!&plugin_call($f, "feature_suitable",
 					$parentdom, $aliasdom, $subdom));
+
+		# Don't show plugins that are chained from another
+		my @ch = &can_chained_feature($f, 1);
+                if (@ch && $d->{$ch[0]} == $d->{$f}) {
+			print &ui_hidden($f, $d->{$f}),"\n";
+			next;
+			}
 
 		$label = &plugin_call($f, "feature_label", 1);
 		$label = " <b>$label</b>";

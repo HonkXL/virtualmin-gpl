@@ -11,10 +11,11 @@ $canv = &can_edit_phpver($d);
 $can || $canv || &error($text{'phpmode_ecannot'});
 &require_apache();
 $p = &domain_has_website($d);
-
+@modes = &supported_php_modes($d);
+$newmode = $in{'mode'};
 if ($can) {
 	# Check for option clashes
-	if (!$d->{'alias'} && $can == 2) {
+	if (!$d->{'alias'} && $can) {
 		if (defined($in{'children_def'}) && !$in{'children_def'} &&
 		    ($in{'children'} < 1 ||
 		     $in{'children'} > $max_php_fcgid_children)) {
@@ -29,8 +30,8 @@ if ($can) {
 		}
 
 	# Check for working Apache suexec for PHP
-	if (!$d->{'alias'} && ($in{'mode'} eq 'cgi' || $in{'mode'} eq 'fcgid') &&
-	    $can == 2 && $p eq 'web') {
+	if (!$d->{'alias'} && ($newmode eq 'cgi' || $newmode eq 'fcgid') &&
+	    $can && $p eq 'web') {
 		$tmpl = &get_template($d->{'template'});
 		$err = &check_suexec_install($tmpl);
 		&error($err) if ($err);
@@ -46,20 +47,19 @@ $mode = $oldmode = &get_domain_php_mode($d);
 
 if ($can) {
 	# Save PHP execution mode
-	if (defined($in{'mode'}) && $oldmode ne $in{'mode'} && $can == 2) {
-		&$first_print(&text('phpmode_moding', $text{'phpmode_'.$in{'mode'}}));
-		@modes = &supported_php_modes($d);
-		if (&indexof($in{'mode'}, @modes) < 0) {
+	if (defined($newmode) && $oldmode ne $newmode && $can) {
+		&$first_print(&text('phpmode_moding', $text{'phpmode_'.$newmode}));
+		if (&indexof($newmode, @modes) < 0) {
 			&$second_print($text{'phpmode_emode'});
 			}
 		else {
-			my $err = &save_domain_php_mode($d, $in{'mode'});
+			my $err = &save_domain_php_mode($d, $newmode);
 			if ($err) {
 				&$second_print(&text('phpmode_emoding', $err));
 				}
 			else {
 				&$second_print($text{'setup_done'});
-				$mode = $in{'mode'};
+				$mode = $newmode;
 				}
 			}
 		$anything++;
@@ -68,9 +68,10 @@ if ($can) {
 	# Save PHP fcgi children
 	$nc = $in{'children_def'} ? 0 : $in{'children'};
 	if (defined($in{'children_def'}) &&
-	    $nc != &get_domain_php_children($d) && $can == 2) {
-		&$first_print($nc ? &text('phpmode_kidding', $nc)
-				  : $text{'phpmode_nokids'});
+	    $nc != &get_domain_php_children($d) && $can) {
+		&$first_print($nc || $mode eq "fpm" ?
+		    &text('phpmode_kidding', $nc || &get_php_max_childred_allowed()) :
+		    $text{'phpmode_nokids'});
 		&save_domain_php_children($d, $nc);
 		&$second_print($text{'setup_done'});
 		$anything++;
@@ -144,8 +145,46 @@ if ($canv && !$d->{'alias'} && $mode && $mode ne "mod_php" &&
 		}
 	}
 
+# Save PHP log, or use default if coming out of an incompatible mode
+if (&can_php_error_log($mode)) {
+	my $oldplog = &get_domain_php_error_log($d);
+	my $plog;
+	if (defined($in{'plog_def'})) {
+		# Use path from the user
+		if ($in{'plog_def'} == 1) {
+			# Logging disabled
+			$plog = undef;
+			}
+		elsif ($in{'plog_def'} == 2) {
+			# Use the default log
+			$plog = &get_default_php_error_log($d);
+			}
+		else {
+			# Custom path
+			$plog = $in{'plog'};
+			if ($plog && $plog !~ /^\//) {
+				$plog = $d->{'home'}.'/'.$plog;
+				}
+			$plog =~ /^\/\S+$/ || &error($text{'phpmode_eplog'});
+			}
+		}
+	else {
+		# Use template default path
+		$plog = &get_default_php_error_log($d);
+		}
+	if ($plog ne $oldplog) {
+		# Apply the new log if changed
+		&$first_print($text{'phpmode_setplog'});
+		$err = &save_domain_php_error_log($d, $plog);
+		&$second_print(!$err ? $text{'setup_done'}
+				     : &text('phpmode_logerr', $err));
+		$anything++;
+		}
+	}
+
 if (!$anything) {
 	&$first_print($text{'phpmode_nothing'});
+	&$second_print($text{'phpmode_nothing_skip'});
 	}
 
 &save_domain($d);

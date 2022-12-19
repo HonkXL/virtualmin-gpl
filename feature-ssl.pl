@@ -204,7 +204,7 @@ $d->{'web_urlsslport'} = $tmpl->{'web_urlsslport'};
 &sync_domain_tlsa_records($d);
 
 # Redirect HTTP to HTTPS
-if ($config{'auto_redirect'}) {
+if ($tmpl->{'web_sslredirect'} || $d->{'auto_redirect'}) {
 	&create_redirect($d, &get_redirect_to_ssl($d));
 	}
 
@@ -365,8 +365,11 @@ if ($d->{'user'} ne $oldd->{'user'}) {
 		goto VIRTFAILED;
 		}
 	local @vals = &apache::find_directive("SuexecUserGroup", $nonvconf);
-	&apache::save_directive("SuexecUserGroup", \@vals, $vconf, $conf);
-	&flush_file_lines($virt->{'file'});
+	if (@vals) {
+		&apache::save_directive(
+			"SuexecUserGroup", \@vals, $vconf, $conf);
+		&flush_file_lines($virt->{'file'});
+		}
 	$rv++;
 	&$second_print($text{'setup_done'});
 	}
@@ -641,14 +644,24 @@ local $cert = &apache::find_directive("SSLCertificateFile", $vconf, 1);
 if (!$cert) {
 	return &text('validate_esslcert');
 	}
-elsif (!-r $cert) {
+elsif (!-e $cert) {
 	return &text('validate_esslcertfile', "<tt>$cert</tt>");
+	}
+elsif (&is_under_directory($d->{'home'}, $cert) &&
+       !&readable_by_domain_user($d, $cert)) {
+	return &text('validate_esslcertfile2', "<tt>$cert</tt>");
 	}
 
 # Make sure key exists
 local $key = &apache::find_directive("SSLCertificateKeyFile", $vconf, 1);
-if ($key && !-r $key) {
-	return &text('validate_esslkeyfile', "<tt>$key</tt>");
+if ($key) {
+	if (!-e $key) {
+		return &text('validate_esslkeyfile', "<tt>$key</tt>");
+		}
+	elsif (&is_under_directory($d->{'home'}, $key) &&
+	       !&readable_by_domain_user($d, $key)) {
+		return &text('validate_esslkeyfile2', "<tt>$key</tt>");
+		}
 	}
 
 # Make sure the cert is readable
@@ -941,6 +954,9 @@ if ($virt) {
 	if ($virt) {
 		&fix_options_directives($vconf, $conf, 0);
 		}
+
+	# Handle case where there are DAV directives, but it isn't enabled
+	&remove_dav_directives($d, $virt, $vconf, $conf);
 
 	# Re-save CA cert path based on actual config
 	$d->{'ssl_chain'} = &get_website_ssl_file($d, 'ca');
@@ -1687,10 +1703,11 @@ local $outtemp = &transname();
 local $keytemp = &transname();
 local $certtemp = &transname();
 local $ctypeflag = $ctype eq "sha2" ? "-sha256" : "";
+local $addtextsup = &get_openssl_version() >= 1.1 ? "-addext extendedKeyUsage=serverAuth" : "";
 local $out = &backquote_logged(
 	"openssl req $ctypeflag -reqexts v3_req -newkey rsa:$size ".
 	"-x509 -nodes -out ".quotemeta($certtemp)." -keyout ".quotemeta($keytemp)." ".
-	"-days $days -config ".quotemeta($conf)." -subj ".quotemeta($subject)." -utf8 2>&1");
+	"-days $days -config ".quotemeta($conf)." -subj ".quotemeta($subject)." $addtextsup -utf8 2>&1");
 local $rv = $?;
 if (!-r $certtemp || !-r $keytemp || $rv) {
 	# Failed .. return error
@@ -1864,10 +1881,15 @@ if (!-r $d->{'ssl_cert'} && !-r $d->{'ssl_key'}) {
 	&$first_print($text{'setup_openssl'});
 	&lock_file($d->{'ssl_cert'});
 	&lock_file($d->{'ssl_key'});
+	local @alts = ( $d->{'dom'}, "localhost",
+			&get_system_hostname(0),
+			&get_system_hostname(1) );
+	@alts = &unique(@alts);
 	local $err = &generate_self_signed_cert(
 		$d->{'ssl_cert'}, $d->{'ssl_key'}, undef, 1825,
 		undef, undef, undef, $d->{'owner'}, undef,
-		"*.$d->{'dom'}", $d->{'emailto_addr'}, [ $d->{'dom'} ], $d);
+		"*.$d->{'dom'}", $d->{'emailto_addr'},
+		\@alts, $d);
 	if ($err) {
 		&$second_print(&text('setup_eopenssl', $err));
 		return 0;
@@ -2858,7 +2880,8 @@ sub update_caa_record
 my ($d) = @_;
 &require_bind();
 return undef if (!$d->{'dns'});
-return undef if (&compare_version_numbers($bind8::bind_version, "9.9.6") < 0);
+return undef if (!$d->{'dns_cloud'} &&
+		 &compare_version_numbers($bind8::bind_version, "9.9.6") < 0);
 my ($recs, $file) = &get_domain_dns_records_and_file($d);
 my @caa = grep { $_->{'type'} eq 'CAA' } @$recs;
 my $info = &cert_info($d);
@@ -2928,10 +2951,10 @@ $d->{'ssl_everything'} = $everyfile;
 sub get_openssl_version
 {
 my $out = &backquote_command("openssl version 2>/dev/null");
-if ($out =~ /OpenSSL\s+([0-9\.a-z]+)/i) {
+if ($out =~ /OpenSSL\s+(\d\.\d)/) {
 	return $1;
 	}
-return undef;
+return 0;
 }
 
 # before_letsencrypt_website(&domain)
@@ -3067,22 +3090,24 @@ return @rv;
 
 # sync_webmin_ssl_cert(&domain, [enable-or-disable])
 # Add or remove the SSL cert for Webmin for this domain. Returns 1 on success,
-# 0 on failure, or -1 if not supported.
+# 0 on failure, or -1 if not supported. Calls restart_webmin_fully on older
+# Webmin versions because SSL certs are only loaded by miniserv at startup,
+# rather than on a config reload.
 sub sync_webmin_ssl_cert
 {
 my ($d, $enable) = @_;
 my %miniserv;
 &get_miniserv_config(\%miniserv);
 return -1 if (!$miniserv{'ssl'});
+my $rfunc = &get_webmin_version() >= 2.001 ? \&restart_webmin
+					   : \&restart_webmin_fully;
 if ($enable) {
 	return &setup_ipkeys(
-		$d, \&get_miniserv_config, \&put_miniserv_config,
-		\&restart_webmin_fully);
+		$d, \&get_miniserv_config, \&put_miniserv_config, $rfunc);
 	}
 else {
 	return &delete_ipkeys(
-		$d, \&get_miniserv_config, \&put_miniserv_config,
-		\&restart_webmin_fully);
+		$d, \&get_miniserv_config, \&put_miniserv_config, $rfunc);
 	}
 }
 
@@ -3256,6 +3281,44 @@ $tmpl->{'web_webmin_ssl'} = $in{'web_webmin_ssl'};
 $tmpl->{'web_usermin_ssl'} = $in{'web_usermin_ssl'};
 $tmpl->{'web_postfix_ssl'} = $in{'web_postfix_ssl'};
 $tmpl->{'web_dovecot_ssl'} = $in{'web_dovecot_ssl'};
+}
+
+# chained_ssl(&domain, [&old-domain])
+# SSL is automatically enabled when a website is, if set to always mode
+# and if the website is just being turned on now.
+sub chained_ssl
+{
+local ($d, $oldd) = @_;
+if ($config{'ssl'} != 3) {
+	# Not in auto mode, so don't touch
+	return undef;
+	}
+elsif ($d->{'alias'}) {
+	# Aliases never have their own SSL
+	return undef;
+	}
+elsif (&domain_has_website($d)) {
+	if (!$oldd || !&domain_has_website($oldd)) {
+		# Turning on web, so turn on SSL
+		return 1;
+		}
+	else {
+		# Don't do anything
+		return undef;
+		}
+	}
+else {
+	# Always off when web is
+	return 0;
+	}
+}
+
+# can_chained_ssl()
+# Returns the web feature because the SSL feature will be enabled if a
+# website is
+sub can_chained_ssl
+{
+return ('web');
 }
 
 # write_ssl_file_contents(&domain, file, contents|srcfile)

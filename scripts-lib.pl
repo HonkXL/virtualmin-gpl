@@ -1098,31 +1098,51 @@ return sort { $b <=> $a } &unique(@rv);
 
 # setup_php_version(&domain, &script, version, path)
 # Checks if one of the given PHP versions is available for the domain.
-# If not, sets up a per-directory version if possible.
+# If not, sets up a per-directory version if possible. Returns the chosen
+# version, or undef and an error message.
 sub setup_php_version
 {
 local ($d, $script, $scriptver, $path) = @_;
 
 # Figure out which PHP versions the script supports
-my @vers = map { &get_php_version($_->[0]) } &list_available_php_versions($d);
+my @vers;
+my %vmap;
+foreach my $v (&list_available_php_versions($d)) {
+	my $fullv = &get_php_version($v->[0]);
+	push(@vers, $fullv);
+	$vmap{$fullv} = $v->[0];
+	}
+if (!@vers) {
+	return (undef, $text{'scripts_enophpvers'});
+	}
+my @allvers = @vers;
 my $minfunc = $script->{'php_fullver_func'};
 my $maxfunc = $script->{'php_maxver_func'};
+my ($minver, $maxver);
 if (defined(&$minfunc)) {
-	my $minver = &$minfunc($d, $scriptver);
+	$minver = &$minfunc($d, $scriptver);
 	if ($minver) {
 		@vers = grep { &compare_versions($_, $minver) >= 0 } @vers;
 		}
 	}
 if (defined(&$maxfunc)) {
-	my $maxver = &$maxfunc($d, $scriptver);
+	$maxver = &$maxfunc($d, $scriptver);
 	if ($maxver) {
 		@vers = grep { &compare_versions($_, $maxver) < 0 } @vers;
 		}
 	}
-return undef if (!@vers);
+if (!@vers) {
+	my $msg = $minver && $maxver ? 'scripts_ephpminmax' :
+		  $minver ? 'scripts_ephpmin' : 'scripts_ephpmax';
+	return (undef, &text($msg, join(", ", @allvers), $minver, $maxver));
+	}
 
 # Find the best matching directory with a PHP version set
-local $dirpath = &public_html_dir($d).($path eq '/' ? '' : $path);
+local $dirpath = &public_html_dir($d);
+my $candirs = &can_domain_php_directories($d);
+if ($candirs && $path ne '/') {
+	$dirpath .= $path;
+	}
 local @dirs = &list_domain_php_directories($d);
 local $bestdir;
 foreach my $dir (sort { length($a->{'dir'}) cmp length($b->{'dir'}) } @dirs) {
@@ -1131,20 +1151,33 @@ foreach my $dir (sort { length($a->{'dir'}) cmp length($b->{'dir'}) } @dirs) {
 		$bestdir = $dir;
 		}
 	}
-$bestdir || &error("Could not find PHP version for $dirpath");
+if (!$bestdir) {
+	return (undef, &text('scripts_enophpdir', $dirpath));
+	}
 
 my $bestver = &get_php_version($bestdir->{'version'});
 if (&indexof($bestdir->{'version'}, @vers) >= 0 ||
     &indexof($bestver, @vers) >= 0) {
 	# The best match dir supports one of the PHP versions .. so we are OK!
-	return $bestdir->{'version'};
+	return ($bestdir->{'version'}, undef);
+	}
+
+if (!$candirs) {
+	# PHP mode doesn't allow per-directory versions
+	return ($bestver, undef);
 	}
 
 # Need to add a directory, or fix one. Use the lowest PHP version that
 # is supported.
-@vers = sort { &compare_versions($a, $b) } @vers;
-local $err = &save_domain_php_directory($d, $dirpath, $vers[0]);
-return $err ? undef : $vers[0];
+my ($setver) = sort { &compare_versions($a, $b) } @vers;
+$setver = $vmap{$setver} || $setver;
+local $err = &save_domain_php_directory($d, $dirpath, $setver);
+if ($err) {
+	return (undef, &text('scripts_ephpverchange', $dirpath, $vers[0]));
+	}
+else {
+	return ($vers[0], undef);
+	}
 }
 
 # clear_php_version(&domain, &sinfo)
@@ -1640,8 +1673,8 @@ foreach my $m (@mods) {
 		# is in MySQL-python
 		if ($m eq "MySQLdb") {
 			push(@pkgs, ($python =~ /python3/i ?
-				         "python3-mysql" :
-				         "MySQL-python"));
+				         "python3-mysqlclient" :
+				         "python3-mysql"));
 			}
 		elsif ($m eq "setuptools") {
 			push(@pkgs, "setuptools", "python-setuptools");
@@ -2307,7 +2340,7 @@ else {
 	opendir(DIR, $opts->{'dir'});
 	foreach my $f (readdir(DIR)) {
 		if ($f ne '.' && $f ne '..' && !$overlap{$f}) {
-			&unlink_file_as_domain_user($f, "$opts->{'dir'}/$f");
+			&unlink_file_as_domain_user($d, "$opts->{'dir'}/$f");
 			}
 		}
 	closedir(DIR);
@@ -2995,13 +3028,13 @@ if (&indexof("php", @{$script->{'uses'}}) >= 0) {
 		}
 	if ($fullver && defined(&$minfunc)) {
 		my $minver = &$minfunc($d, $ver, $sinfo);
-		if (&compare_versions($fullver, $minver) < 0) {
+		if ($minver && &compare_versions($fullver, $minver) < 0) {
 			return &text('scripts_iphpfullver', $minver, $fullver);
 			}
 		}
 	if ($fullver && defined(&$maxfunc)) {
 		my $maxver = &$maxfunc($d, $ver, $sinfo);
-		if (&compare_versions($fullver, $maxver) > 0) {
+		if ($maxver && &compare_versions($fullver, $maxver) >= 0) {
 			return &text('scripts_iphpmaxver', $maxver, $fullver);
 			}
 		}
@@ -3275,14 +3308,14 @@ local $mode = &get_domain_php_mode($d);
 if ($mode eq "fcgid") {
 	local $max = &get_fcgid_max_execution_time($d);
 	return undef if (!$max);
-	&set_fcgid_max_execution_time($d, 9999);
-	&set_php_max_execution_time($d, 9999);
+	&set_fcgid_max_execution_time($d, $max_php_fcgid_timeout);
+	&set_php_max_execution_time($d, $max_php_fcgid_timeout);
 	return $max;
 	}
 elsif ($mode eq "cgi") {
 	local $max = &get_php_max_execution_time($d);
 	return undef if (!$max);
-	&set_php_max_execution_time($d, 9999);
+	&set_php_max_execution_time($d, $max_php_fcgid_timeout);
 	return $max;
 	}
 else {

@@ -69,7 +69,7 @@ my %done;
 my $fmt = "\%-${maxlen}.${maxlen}s \%s\n";
 foreach my $c (&list_api_categories()) {
 	my ($cname, @cglobs) = @$c;
-	@cglobs = map { my $g = $_; ($g, map { "$root_directory/$_/$g" } @plugins) } @cglobs;
+	@cglobs = map { my $g = $_; ($g, "pro/$g", map { "$root_directory/$_/$g" } @plugins) } @cglobs;
 	my @cmds = map { glob($_) } @cglobs;
 	@cmds = grep { &indexof($_, @skips) < 0 && !$done{$_} } @cmds;
 
@@ -101,6 +101,8 @@ foreach my $c (&list_api_categories()) {
 				$desc =~ s/\s(\S+)$//;
 				$wrap = $1." ".$wrap;
 				}
+			$desc =~ s/\.\s*$//;
+			$wrap =~ s/\.\s*$//;
 			if (!$donehead) {
 				# Category header
 				print $cname,"\n";

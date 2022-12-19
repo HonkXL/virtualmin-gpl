@@ -91,8 +91,8 @@ C<--move-document-dir> flag.
 To force re-generated of TLSA DNS records after the SSL cert is manually
 modified, use the C<--sync-tlsa> flag.
 
-If your system supports Fcgiwrap for running CGI scripts, you can use the 
-C<--enable-fcgiwrap> flag to switch to it instead of using SuExec, or 
+If your system supports FCGIwrap for running CGI scripts, you can use the 
+C<--enable-fcgiwrap> flag to switch to it instead of using suEXEC, or 
 C<--disable-fcgiwrap> to switch back.
 
 If your webserver supports multiple HTTP protocols, you can use the 
@@ -104,6 +104,11 @@ If your Apache configuration contains unsupported C<mod_php> directives,
 the C<--cleanup-mod-php> flag can be used to remove them from a virtual server.
 This is primarily useful if the Apache module has been disabled, but not all
 directives have been cleaned up.
+
+PHP error logging can be enabled with the C<--php-log> flag, followed by
+a path like C<logs/php.log>. Alternately you can opt to use the default
+path with the C<--default-php-log> flag, or turn logging off with the flag
+C<--no-php-log>.
 
 =cut
 
@@ -302,6 +307,17 @@ while(@ARGV > 0) {
 	elsif ($a eq "--cleanup-mod-php") {
 		$fix_mod_php = 1;
 		}
+	elsif ($a eq "--php-log") {
+		$phplog = shift(@ARGV);
+		$phplog =~ /^\S+$/ || &usage("--php-log must be followed by ".
+					     "a filename");
+		}
+	elsif ($a eq "--default-php-log") {
+		$phplog = "default";
+		}
+	elsif ($a eq "--no-php-log") {
+		$phplog = "";
+		}
 	elsif ($a eq "--help") {
 		&usage();
 		}
@@ -311,7 +327,7 @@ while(@ARGV > 0) {
 	}
 @dnames || $all_doms || usage("No domains to modify specified");
 $mode || $rubymode || defined($proxy) || defined($framefwd) || $tlsa ||
-  $content || defined($children) ||
+  $content || defined($children) || defined($phplog) ||
   $version || defined($webmail) || defined($matchall) || defined($timeout) ||
   $defwebsite || $accesslog || $errorlog || $htmldir || $port || $sslport ||
   $urlport || $sslurlport || defined($includes) || defined($fixoptions) ||
@@ -323,14 +339,9 @@ $proxy && $framefwd && &usage("Both proxying and frame forwarding cannot be enab
 # Validate fastCGI options
 @modes = &supported_php_modes();
 if (defined($timeout)) {
-	&indexof("fcgid", @modes) >= 0 ||
+	grep(/^fcgid|fpm$/, @modes) ||
 		&usage("The PHP script timeout can only be set on systems ".
-		       "that support fcgid");
-	}
-if (defined($children)) {
-	&indexof("fcgid", @modes) >= 0 ||
-		&usage("The number of PHP children can only be set on systems ".
-		       "that support fcgid");
+		       "that support FCGId or FPM");
 	}
 
 # Validate HTML dir
@@ -374,14 +385,14 @@ foreach $d (@doms) {
 		}
 	}
 
-# Make sure suexec and PHP / Ruby settings don't clash
+# Make sure suEXEC and PHP / Ruby settings don't clash
 foreach $d (@doms) {
 	$p = $mode || &get_domain_php_mode($d);
 	if (defined(&get_domain_ruby_mode)) {
 		$r = $rubymode || &get_domain_ruby_mode($d);
 		}
 	if ($r eq "cgi" && !$s) {
-		&usage("For Ruby to be run as the domain owner in $d->{'dom'}, suexec must also be enabled");
+		&usage("For Ruby to be run as the domain owner in $d->{'dom'}, suEXEC must also be enabled");
 		}
 	@supp = &supported_php_modes($d);
 	!$mode || &indexof($mode, @supp) >= 0 ||
@@ -413,9 +424,9 @@ if ($includes ne "") {
 # Validate fcgiwrap change
 if (defined($fcgiwrap)) {
 	$fcgiwrap && !&supports_fcgiwrap() &&
-		&usage("Fcgiwrap is not supported on this system");
+		&usage("FCGIwrap is not supported on this system");
 	!$fcgiwrap && !&supports_suexec() &&
-		&usage("Suexec is not supported on this system");
+		&usage("suEXEC is not supported on this system");
 	}
 
 # Lock them all
@@ -431,10 +442,10 @@ foreach $d (@doms) {
 foreach $d (@doms) {
 	&$first_print("Updating server $d->{'dom'} ..");
 	&$indent_print();
+	$tmpl = &get_template($d->{'template'});
 
 	# Use the default mode for this domain
 	if ($defmode) {
-		$tmpl = &get_template($d->{'template'});
 		$mode = &template_to_php_mode($tmpl);
 		}
 
@@ -447,7 +458,17 @@ foreach $d (@doms) {
 
 	# Update PHP fCGId children
 	if (defined($children) && !$d->{'alias'}) {
-		&save_domain_php_children($d, $children);
+		&$first_print("Updating PHP child processes ..");
+		$oldchildren = &get_domain_php_children($d);
+		if ($oldchildren == -2) {
+			&$second_print(".. not supported by this PHP mode");
+			}
+		elsif ($err = &save_domain_php_children($d, $children)) {
+			&$second_print(".. failed : $err");
+			}
+		else {
+			&$second_print(".. done");
+			}
 		}
 
 	# Update PHP maximum time
@@ -787,7 +808,7 @@ foreach $d (@doms) {
 				}
 			}
 		else {
-			&$first_print("Switching to suexec for CGI scripts ..");
+			&$first_print("Switching to suEXEC for CGI scripts ..");
 			if (!$d->{'fcgiwrap_port'}) {
 				&$second_print(".. already enabled");
 				}
@@ -868,6 +889,30 @@ foreach $d (@doms) {
 		&$second_print(".. removed $c");
 		}
 
+	# Update PHP log file
+	if (defined($phplog)) {
+		my $dphplog = $phplog eq "" ? undef : $phplog;
+		if ($dphplog eq "default") {
+			$dphplog = &get_default_php_error_log($d);
+			}
+		if ($dphplog && $dphplog !~ /^\//) {
+			$dphplog = $d->{'home'}.'/'.$dphplog;
+			}
+		if ($dphplog) {
+			&$first_print("Changing PHP error log to $dphplog ..");
+			}
+		else {
+			&$first_print("Removing PHP error log ..");
+			}
+		my $err = &save_domain_php_error_log($d, $dphplog);
+		if ($err) {
+			&$second_print(".. failed : $err");
+			}
+		else {
+			&$second_print(".. done");
+			}
+		}
+
 	if (defined($proxy) || defined($framefwd) || $htmldir ||
 	    $port || $sslport || $urlport || $sslurlport || $mode || $version ||
 	    defined($renew) || $breakcert || $linkcert || $fixhtmldir ||
@@ -934,6 +979,7 @@ print "                     [--add-directive \"name value\"]\n";
 print "                     [--remove-directive \"name value\"]\n";
 print "                     [--protocols \"proto ..\" | --default-protocols]\n";
 print "                     [--cleanup-mod-php]\n";
+print "                     [--php-log filename | --no-php-log]\n";
 exit(1);
 }
 

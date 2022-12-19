@@ -329,6 +329,7 @@ if (!$sinfo && !$script->{'overlap'}) {
 # Run the before command
 %envs = map { 'script_'.$_, $opts->{$_} } (keys %$opts);
 $envs{'script_name'} = $sname;
+$envs{'script_upgrade'} = defined($id) ? 1 : 0;
 $envs{'script_version'} = $ver;
 &set_domain_envs($d, "SCRIPT_DOMAIN", \%newdom, undef, \%envs);
 $merr = &making_changes();
@@ -342,9 +343,9 @@ $merr = &making_changes();
 # Check PHP version
 if (&indexof("php", @{$script->{'uses'}}) >= 0) {
 	&$first_print("Checking PHP version ..");
-	$phpver = &setup_php_version($d, $script, $ver, $opts->{'path'});
+	($phpver, $phperr) = &setup_php_version($d, $script, $ver, $opts->{'path'});
 	if (!$phpver) {
-		&$second_print(".. no compatible PHP version found!");
+		&$second_print(".. $phperr");
 		exit(1);
 		}
 	else {

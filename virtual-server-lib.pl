@@ -91,8 +91,8 @@ $config{'virt6'} = 1;
 @subdom_features = ( @opt_subdom_features );
 @database_features = ( 'mysql', 'postgres' );
 @template_features = ( 'basic', 'resources', @features, 'virt', 'virtualmin',
-		       'plugins', 'scripts', 'autoconfig',
-		       'php', 'phpwrappers', 'avail' );
+		       'plugins', 'scripts', 'autoconfig', 'php', 'avail',
+		       'newuser', );
 @template_features_effecting_webmin = ( 'web', 'webmin', 'avail' );
 @can_always_features = ( 'dir', 'unix', 'logrotate' );
 @validate_features = ( @features, "virt", "virt6" );
@@ -218,7 +218,8 @@ $extra_admins_dir = "$module_config_directory/admins";
 @all_possible_short_php_versions =
 	&unique(map { int($_) } @all_possible_php_versions);
 @s3_perl_modules = ( "S3::AWSAuthConnection", "S3::QueryStringAuthGenerator" );
-$max_php_fcgid_children = 20;
+$max_php_fcgid_children = $config{'max_php_fcgi_children'} || int(&get_php_max_childred_allowed() * 5) || 5;
+$max_php_fcgid_timeout = $config{'max_php_fcgi_timeout'} || 9999;
 $s3_upload_tries = $config{'upload_tries'} || 3;
 $rs_upload_tries = $config{'upload_tries'} || 3;
 $ftp_upload_tries = $config{'upload_tries'} || 3;
@@ -237,8 +238,9 @@ $rr_upload_tries = $config{'upload_tries'} || 1;
 
 $denied_ssh_group = "deniedssh";
 
-$virtualmin_shop_link = "https://www.virtualmin.com/shop/";
-$virtualmin_shop_link_cat = "https://www.virtualmin.com/product-category/virtualmin/";
+$virtualmin_link = "https://www.virtualmin.com";
+$virtualmin_shop_link = "$virtualmin_link/shop/";
+$virtualmin_shop_link_cat = "$virtualmin_link/product-category/virtualmin/";
 
 $script_download_host = "scripts.virtualmin.com";
 $script_download_port = 80;
@@ -358,6 +360,8 @@ $public_dns_suffix_url = "https://publicsuffix.org/list/public_suffix_list.dat";
 
 $lookup_domain_port = 11000;
 
+$quota_cache_dir = "$module_var_directory/quota-cache";
+
 # generate_plugins_list([list])
 # Creates the confplugins, plugins and other arrays based on the module config
 # or given space-separated string.
@@ -371,6 +375,7 @@ foreach my $pname (@confplugins) {
 		push(@plugins, $pname);
 		}
 	}
+@plugins_inactive = split(/\s+/, $config{'plugins_inactive'});
 }
 
 # cache_file_path(name)
@@ -401,8 +406,16 @@ if ($newconf->{'hide_pro_tips'} ne $oldconf->{'hide_pro_tips'}) {
 sub config_pre_load
 {
 my ($modconf_info, $modconf_order) = @_;
-my @forbidden_keys;
 
+# Replace config labels for MySQL
+if ($mysql_module_version =~ /mariadb/i) {
+	foreach my $confline (keys %{$modconf_info}) {
+		$modconf_info->{$confline} =~ s/MySQL/MariaDB/g;
+		}
+	}
+
+# Process forbidden keys
+my @forbidden_keys;
 # Virtualmin GPL/Pro version based config filter
 if ($virtual_server::virtualmin_pro) {
 	# Do not show Pro user 'Show Pro features overview' option
@@ -427,6 +440,19 @@ foreach my $fkey (@forbidden_keys) {
 	@{$modconf_order} = grep { $_ ne $fkey } @{$modconf_order}
 		if ($modconf_order);
 	}
+}
+
+# help_pre_load(help-text)
+# Check if some help text needs fixing
+sub help_pre_load
+{
+my ($htext) = @_;
+
+# Replace config labels for MySQL
+if ($mysql_module_version =~ /mariadb/i) {
+	$htext =~ s/MySQL/MariaDB/gm;
+	}
+return $htext;
 }
 
 1;

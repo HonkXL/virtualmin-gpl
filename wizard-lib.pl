@@ -18,10 +18,11 @@ return ( "intro",
 	 $config{'virus'} ? ( "virus" ) : ( ),
 	 $config{'spam'} ? ( "spam" ) : ( ),
 	 "db",
-	 $config{'mysql'} ? ( "mysql", "mysize" ) : ( ),
+	 $config{'mysql'} ? ( "mysql" ) : ( ),
 	 $config{'dns'} ? ( "dns" ) : ( ),
 	 "done",
 	 "hashpass",
+	 $config{'mysql'} ? ( "mysize" ) : ( ),
 	 "ssldir",
 	 "defdom",
 	 "alldone" );
@@ -427,9 +428,9 @@ if (-r $mysql::config{'my_cnf'}) {
 	local $mysize = $config{'mysql_size'} || "";
 	local $recsize;
 	if ($mem) {
-		$recsize = $mem <= 256*1024*1024 ? "small" :
-			   $mem <= 512*1024*1024 ? "medium" :
-			   $mem <= 1024*1024*1024 ? "large" : "huge";
+		$recsize = $mem <= 1024*1024*1024 ? "small" :
+			   $mem <= 2048*1024*1024 ? "medium" :
+			   $mem <= 4096*1024*1024 ? "large" : "huge";
 		}
 	my @types = &list_mysql_size_setting_types();
 	my $conf = &mysql::get_mysql_config();
@@ -446,24 +447,17 @@ if (-r $mysql::config{'my_cnf'}) {
 				}
 			}
 		}
+	$currt ||= "default";
 	my $recom = 'wizard_myrec';
-	my $def_msg;
-	if ($currt) {
-		$def_msg = $text{"wizard_mysize_$currt"};
-		($def_msg) = $def_msg =~ /.*?(\(\d+.+?\S*\))/;
-		}
-	# Initial wizard run cannot have current
-	my $can_current = ($config{'wizard_run'} && $currt);
 	# All types like 'small' 'medium' 'large' and 'huge'
 	my @types_r = map { [ $_, $text{'wizard_mysize_'.$_}.
 			        ($_ eq $recsize ? " <span data-$recom>$text{$recom}</span>" : "") ] } @types;
-	# Default type (i.e. 'Leave default settings', and will not be displayed
-	# on initial wizard run (no current yet) but will be selected on re-run)
-	my $type_def = [ "", $text{'wizard_mysize_def'}. ($def_msg ? " $def_msg" : "") ];
+
+	# Always allow to skip MySQL setup and use service defaults
 	# All types depend on if wizard runs the first time or not
-	my $types_all = $can_current ? [ $type_def,  @types_r ] : [ @types_r ];
+	my $types_all = [ @types_r ];
 	print &ui_table_row($text{'wizard_mysize_type'},
-		    &ui_radio_table("mysize", ($can_current ? undef : $recsize), $types_all));
+		    &ui_radio_table("mysize", $currt, $types_all));
 	}
 else {
 	print &ui_table_row(&text('wizard_mysize_ecnf',
@@ -802,7 +796,7 @@ else {
 		&ui_radio("defdom", 1,
 			  [ [ 0, $text{'wizard_defdom0'} ],
 			    [ 1, $text{'wizard_defdom1'}." ".
-				 &ui_textbox("defhost", $def, 20) ] ]));
+				 &ui_textbox("defhost", $def, 26) ] ]));
 
 	print &ui_table_row($text{'wizard_defdom_ssl'},
 		&ui_radio("defssl", 2,
@@ -922,6 +916,8 @@ my $err = &create_virtual_server(
 &pop_all_print();
 return $err if ($err);
 
+$config{'defaultdomain_name'} = $dom{'dom'};
+&save_module_config();
 &run_post_actions_silently();
 &unlock_domain_name($dname);
 

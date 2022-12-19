@@ -66,6 +66,10 @@ used. However, you can override this with the C<--cloud-dns> flag followed by
 either C<local> to host locally, C<services> to use Cloudmin services, or
 the ID of one of the supported providers like C<route53> or C<google>.
 
+Use the C<--letsencrypt> flag to request an auto-renewable Let's Encrypt
+certificate. To do the same but skip connectivity checks, use 
+C<--letsencrypt-always> flag instead.
+
 =cut
 
 package virtual_server;
@@ -387,6 +391,9 @@ while(@ARGV > 0) {
 			$sshkey = &read_file_contents($sshkey);
 			}
 		$sshkey =~ /\S/ || &usage("--use-ssh-key must be followed by a key file or data");
+		}
+	elsif ($a eq "--ssl-redirect") {
+		$auto_redirect = 1;
 		}
 	elsif ($a eq "--mode") {
 		$phpmode = shift(@ARGV);
@@ -862,6 +869,13 @@ $dom{'db'} = $db || &database_name(\%dom);
 &set_provision_features(\%dom);
 &generate_domain_password_hashes(\%dom, 1);
 
+# Check SSL redirect flag
+if ($auto_redirect) {
+	&domain_has_ssl(\%dom) || &usage("The --ssl-redirect flag cannot be ".
+					 "used unless SSL is enabled");
+	$dom{'auto_redirect'} = 1;
+	}
+
 # Work out home directory
 $dom{'home'} = &server_home_directory(\%dom, $parent);
 if (defined($mysqlpass) && $config{'mysql'}) {
@@ -1043,11 +1057,13 @@ foreach $f (&list_feature_plugins()) {
 	}
 print "                        [--skip-warnings]\n";
 print "                        [--letsencrypt]\n";
+print "                        [--letsencrypt-always]\n";
 print "                        [--field-name value]*\n";
 print "                        [--enable-jail | --disable-jail]\n";
 print "                        [--mysql-server hostname]\n";
 print "                        [--cloud-dns provider|\"services\"|\"local\"]\n";
 print "                        [--break-ssl-cert | --link-ssl-cert]\n";
+print "                        [--ssl-redirect]\n";
 print "                        [--generate-ssl-cert]\n";
 print "                        [--generate-ssh-key | --use-ssh-key file|data]\n";
 exit(1);

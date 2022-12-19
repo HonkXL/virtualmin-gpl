@@ -653,6 +653,19 @@ sub feature_start_service
 {
 }
 
+# feature_can_chained()
+# Returns 1 if this feature can be chained off another
+sub feature_can_chained
+{
+}
+
+# feature_chained(&domain)
+# Returns 1 if this feature should get automatically enabled based on others
+# that are already enabled.
+sub feature_chained
+{
+}
+
 # mailbox_inputs(&user, new, &domain)
 # Returns HTML for additional inputs on the mailbox form. These should be
 # formatted to appear inside a table.

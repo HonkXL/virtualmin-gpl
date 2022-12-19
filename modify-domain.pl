@@ -7,8 +7,9 @@ Change parameters of a virtual server
 This command can be used to modify various settings for an existing virtual
 server from the command line. The only mandatory parameter is C<--domain>, which
 must be followed by the domain name of the server to update. The actual
-changes to make are specified by the other optional parameters, such as C<--pass>
-to set a new password, C<--desc> to change the server description, and C<--quota> and C<--uquota> to change the disk quota.
+changes to make are specified by the other optional parameters, such as
+C<--pass> to set a new password, C<--desc> to change the server description,
+and C<--quota> and C<--uquota> to change the disk quota.
 
 To add a private IP address to a virtual server that currently does not have
 one, the C<--ip> or C<--allocate-ip> options can be used, as described in the
@@ -61,6 +62,11 @@ revert to the normal behavior, use C<--no-link-domain>.
 By default, virtual server plan changes that modify features will be blocked
 if any warnings are detected, such as an existing database or SSL certificate
 conflict. These can be overridden with the C<--skip-warnings> flag.
+
+To update actual filesystem quotas to match what Virtualmin thinks the domain
+should have, use the C<--apply-quotas> flag. Or use C<--apply-all-quotas> to
+also re-apply quotas for mailbox users. These flags are useful if underlying
+quotas have been corrupted or lost, for example via a filesystem move.
 
 =cut
 
@@ -281,6 +287,12 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--no-link-domain") {
 		$linkdname = "";
+		}
+	elsif ($a eq "--apply-quotas") {
+		$applyquotas = 1;
+		}
+	elsif ($a eq "--apply-all-quotas") {
+		$applyquotas = 2;
 		}
 	elsif ($a eq "--help") {
 		&usage();
@@ -677,14 +689,19 @@ if (defined($jail)) {
 		print "Disabling chroot jail ..\n";
 		$err = &disable_domain_jailkit($dom);
 		}
-	$d->{'jail'} = $jail if (!$err);
-	$dom->{'jail'} = $jail if (!$err);
-	&save_domain($dom);
-	print $err ? ".. failed : $err\n\n" : ".. done\n\n";
+	if (!$err) {
+		$dom->{'jail'} = $jail;
+		&modify_webmin($dom, $dom);
+		&save_domain($dom);
+		print ".. done\n\n";
+		}
+	else {
+		print ".. failed : $err\n\n";
+		}
 
 	# Update scripts hostnames, if jail changed
 	if (!$err) {
-		foreach my $dbt (('mysql', 'psql')) {
+		foreach my $dbt ('mysql', 'psql') {
 			&update_all_installed_scripts_database_credentials($dom, $old, 'dbhost', undef, $dbt);
 			}
 		}
@@ -855,6 +872,37 @@ if ($mysql_module) {
 		}
 	}
 
+# Re-apply filesystem quotas
+if (&has_home_quotas() && $applyquotas && $d->{'unix'}) {
+	&$first_print("Re-applying virtual server quotas ..");
+	&set_server_quotas($dom);
+	&$second_print(".. done");
+	}
+if (&has_home_quotas() && $applyquotas == 2) {
+	&$first_print("Re-applying mailbox user quotas ..");
+	my $fixed = 0;
+	foreach my $u (&list_domain_users($dom, 1, 0, 0, 0)) {
+		next if ($u->{'noquota'});
+		my $oldu = { %$u };
+		my $save = 0;
+		if (defined($u->{'quota_cache'}) &&
+		    $u->{'quota'} != $u->{'quota_cache'}) {
+			$u->{'quota'} = $u->{'quota_cache'};
+			$save = 1;
+			}
+		if (defined($u->{'mquota_cache'}) &&
+		    $u->{'mquota'} != $u->{'mquota_cache'}) {
+			$u->{'mquota'} = $u->{'mquota_cache'};
+			$save = 1;
+			}
+		if ($save) {
+			&modify_user($u, $oldu, $dom);
+			$fixed++;
+			}
+		}
+	&$second_print(".. updated $fixed users");
+	}
+
 # Update the Webmin user for this domain, or the parent
 &refresh_webmin_user($dom, $old);
 
@@ -887,6 +935,7 @@ print "                        [--pass \"new-password\" | --passfile password-fi
 print "                        [--email new-email]\n";
 print "                        [--quota new-quota|UNLIMITED]\n";
 print "                        [--uquota new-unix-quota|UNLIMITED]\n";
+print "                        [--apply-quotas | --apply-all-quotas]\n";
 print "                        [--newdomain new-name]\n";
 print "                        [--bw bytes|NONE]\n";
 if ($config{'bw_disable'}) {

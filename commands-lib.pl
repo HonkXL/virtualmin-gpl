@@ -28,6 +28,8 @@ return ([ "Backup and restore", "backup-domain.pl", "list-scheduled-backups.pl",
 	[ "Account plans", "*-plan.pl", "*-plans.pl" ],
 	[ "SVN repositories", "*-svn-repositor*.pl" ],
 	[ "Amazon S3", "*-s3-*.pl", "*-rs-*.pl" ],
+	[ "License", "*license*" ],
+	[ "Repository", "*setup-repos*" ],
 	[ "Other scripts", "*.pl" ],
 	);
 }
@@ -123,6 +125,10 @@ to list, create and delete SVN repositories.",
 "Amazon S3",
 "These commands can be used to upload files to, download files from and
 manage files on Amazon's S3 cloud storage service.",
+
+"License",
+"These commands are used to list Virtualmin license info, change license or
+downgrade to GPL.",
 
 "Other scripts",
 "Programs in this section don't fall into any of the other categories.",

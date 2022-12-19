@@ -15,20 +15,28 @@ $temp = &transname();
 local $bind8::config{'auto_chroot'} = undef;
 local $bind8::config{'chroot'} = undef;
 local $bind8::get_chroot_cache = "";
-&create_standard_records($temp, $d, $d->{'dns_ip'} || $d->{'ip'});
+$recs = [ ];
+&create_standard_records($recs, $temp, $d, $d->{'dns_ip'} || $d->{'ip'});
 if ($config{'mail_autoconfig'} && &domain_has_website($d)) {
-	&enable_dns_autoconfig($d, &get_autoconfig_hostname($d), $temp);
+	# Add autoconfig records
+	foreach my $autoconfig (&get_autoconfig_hostname($d)) {
+		&enable_dns_autoconfig($d, $autoconfig, $temp, $recs);
+		}
 	}
-$recs = &read_file_contents($temp);
-&unlink_file($temp);
-$recs =~ s/^\$ttl.*\n//;
-$recs =~ s/.*NS.*\n//g;
-$recs =~ s/.*SOA.*\([^\)]+\).*\n//;
+if ($d->{'mail'} && !&check_dkim() && ($dkim = &get_dkim_config()) &&
+    $dkim->{'enabled'}) {
+	# Add DKIM record
+	&add_domain_dkim_record($d, $dkim, $recs, $temp);
+	}
+@$recs = grep { $_->{'type'} ne 'NS' &&
+		$_->{'type'} ne 'SOA' &&
+		!$_->{'defttl'} } @$recs;
+$out = &dns_records_to_text(@$recs);
 
 # Show them
 print &ui_alert_box($text{'records_viewdesc'}, 'warn', undef, undef, "");
 print &ui_table_start(undef, undef, 2);
-print &ui_table_row(undef, "<pre>".&html_escape($recs)."</pre>", 2);
+print &ui_table_row(undef, "<pre>".&html_escape($out)."</pre>", 2);
 print &ui_table_end();
 
 &ui_print_footer(&domain_footer_link($d),

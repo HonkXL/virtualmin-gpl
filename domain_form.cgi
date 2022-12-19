@@ -174,7 +174,7 @@ if ($subdom) {
 	# Under top-level domain
 	print &ui_table_row(&hlink($text{'form_domain'}, "domainname"),
 		&ui_textbox("dom", undef, 20, 0, undef,
-			  "autocomplete='off' autocorrect='off' spellcheck='false'").".$subdom->{'dom'}",
+		  &vui_ui_input_noauto_attrs()).".$subdom->{'dom'}",
 		undef, \@tds);
 	}
 else {
@@ -184,7 +184,7 @@ else {
 		       $access{'subdom'} ? ".$access{'subdom'}" : undef;
 	print &ui_table_row(&hlink($text{'form_domain'}, "domainname"),
 	      &ui_textbox("dom", $force, 50, 0, undef,
-			  "onBlur='domain_change(this)' autocomplete='off' autocorrect='off' spellcheck='false'"),
+			  "onBlur='domain_change(this)' @{[&vui_ui_input_noauto_attrs()]}'"),
 	      undef, \@tds);
 
 	# Javascript to append domain name if needed
@@ -203,7 +203,7 @@ else {
 # Description / owner
 print &ui_table_row(&hlink($text{'form_owner'}, "ownersname"),
 		    &ui_textbox("owner", undef, 50, undef, undef,
-			  "autocomplete='off'"),
+			  &vui_ui_input_noauto_attrs()),
 		    undef, \@tds);
 
 if (!$parentuser) {
@@ -219,7 +219,7 @@ if (!$parentuser) {
 			    [ 1, $text{'form_sshkey1'} ],
 			    [ 2, $text{'form_sshkey2'} ] ])."<br>\n".
 		&ui_textarea("sshkey", undef, 3, 60,
-		             undef, undef, "autocomplete='off' autocorrect='off' spellcheck='false'"), undef, \@tds);
+		             undef, undef, &vui_ui_input_noauto_attrs()), undef, \@tds);
 	}
 
 # Generate Javascript for template change
@@ -258,7 +258,7 @@ print $js;
 # Work out which features are enabled by default
 @dom_features = $aliasdom ? @opt_alias_features :
 		$subdom ? @opt_subdom_features : @opt_features;
-%plugins_inactive = map { $_, 1 } split(/\s+/, $config{'plugins_inactive'});
+%plugins_inactive = map { $_, 1 } @plugins_inactive;
 if ($config{'plan_auto'}) {
 	@def_features = grep { $config{$_} == 1 || $config{$_} == 3 }
 			     @dom_features;
@@ -679,7 +679,7 @@ if ($can_website && !$aliasdom && $virtualmin_pro) {
 					[ 2, $text{'form_content2'} ],
 					[ 0, $text{'form_content0'} ] ])."<br>".
 			    &ui_textarea("content", undef, 5, 70, undef, undef,
-			                 "placeholder=\"$text{'deftmplt_slogan2'}\" data-placeholder=\"$text{'deftmplt_slogan2'}\""),
+			                 "placeholder=\"@{[&html_strip($text{'deftmplt_default_slog'}, ' ')]}\""),
 			    3, \@tds);
 
 	print &ui_hidden_table_end();

@@ -133,6 +133,12 @@ if ($mode =~ /mod_php|none/ && $oldmode !~ /mod_php|none/) {
 	$d->{'last_php_version'} = $oldver;
 	}
 
+my $oldplog;
+if ($mode ne $oldmode) {
+	# Save the PHP error log path
+	$oldplog = &get_domain_php_error_log($d);
+	}
+
 # Work out source php.ini files
 local (%srcini, %subs_ini);
 $mode eq "none" || @vers || return "No PHP versions found for mode $mode";
@@ -588,6 +594,11 @@ if ($mode !~ /mod_php|none/ && $oldmode =~ /mod_php|none/ &&
 	return $err if ($err);
 	}
 
+if (defined($oldplog)) {
+	# Restore the old PHP error log
+	&save_domain_php_error_log($d, $oldplog);
+	}
+
 # Link ~/etc/php.ini to the per-version ini file
 &create_php_ini_link($d, $mode);
 
@@ -625,7 +636,7 @@ foreach my $p (@ports) {
 	local @newdir = &apache::find_directive("FcgidIOTimeout", $vconf);
 	local $dirname = @newdir ? "FcgidIOTimeout" : "IPCCommTimeout";
 	local $oldvalue = &apache::find_directive($dirname, $vconf);
-	local $want = $max ? $max + 1 : 9999;
+	local $want = $max ? $max + 1 : $max_php_fcgid_timeout;
 	if ($oldvalue ne $want) {
 		&apache::save_directive($dirname, [ $want ],
 					$vconf, $conf);
@@ -736,8 +747,8 @@ foreach my $v (&list_available_php_versions($d, $mode)) {
 			$defchildren = undef if ($defchildren eq "none");
 			if ($defchildren) {
 				$common .= "PHP_FCGI_CHILDREN=$defchildren\n";
+				$common .= "export PHP_FCGI_CHILDREN\n";
 				}
-			$common .= "export PHP_FCGI_CHILDREN\n";
 			$common .= "PHP_FCGI_MAX_REQUESTS=99999\n";
 			$common .= "export PHP_FCGI_MAX_REQUESTS\n";
 			}
@@ -1138,6 +1149,21 @@ $get_php_version_cache{$cmd} = undef;
 return undef;
 }
 
+# can_domain_php_directories(&domain, [mode])
+# Returns 1 if the PHP version can be set on specific directories
+sub can_domain_php_directories
+{
+my ($d, $mode) = @_;
+local $p = &domain_has_website($d);
+if ($p && $p ne 'web' &&
+    &plugin_defined($p, "feature_can_domain_php_directories")) {
+	return &plugin_call($p, "feature_can_domain_php_directories",
+			    $d, $mode);
+	}
+$mode ||= &get_domain_php_mode($d);
+return $mode eq "fpm" ? 0 : 1;
+}
+
 # list_domain_php_directories(&domain)
 # Returns a list of directories for which different versions of PHP have
 # been configured.
@@ -1317,10 +1343,14 @@ else {
 				}
 			my $olist = $apache::httpd_modules{'core'} >= 2.2 ?
 					" ".&get_allowed_options_list() : "";
+			my $granteddir = "Require all granted";
+			if ($apache::httpd_modules{'core'} < 2.4) {
+				$granteddir = "Allow from all";
+				}
 			local @lines = (
 				"    <Directory $dir>",
 				"        Options +IncludesNOEXEC +SymLinksifOwnerMatch +ExecCGI",
-				"        allow from all",
+				"        $granteddir",
 				"        AllowOverride All".$olist,
 				(map { "        ".$_ } @phplines),
 				"    </Directory>"
@@ -1388,7 +1418,8 @@ return 0;
 }
 
 # list_domain_php_inis(&domain, [force-mode])
-# Returns a list of php.ini files used by a domain, and their PHP versions
+# Returns a list of php.ini files used by a domain, and their PHP versions and
+# commands.
 sub list_domain_php_inis
 {
 local ($d, $mode) = @_;
@@ -1396,13 +1427,13 @@ local @inis;
 foreach my $v (&list_available_php_versions($d, $mode)) {
 	local $ifile = "$d->{'home'}/etc/php$v->[0]/php.ini";
 	if (-r $ifile) {
-		push(@inis, [ $v->[0], $ifile ]);
+		push(@inis, [ $v->[0], $ifile, $v->[1] ]);
 		}
 	}
 if (!@inis) {
 	local $ifile = "$d->{'home'}/etc/php.ini";
 	if (-r $ifile) {
-		push(@inis, [ undef, $ifile ]);
+		push(@inis, [ undef, $ifile, undef ]);
 		}
 	}
 return @inis;
@@ -1544,12 +1575,12 @@ elsif ($mode eq "fpm") {
 	my $lref = &read_file_lines($file, 1);
 	my $childs = 0;
 	foreach my $l (@$lref) {
-		if ($l =~ /pm.max_children\s*=\s*(\d+)/) {
+		if ($l =~ /pm\.max_children\s*=\s*(\d+)/) {
 			$childs = $1;
 			}
 		}
 	&unflush_file_lines($file);
-	return $childs == 9999 ? 0 : $childs;
+	return $childs == get_php_max_childred_allowed() ? 0 : $childs;
 	}
 else {
 	return -2;
@@ -1626,10 +1657,16 @@ elsif ($mode eq "fpm") {
 	return 0 if (!-r $file);
 	&lock_file($file);
 	my $lref = &read_file_lines($file);
-	$children = 9999 if ($children == 0);	# Unlimited
+	$children = get_php_max_childred_allowed() if ($children == 0);	# Recommended default
 	foreach my $l (@$lref) {
-		if ($l =~ /pm.max_children\s*=\s*(\d+)/) {
+		if ($l =~ /pm\.max_children\s*=\s*(\d+)/) {
 			$l = "pm.max_children = $children";
+			}
+		if ($l =~ /pm\.start_servers\s*=\s*(\d+)/) {
+			$l = "pm.start_servers = " . get_php_start_servers($children) . "";
+			}
+		if ($l =~ /pm\.max_spare_servers\s*=\s*(\d+)/) {
+			$l = "pm.max_spare_servers = " . get_php_max_spare_servers($children) . "";
 			}
 		}
 	&flush_file_lines($file);
@@ -1886,6 +1923,16 @@ if ($ver) {
 			$_->{'shortversion'} eq $ver } @confs;
 	}
 return @confs ? $confs[0] : undef;
+}
+
+# get_php_fpm_config_file(&domain)
+# Returns the FPM pool config file for a domain
+sub get_php_fpm_config_file
+{
+my ($d) = @_;
+my $conf = &get_php_fpm_config($d);
+return undef if (!$conf);
+return $conf->{'dir'}."/".$d->{'id'}.".conf";
 }
 
 # list_php_fpm_configs()
@@ -2251,7 +2298,11 @@ else {
 	# Create a new file
 	my $tmpl = &get_template($d->{'template'});
 	my $defchildren = $tmpl->{'web_phpchildren'};
-	$defchildren = 9999 if ($defchildren eq "none" || !$defchildren);
+	if ($defchildren eq "none" || !$defchildren) {
+		$defchildren = get_php_max_childred_allowed();
+		}
+	my $defmaxspare = get_php_max_spare_servers($defchildren);
+	my $defstartservers = get_php_start_servers($defchildren);
 	local $tmp = &create_server_tmp($d);
 	my $lref = &read_file_lines($file);
 	@$lref = ( "[$d->{'id'}]",
@@ -2263,12 +2314,14 @@ else {
 		   "listen = ".$port,
 		   "pm = dynamic", 
 		   "pm.max_children = $defchildren",
-		   "pm.start_servers = 1",
+		   "pm.start_servers = $defstartservers",
 		   "pm.min_spare_servers = 1",
-		   "pm.max_spare_servers = 5",
+		   "pm.max_spare_servers = $defmaxspare",
 	   	   "php_value[upload_tmp_dir] = $tmp",
 		   "php_value[session.save_path] = $tmp" );
 	&flush_file_lines($file);
+
+	&update_edit_limits($d, 'phpmode', $d->{'edit_phpmode'});
 
 	# Add / override custom options (with substitution)
 	if ($tmpl->{'php_fpm'} ne 'none') {
@@ -2313,7 +2366,7 @@ sub restart_php_fpm_server
 {
 my ($conf) = @_;
 $conf ||= &get_php_fpm_config();
-&$first_print($text{'php_fpmrestart'});
+&$first_print(&text('php_fpmrestart', $conf->{'shortversion'}));
 if ($conf->{'init'}) {
 	&foreign_require("init");
 	my ($ok, $err) = &init::restart_action($conf->{'init'});
@@ -2342,7 +2395,17 @@ return undef if (!$conf);
 return &get_php_fpm_pool_config_value($conf, $d->{'id'}, $name);
 }
 
-# get_php_fpm_pool_config_value(&conf, id, name)
+# list_php_fpm_config_values(&domain)
+# Returns an array ref of name/value pairs from the FPM config for a domain
+sub list_php_fpm_config_values
+{
+my ($d) = @_;
+my $conf = &get_php_fpm_config($d);
+return undef if (!$conf);
+return &list_php_fpm_pool_config_values($conf, $d->{'id'});
+}
+
+# get_php_fpm_pool_config_value(&conf, domain-id, name)
 # Returns the value of a config setting from any pool file
 sub get_php_fpm_pool_config_value
 {
@@ -2355,6 +2418,22 @@ foreach my $l (@$lref) {
 		}
 	}
 return undef;
+}
+
+# list_php_fpm_pool_config_values(&conf, domain-id)
+# Returns an array ref of name/value pairs from the FPM config
+sub list_php_fpm_pool_config_values
+{
+my ($conf, $id) = @_;
+my $file = $conf->{'dir'}."/".$id.".conf";
+my $lref = &read_file_lines($file, 1);
+my @rv;
+foreach my $l (@$lref) {
+	if ($l =~ /^\s*(\S+)\s*=\s*(.*)/) {
+		push(@rv, [ $1, $2 ]);
+		}
+	}
+return \@rv;
 }
 
 # get_php_fpm_ini_value(&domain, name)
@@ -2372,6 +2451,22 @@ if (!defined($rv)) {
 		}
 	}
 return wantarray ? ($rv, $k) : $rv;
+}
+
+# list_php_fpm_ini_values(&domain)
+# Returns an array ref of name/value/admin triplets for FPM PHP ini settings
+sub list_php_fpm_ini_values
+{
+my ($d) = @_;
+my $all = &list_php_fpm_config_values($d);
+return undef if (!$all);
+my @rv;
+foreach my $c (@$all) {
+	if ($c->[0] =~ /^(php_value|php_admin_value)\[(\S+)\]$/) {
+		push(@rv, [ $2, $c->[1], $1 eq "php_admin_value" ? 1 : 0 ]);
+		}
+	}
+return \@rv;
 }
 
 # save_php_fpm_config_value(&domain, name, value)
@@ -2499,6 +2594,150 @@ if (!$dryrun) {
 	&unlink_file_as_domain_user($d, @rv);
 	}
 return @rv;
+}
+
+# get_php_max_childred_allowed()
+# Get PHP-FPM recommended allowed number for sub-processes,
+# which is calculated as total available RAM devided by
+# 64 MiB (aprox. cunsumed by each PHP-FPM process) and 
+# devided by 4 (as we assume that a maximum recommended 
+# default which PHP can use is 20% of all available RAM
+# on the system). However, manually it will be possible
+# to rase the number to use all available RAM as defined
+# using `$max_php_fcgid_children` variable. Also on systems
+# with a lot of RAM limit maximum recommended to sensible 16.
+sub get_php_max_childred_allowed
+{
+return $main::get_real_memory_size_cache
+	if (defined($main::get_real_memory_size_cache));
+my $max;
+my $mem = &get_real_memory_size();
+if ($mem) {
+	my $sysram_mb = $mem / 1024 / 1024;
+	$max = int(($sysram_mb / 64) / 5);
+	if ($max > 16) {
+		$max = 16;
+		}
+	}
+else {
+ 	$max = $max_php_fcgid_children;
+	}
+
+# Low memory systems should not
+# return values lower than 1
+$max ||= 1;
+$main::get_real_memory_size_cache = $max;
+return int($max);
+}
+
+sub get_php_max_spare_servers
+{
+my ($defchildren) = @_;
+my $defmaxspare = $defchildren <= 5 ? $defchildren :
+        $defchildren >= 10 ? int($defchildren / 2) : 5;
+return int($defmaxspare);
+}
+
+sub get_php_start_servers
+{
+my ($defchildren) = @_;
+my $min_spare_servers = 1;
+my $max_spare_servers = get_php_max_spare_servers($defchildren);
+my $start_servers = $min_spare_servers + ($max_spare_servers - $min_spare_servers) / 4;
+return int($start_servers) || 1;
+}
+
+# get_domain_php_error_log(&domain)
+# Returns the PHP error log for a domain, from it's php.ini file. Return a path
+# if set, an empty string if unset, or undef if it's not possible to set.
+sub get_domain_php_error_log
+{
+my ($d) = @_;
+my $mode = &get_domain_php_mode($d);
+my $phplog;
+if ($mode eq "fpm") {
+	$phplog = &get_php_fpm_ini_value($d, "error_log") || "";
+	}
+elsif ($mode ne "none" && $mode ne "mod_php") {
+	$phplog = "";
+	&foreign_require("phpini");
+	foreach my $i (&list_domain_php_inis($d)) {
+		my $pconf = &phpini::get_config($i->[1]);
+		$phplog = &phpini::find_value("error_log", $pconf);
+		last if ($phplog);
+		}
+	}
+else {
+	return undef;
+	}
+if ($phplog && $phplog !~ /^\//) {
+	$phplog = $d->{'home'}.'/'.$phplog;
+	}
+return $phplog;
+}
+
+# save_domain_php_error_log(&domain, [logfile])
+# Set or remove the PHP error log file for a domain in its php.ini file
+sub save_domain_php_error_log
+{
+my ($d, $phplog) = @_;
+$phplog = undef if (!$phplog);
+my $mode = &get_domain_php_mode($d);
+my $p = &domain_has_website($d);
+if ($mode eq "fpm") {
+	&save_php_fpm_ini_value($d, "error_log", $phplog, 0);
+	my $loge = &get_php_fpm_ini_value($d, "log_errors");
+	if (lc($loge) ne "on") {
+		&save_php_fpm_ini_value($d, "log_errors", "On", 0);
+		}
+	}
+elsif ($mode ne "none" && $mode ne "mod_php") {
+	&foreign_require("phpini");
+	foreach my $i (&list_domain_php_inis($d)) {
+		&lock_file($i->[1]);
+		my $pconf = &phpini::get_config($i->[1]);
+		&phpini::save_directive($pconf, "error_log", $phplog);
+		my $loge = &phpini::find_value("log_errors", $pconf);
+		if (lc($loge) ne "on") {
+			&phpini::save_directive($pconf, "log_errors", "On");
+			}
+		&flush_file_lines($i->[1], undef, 1);
+		&unlock_file($i->[1]);
+		}
+	if ($mode eq 'fcgid') {
+		if ($p eq "web") {
+			&register_post_action(\&restart_apache);
+			}
+		elsif ($p) {
+			&plugin_call($p, "feature_restart_web_php", $d);
+			}
+		}
+	}
+else {
+	return "PHP error log cannot be set in $mode mode";
+	}
+return undef;
+}
+
+# can_php_error_log(&domain|mode)
+# Returns 1 if the PHP error log can be set for a domain or PHP mode
+sub can_php_error_log
+{
+my ($mode) = @_;
+$mode = &get_domain_php_mode($mode) if (ref($mode));
+return $mode ne "none" && $mode ne "mod_php";
+}
+
+# get_default_php_error_log(&domain)
+# Returns the default PHP log path for a domain, based on the template
+sub get_default_php_error_log
+{
+my ($d) = @_;
+my $tmpl = &get_template($d->{'template'});
+my $path = $tmpl->{'php_log_path'} || "logs/php_log";
+$path = &substitute_domain_template($path, $d);
+$path = $d->{'home'}.'/'.$path if ($path !~ /^\//);
+return $path;
 }
 
 1;
