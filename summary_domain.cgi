@@ -38,7 +38,7 @@ else {
 
 # Default domain
 if ($d->{'defaultdomain'}) {
-	print &ui_table_row($text{'wizard_defdom_desc'},
+	print &ui_table_row($text{'check_defhost_desc'},
 			    $text{'yes'}, undef, \@tds);
 	}
 
@@ -174,10 +174,10 @@ if (!$aliasdom && $d->{'dir'}) {
 
 # Description
 if ($d->{'owner'} && 
-	$d->{'owner'} ne $text{'wizard_defdom_desc'}) {
-	my $owner = $d->{'owner'};
+	$d->{'owner'} ne $text{'check_defhost_desc'}) {
+	my $owner = &html_escape($d->{'owner'});
 	if (&can_config_domain($d)) {
-		$owner = "<a href='edit_domain.cgi?dom=$d->{'id'}'>$owner</a>"
+		$owner = &ui_link("edit_domain.cgi?dom=$d->{'id'}", $owner);
 		}
 	print &ui_table_row($text{'edit_owner'}, $owner, 3, \@tds);
 	}
@@ -195,12 +195,12 @@ if (&master_admin()) {
 	my $now = time();
 
 	# Show SSL cert expiry date and add color based on time
-	if ($d->{'ssl_cert_expiry'}) {
-		my $exp = &make_date($d->{'ssl_cert_expiry'});
-		if ($now > $d->{'ssl_cert_expiry'}) {
+	if ($exptime = &get_ssl_cert_expiry($d)) {
+		my $exp = &make_date($exptime);
+		if ($now > $exptime) {
 			$exp = &ui_text_color($exp, 'danger');
 			}
-		elsif ($now > $d->{'ssl_cert_expiry'} - 7*24*60*60) {
+		elsif ($now > $exptime - 7*24*60*60) {
 			$exp = &ui_text_color($exp, 'warn');
 			}
 		if (&can_edit_domain($d) && &can_edit_ssl()) {

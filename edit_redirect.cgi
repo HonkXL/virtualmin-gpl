@@ -27,35 +27,50 @@ print &ui_table_start($text{'redirect_header'}, undef, 2);
 
 # URL path
 print &ui_table_row(&hlink($text{'redirect_path'}, 'redirect_path'),
-	&ui_textbox("path", $r->{'path'}, 40));
+	&ui_textbox("path", $r->{'path'}, 40, undef, undef,
+		"placeholder=\"$text{'index_global_eg'} / or /old-path\""), );
 
 # Destination
 my ($mode, $dir, $url, $upath);
 if ($r->{'alias'}) {
+	# A directory on this server
 	$mode = 1;
 	$dir = $r->{'dest'};
 	}
 elsif ($r->{'dest'} &&
        $r->{'dest'} =~ /^(http|https):\/\/%\{HTTP_HOST\}(\/.*)$/) {
+	# A URL on this website, but with a different protocol
 	$mode = 2;
 	$dproto = $1;
 	$dpath = $2;
 	}
-else {
+elsif ($r->{'dest'} && $r->{'desc'} =~ /^(http|https):\/\//) {
+	# A URL on a different website
 	$mode = 0;
 	$url = $r->{'dest'};
+	}
+else {
+	# A URL on this website with the same protocol
+	$mode = 3;
+	$urlpath = $r->{'dest'};
 	}
 print &ui_table_row(&hlink($text{'redirect_dest'}, 'redirect_dest'),
 	&ui_radio_table("mode", $mode,
 		[ [ 0, $text{'redirect_url'},
-		    &ui_textbox("url", $url, 40) ],
+		    &ui_textbox("url", $url, 34, undef, undef,
+				"placeholder=\"$text{'index_global_eg'} https://google.com\"") ],
+		  [ 3, $text{'redirect_urlpath'},
+		    &ui_textbox("urlpath", $urlpath, 34, undef, undef,
+				"placeholder=\"$text{'index_global_eg'} /new-path\"") ],
 		  [ 2, $text{'redirect_dpath'},
 		    &ui_select("dproto", $dproto,
 			       [ [ 'http', 'HTTP' ],
 			         [ 'https', 'HTTPS' ] ])." ".
-		    &ui_textbox("dpath", $dpath, 40) ],
+		    &ui_textbox("dpath", $dpath, 36, undef, undef,
+				"placeholder=\"$text{'index_global_eg'} /new-path\"") ],
 		  [ 1, $text{'redirect_dir'},
-		    &ui_textbox("dir", $dir, 40) ],
+		    &ui_textbox("dir", $dir, 52, undef, undef,
+				"placeholder=\"$text{'index_global_eg'} $d->{'home'}/$d->{'public_html_dir'}/new-path\"") ],
 		]));
 
 # HTTP status code
@@ -66,9 +81,12 @@ print &ui_table_row(&hlink($text{'redirect_code'}, 'redirect_code'),
 		     [ 302, $text{'redirect_302'} ],
 		     [ 303, $text{'redirect_303'} ] ], 1, 0, 1));
 
-# Include sub-paths
-print &ui_table_row(&hlink($text{'redirect_regexp'}, 'redirect_regexp'),
-	&ui_yesno_radio("regexp", $r->{'regexp'}));
+# Sub-paths mode
+print &ui_table_row(&hlink($text{'redirect_regexp2'}, 'redirect_regexp2'),
+	&ui_radio("regexp", $r->{'regexp'} ? 1 : $r->{'exact'} ? 2 : 0,
+		  [ [ 0, $text{'redirect_regexp2no'}."<br>" ],
+		    [ 1, $text{'redirect_regexp2yes'}."<br>" ],
+		    [ 2, $text{'redirect_regexp2exact'}."<br>" ] ]));
 
 # Protocols to include
 if (&domain_has_ssl($d)) {

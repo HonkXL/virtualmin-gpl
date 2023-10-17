@@ -19,13 +19,10 @@ local ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'},
 						   $d->{'web_port'});
 if ($virt) {
 	# First check for FPM socket, using a single ProxyPassMatch
-	local $fsock = &get_php_fpm_socket_file($d, 1);
-	local $fport = $d->{'php_fpm_port'};
 	local @ppm = &apache::find_directive("ProxyPassMatch", $vconf);
 	foreach my $ppm (@ppm) {
-		if ($ppm =~ /unix:\Q$fsock\E/ ||
-		    $ppm =~ /fcgi:\/\/localhost:\Q$fport\E/ ||
-		    $ppm =~ /fcgi:\/\/127\.0\.0\.1:\Q$fport\E/) {
+		if ($ppm =~ /unix:([^\|]+)/ ||
+		    $ppm =~ /fcgi:\/\/(localhost|127\.0\.0\.1):\d+/) {
 			return 'fpm';
 			}
 		}
@@ -34,8 +31,7 @@ if ($virt) {
 	foreach my $f (&apache::find_directive_struct("FilesMatch", $vconf)) {
 		next if ($f->{'words'}->[0] ne '\.php$');
 		foreach my $h (&apache::find_directive("SetHandler", $f->{'members'})) {
-			if ($h =~ /proxy:fcgi:\/\/localhost/ ||
-			    $h =~ /proxy:fcgi:\/\/127\.0\.0\.1/ ||
+			if ($h =~ /proxy:fcgi:\/\/(localhost|127\.0\.0\.1)/ ||
 			    $h =~ /proxy:unix:/) {
 				return 'fpm';
 				}
@@ -111,9 +107,9 @@ if ($mode eq "fpm") {
 	if (!$d->{'php_fpm_version'}) {
 		# Work out the default FPM version from the template
 		if (@vers) {
+			# Use max version if set to use highest
 			my @ver_max = sort { $a->[0] < $b->[0] } @vers;
 			my ($fpm) = grep { $_->[0] eq $tmpl->{'web_phpver'} ||
-			                   # Use max version if set to use highest
 			                   $_->[0] eq $ver_max[0]->[0] } @vers;
 			$fpm ||= $vers[0];
 			$d->{'php_fpm_version'} = $fpm->[0];
@@ -424,12 +420,12 @@ foreach my $p (@ports) {
 		       -r $fsock ? 'socket' :
 		       $tmpl->{'php_sock'} ? 'socket' : 'port';
 	local @ppm = &apache::find_directive("ProxyPassMatch", $vconf);
-	local @oldppm = grep { /unix:\Q$fsock\E/ || /fcgi:\/\/(localhost|127\.0\.0\.1):\Q$fport\E/ } @ppm;
+	local @oldppm = grep { /unix:([^\|]+)/ || /fcgi:\/\/(localhost|127\.0\.0\.1):\d+/ } @ppm;
 	if ($fsock) {
-		@ppm = grep { !/unix:\Q$fsock\E/ } @ppm;
+		@ppm = grep { !/unix:([^\|]+)/ } @ppm;
 		}
 	if ($fport) {
-		@ppm = grep { !/fcgi:\/\/(localhost|127\.0\.0\.1):\Q$fport\E/ } @ppm;
+		@ppm = grep { !/fcgi:\/\/(localhost|127\.0\.0\.1):\d+/ } @ppm;
 		}
 	local $files;
 	foreach my $f (&apache::find_directive_struct("FilesMatch", $vconf)) {
@@ -489,6 +485,7 @@ foreach my $p (@ports) {
 			&apache::save_directive_struct(
 				$files, undef, $vconf, $conf);
 			}
+		@ppm = grep { !/unix:|fcgi:/ } @ppm;
 		delete($d->{'php_fpm_port'});
 		}
 	&apache::save_directive("ProxyPassMatch", \@ppm, $vconf, $conf);
@@ -601,6 +598,7 @@ if (defined($oldplog)) {
 
 # Link ~/etc/php.ini to the per-version ini file
 &create_php_ini_link($d, $mode);
+&create_php_bin_links($d, $mode);
 
 &register_post_action(\&restart_apache);
 $pfound || return "Apache virtual host was not found";
@@ -889,12 +887,21 @@ sub set_php_fpm_ulimits
 my ($d, $res) = @_;
 my $conf = &get_php_fpm_config($d);
 return 0 if (!$conf);
+my $php_max_children_def = &get_php_max_childred_allowed();
 if ($res->{'procs'}) {
-	&save_php_fpm_config_value($d, "process.max", $res->{'procs'});
+	my $php_max_children =
+		$res->{'procs'} > $max_php_fcgid_children ? 
+			$max_php_fcgid_children : $res->{'procs'};
+	&save_php_fpm_config_value($d, "pm.max_children", $php_max_children);
+	&save_php_fpm_config_value($d, "pm.start_servers", &get_php_start_servers($php_max_children));
+	&save_php_fpm_config_value($d, "pm.max_spare_servers", &get_php_max_spare_servers($php_max_children));
 	}
 else {
-	&save_php_fpm_config_value($d, "process.max", undef);
+	&save_php_fpm_config_value($d, "pm.max_children", $php_max_children_def);
+	&save_php_fpm_config_value($d, "pm.start_servers", &get_php_start_servers($php_max_children_def));
+	&save_php_fpm_config_value($d, "pm.max_spare_servers", &get_php_max_spare_servers($php_max_children_def));
 	}
+&register_post_action(\&restart_php_fpm_server, $conf);
 }
 
 # supported_php_modes([&domain])
@@ -1249,6 +1256,7 @@ elsif (!$p) {
 &require_apache();
 local $mode = &get_domain_php_mode($d);
 return "PHP versions cannot be set in mod_php mode" if ($mode eq "mod_php");
+local $oldlog = &get_domain_php_error_log($d);
 
 if ($mode eq "fpm") {
 	# Remove the old version pool and create a new one if needed.
@@ -1256,10 +1264,21 @@ if ($mode eq "fpm") {
 	my $phd = &public_html_dir($d);
 	$dir eq $phd || return "FPM version can only be changed for the top-level directory";
 	if ($ver ne $d->{'php_fpm_version'}) {
+		my $oldlisten = &get_php_fpm_config_value($d, "listen");
+		my @phpvs;
+		my $confs = &list_php_fpm_config_values($d);
+		foreach my $pv (@$confs) {
+			push(@phpvs, $pv)
+				if ($pv->[0] =~ /^(php_value|php_admin_value|env)\[/ ||
+				    $pv->[0] =~ /^pm\./);
+			}
 		&delete_php_fpm_pool($d);
 		$d->{'php_fpm_version'} = $ver;
 		&save_domain($d);
-		&create_php_fpm_pool($d);
+		&create_php_fpm_pool($d, $oldlisten);
+		foreach my $pv (@phpvs) {
+			&save_php_fpm_config_value($d, $pv->[0], $pv->[1]);
+			}
 		}
 	}
 else {
@@ -1370,6 +1389,7 @@ else {
 
 # Re-create php.ini link
 &create_php_ini_link($d, $mode);
+&create_php_bin_links($d, $mode);
 
 # Copy in php.ini file for version if missing
 if (!$noini) {
@@ -1379,6 +1399,9 @@ if (!$noini) {
 		&save_domain_php_mode($d, $mode);
 		}
 	}
+
+# Re-save PHP version
+&save_domain_php_error_log($d, $oldlog);
 
 &register_post_action(\&restart_apache);
 return undef;
@@ -1909,8 +1932,24 @@ if ($ver) {
 	}
 }
 
+# create_php_bin_links(&domain, [php-mode])
+# Create a link from ~/bin/php to the PHP CLI for the primary version
+sub create_php_bin_links
+{
+my ($d, $mode) = @_;
+return if ($mode eq "none");
+my $bindir = $d->{'home'}.'/bin';
+&unlink_file_as_domain_user($d, $bindir.'/php');
+my ($ver, $cli);
+if (($ver = &get_domain_php_version($d, $mode)) &&
+    ($cli = &php_command_for_version($ver, 2))) {
+	&make_dir_as_domain_user($d, $bindir, 0755);
+	&symlink_file_as_domain_user($d, $cli, $bindir.'/php');
+	}
+}
+
 # get_php_fpm_config([version|&domain])
-# Returns the first valid FPM config
+# Returns the first valid FPM config for a domain
 sub get_php_fpm_config
 {
 my ($ver) = @_;
@@ -2008,6 +2047,7 @@ foreach my $pname (@pkgnames) {
 	my @verdirs;
 	DIR: foreach my $cdir ("/etc/php-fpm.d",
 			       "/etc/php*/fpm/pool.d",
+			       "/etc/php*/fpm/php-fpm.d",
 			       "/etc/php/*/fpm/pool.d",
 			       "/etc/opt/remi/php*/php-fpm.d",
 			       "/etc/opt/rh/rh-php*/php-fpm.d",
@@ -2075,7 +2115,7 @@ foreach my $pname (@pkgnames) {
 	# Apache modules
 	if ($config{'web'}) {
 		&require_apache();
-		foreach my $m ("mod_proxy", "mod_fcgid") {
+		foreach my $m ("mod_proxy") {
 			if (!$apache::httpd_modules{$m}) {
 				$rv->{'err'} = &text('php_fpmnomod', $m);
 				}
@@ -2093,7 +2133,23 @@ return @rv;
 sub get_php_fpm_socket_file
 {
 my ($d, $nomkdir) = @_;
+# Universal FPM socket dir
 my $base = "/var/php-fpm";
+# Accommodate old styles in read only mode
+my $basefile = $base."/".$d->{'id'}.".sock";
+return $basefile if (-r $basefile);
+# Distro dependent FPM socket dirs (if exists)
+my $rhelbase = "/run/php-fpm";
+my $debbase = "/run/php";
+if ($config{'fpm_socket_dir'}) {
+	$base = $config{'fpm_socket_dir'};
+	}
+elsif (-d $rhelbase && $gconfig{'os_type'} eq 'redhat-linux') {
+	$base = $rhelbase;
+	}
+elsif (-d $debbase && $gconfig{'os_type'} eq 'debian-linux') {
+	$base = $debbase;
+	}
 if (!-d $base && !$nomkdir) {
 	&make_dir($base, 0755);
 	}
@@ -2248,6 +2304,32 @@ if ($socket =~ /^\//) {
 return undef;
 }
 
+# check_php_fpm_port_clash(&domain)
+# Checks if any other FPM pool is using the same port or socket,
+# and if so returns it and the port number or socket file name
+sub check_php_fpm_port_clash
+{
+my ($d) = @_;
+my (undef, $port) = &get_domain_php_fpm_port($d);
+my $dconf = &get_php_fpm_config($d);
+my @fpms = &list_php_fpm_configs();
+foreach my $conf (@fpms) {
+	my @pools = &list_php_fpm_pools($conf);
+	foreach my $p (@pools) {
+		next if ($p eq $d->{'id'} &&
+			 $conf->{'version'} eq $dconf->{'version'});
+		my $t = get_php_fpm_pool_config_value($conf, $p, "listen");
+		next if (!$t);
+		$t =~ s/^\S+:(\d+)$/$1/g;	# Remove listen:
+		if ($t eq $port) {
+			my $otherid = $port =~ /\/(\d+)\.sock/ ? $1 : undef;
+			return ($p, $conf, $port, $otherid);
+			}
+		}
+	}
+return ();
+}
+
 # list_php_fpm_pools(&conf)
 # Returns a list of all pool IDs for some FPM config
 sub list_php_fpm_pools
@@ -2264,16 +2346,16 @@ closedir(DIR);
 return @rv;
 }
 
-# create_php_fpm_pool(&domain)
+# create_php_fpm_pool(&domain, [force-listen])
 # Create a per-domain pool config file
 sub create_php_fpm_pool
 {
-my ($d) = @_;
+my ($d, $forcelisten) = @_;
 my $tmpl = &get_template($d->{'template'});
 my $conf = &get_php_fpm_config($d);
 return $text{'php_fpmeconfig'} if (!$conf);
 my $file = $conf->{'dir'}."/".$d->{'id'}.".conf";
-my $oldlisten = &get_php_fpm_config_value($d, "listen");
+my $oldlisten = $forcelisten || &get_php_fpm_config_value($d, "listen");
 my $mode;
 if ($oldlisten) {
 	$mode = $oldlisten =~ /^\// ? 1 : 0;
@@ -2281,7 +2363,13 @@ if ($oldlisten) {
 else {
 	$mode = $tmpl->{'php_sock'};
 	}
-my $port = $mode ? &get_php_fpm_socket_file($d) : &get_php_fpm_socket_port($d);
+my $port;
+if ($mode) {
+	$port = $oldlisten || &get_php_fpm_socket_file($d);
+	}
+else {
+	$port = &get_php_fpm_socket_port($d);
+	}
 $port = "127.0.0.1:".$port if ($port =~ /^\d+$/);
 &lock_file($file);
 if (-r $file) {
@@ -2321,8 +2409,6 @@ else {
 		   "php_value[session.save_path] = $tmp" );
 	&flush_file_lines($file);
 
-	&update_edit_limits($d, 'phpmode', $d->{'edit_phpmode'});
-
 	# Add / override custom options (with substitution)
 	if ($tmpl->{'php_fpm'} ne 'none') {
 		foreach my $l (split(/\t+/,
@@ -2334,9 +2420,17 @@ else {
 		}
 	}
 my $parent = $d->{'parent'} ? &get_domain_by($d->{'parent'}) : $d;
-my $dir = &get_domain_jailkit($parent);
-&save_php_fpm_config_value($d, "chroot", $dir);
+if ($parent->{'jail'}) {
+	my $dir = &get_domain_jailkit($parent);
+	&save_php_fpm_config_value($d, "chroot", $dir);
+	}
 &unlock_file($file);
+if ($port =~ /^\// && !-e $port) {
+	# Pre-create the socket file
+	open(TOUCH, ">$port");
+	close(TOUCH);
+	&set_ownership_permissions($d->{'user'}, $d->{'ugroup'}, 0660, $port);
+	}
 &register_post_action(\&restart_php_fpm_server, $conf);
 return undef;
 }
@@ -2346,18 +2440,24 @@ return undef;
 sub delete_php_fpm_pool
 {
 my ($d) = @_;
-my $conf = &get_php_fpm_config($d);
-return $text{'php_fpmeconfig'} if (!$conf);
-my $file = $conf->{'dir'}."/".$d->{'id'}.".conf";
-if (-r $file) {
-	&unlink_logged($file);
-	my $sock = &get_php_fpm_socket_file($d, 1);
-	if (-r $sock) {
-		&unlink_logged($sock);
+my @fpms = &list_php_fpm_configs();
+my $found = 0;
+foreach my $conf (@fpms) {
+	my @pools = &list_php_fpm_pools($conf);
+	foreach my $p (@pools) {
+		if ($p eq $d->{'id'}) {
+			my $file = $conf->{'dir'}."/".$d->{'id'}.".conf";
+			if (-r $file) {
+				&unlink_logged($file);
+				&unflush_file_lines($file);
+				my $sock = &get_php_fpm_socket_file($d, 1);
+				&unlink_logged($sock) if (-r $sock);
+				&register_post_action(
+					\&restart_php_fpm_server, $conf);
+				}
+			}
 		}
-	&register_post_action(\&restart_php_fpm_server, $conf);
 	}
-return undef;
 }
 
 # restart_php_fpm_server([&config])
@@ -2485,6 +2585,7 @@ sub save_php_fpm_pool_config_value
 {
 my ($conf, $id, $name, $value) = @_;
 my $file = $conf->{'dir'}."/".$id.".conf";
+return if (!-r $file);
 &lock_file($file);
 my $lref = &read_file_lines($file);
 my $found = -1;
@@ -2682,6 +2783,7 @@ sub save_domain_php_error_log
 {
 my ($d, $phplog) = @_;
 $phplog = undef if (!$phplog);
+my $oldd = { %$d };
 my $mode = &get_domain_php_mode($d);
 my $p = &domain_has_website($d);
 if ($mode eq "fpm") {
@@ -2716,6 +2818,16 @@ elsif ($mode ne "none" && $mode ne "mod_php") {
 else {
 	return "PHP error log cannot be set in $mode mode";
 	}
+$d->{'php_error_log'} = $phplog || "";
+if ($phplog && !-r $phplog) {
+	# Make sure the log file exists
+	&open_tempfile_as_domain_user($d, PHPLOG, ">$phplog", 1, 1);
+	&close_tempfile_as_domain_user($d, PHPLOG);
+	}
+&push_all_print();
+&set_all_null_print();
+&modify_logrotate($d, $oldd);
+&pop_all_print();
 return undef;
 }
 

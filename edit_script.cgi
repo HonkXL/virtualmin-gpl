@@ -42,10 +42,9 @@ if ($sinfo->{'deleted'}) {
 	}
 
 # Show install URL
-if ($sinfo->{'url'}) {
-	print &ui_table_row($text{'scripts_iurl'},
-			    "<a href='$sinfo->{'url'}' target=_blank>".
-			    "$sinfo->{'url'}</a>");
+my $slink = &get_script_link($d, $sinfo, 1);
+if ($slink) {
+	print &ui_table_row($text{'scripts_iurl'}, $slink);
 	}
 print &ui_table_row($text{'scripts_itime'}, &make_date($sinfo->{'time'}));
 
@@ -53,6 +52,22 @@ print &ui_table_row($text{'scripts_itime'}, &make_date($sinfo->{'time'}));
 if ($opts->{'dir'}) {
 	print &ui_table_row($text{'scripts_idir'},
 			    "<tt>$opts->{'dir'}</tt>");
+
+	# Show actual PHP version for the script's directory
+	@dirs = &list_domain_php_directories($d);
+	foreach my $dir (sort { length($a->{'dir'}) cmp length($b->{'dir'}) } @dirs) {
+		if (&is_under_directory($dir->{'dir'}, $opts->{'dir'}) ||
+		    $dir->{'dir'} eq $opts->{'dir'}) {
+			$bestdir = $dir;
+			}
+		}
+	if ($bestdir) {
+		$mode = &get_domain_php_mode($d);
+		$fullver = &get_php_version($bestdir->{'version'}, $d) ||
+			   $bestdir->{'version'};
+		print &ui_table_row($text{'scripts_iphpver'},
+			$fullver." (".$text{'phpmode_short_'.$mode}.")");
+		}
 	}
 
 # Show DB, if we have it

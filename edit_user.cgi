@@ -57,20 +57,20 @@ $ulabel = $d->{'mail'} ? &hlink($text{'user_user'}, "username")
 		       : &hlink($text{'user_user2'}, "username2");
 if ($mailbox) {
 	# Domain owner
-	print &ui_table_row($ulabel, "<tt>$user->{'user'}</tt>", 2, \@tds);
+	my $ouser_email = $user->{'user'};
+	if ($d->{'mail'} && $ouser_email !~ /\@/) {
+		$ouser_email = $user->{'user'} . "\@" . $d->{'dom'};
+		}
+	print &ui_table_row(&hlink($text{'user_user2'}, "username2"),
+	                    "<tt>$user->{'user'}</tt>", 2, \@tds);
+	print &ui_table_row($ulabel, "<tt>$ouser_email</tt>", 2, \@tds)
+		if ($d->{'mail'});
 	$pop3 = $user->{'user'};
 	}
 else {
 	# Regular user
 	$pop3 = $d && !$user->{'noappend'} ?
 		&remove_userdom($user->{'user'}, $d) : $user->{'user'};
-	print &ui_table_row($ulabel,
-		&ui_textbox("mailuser", $pop3, 13, 0, undef,
-		  &vui_ui_input_noauto_attrs()).
-		($d ? "\@".&show_domain_name($d) : ""),
-		2, \@tds);
-	print &ui_hidden("oldpop3", $pop3),"\n";
-
 	# Full username differs
 	if ($pop3 ne $user->{'user'}) {
 		print &ui_table_row(
@@ -78,6 +78,13 @@ else {
 				     : &hlink($text{"user_imapf$mysql_suff"},'user_imapf'),
 			"<tt>$user->{'user'}</tt>");
 		}
+	# Edit mail username
+	print &ui_table_row($ulabel,
+		&ui_textbox("mailuser", $pop3, 13, 0, undef,
+		  &vui_ui_input_noauto_attrs()).
+		($d ? "\@".&show_domain_name($d) : ""),
+		2, \@tds);
+	print &ui_hidden("oldpop3", $pop3),"\n";
 
 	# Always display MySQL username
 	if ($user->{'mysql_user'}) {
@@ -88,7 +95,7 @@ else {
 	}
 
 # Real name - only for true Unix users or LDAP persons
-if ($user->{'person'}) {
+if ($user->{'person'} && $user->{'real'}) {
 	print &ui_table_row(&hlink($text{'user_real'}, "realname"),
 		$mailbox ? $user->{'real'} :
 			   &ui_textbox("real", $user->{'real'}, 40, 0, undef,
@@ -165,13 +172,15 @@ if ($showquota) {
 			&hlink($qsame ? $text{'user_umquota'}
 				      : $text{'user_uquota'}, "diskquota"),
 			&quota_field("quota", $user->{'quota'},
-			     $user->{'uquota'}, "home", $user),
+			     $user->{'uquota'}, $user->{'ufquota'},
+			     "home", $user),
 			2, \@tds);
 		}
 	if (&has_mail_quotas()) {
 		print &ui_table_row(&hlink($text{'user_mquota'}, "diskmquota"),
 				    &quota_field("mquota", $user->{'mquota'},
-					 $user->{'umquota'}, "mail", $user),
+					 $user->{'umquota'},$user->{'umfquota'},
+					 "mail", $user),
 				    2, \@tds);
 		}
 	}
@@ -225,7 +234,8 @@ $hassend = &will_send_user_email($d, $in{'new'});
 $hasspam = $config{'spam'} && $hasprimary;
 $hasemail = $hasprimary || $hasmailfile || $hasextra || $hassend || $hasspam;
 if ($hasemail) {
-	print &ui_hidden_table_start($text{'user_header2a'}, "width=100%", 2,
+	my $style_display_none = $d->{'mail'} ? "" : " style='display:none' ";
+	print &ui_hidden_table_start($text{'user_header2a'}, "${style_display_none}width=100%", 2,
 				     "table2a", 0);
 	}
 
@@ -234,7 +244,7 @@ if ($hasprimary) {
 	print &ui_table_row(&hlink($text{'user_mailbox'}, "mailbox"),
 		    &ui_yesno_radio("mailbox",
 				    $user->{'email'} || $in{'new'} ? 1 : 0),
-		    2, \@tds);
+		    2, \@tds, $d->{'mail'} ? undef : ['style="display: none"']);
 	}
 
 if ($hasmailfile && $config{'show_mailuser'}) {
@@ -259,7 +269,7 @@ if ($hasmailfile && $config{'show_mailuser'}) {
 		}
 	print &ui_table_row(&hlink($text{'user_mail'}, "mailfile"),
 			    $mffield,
-			    2, \@tds);
+			    2, \@tds, $d->{'mail'} ? undef : ['style="display: none"']);
 	}
 
 if ($hasextra) {
@@ -274,7 +284,7 @@ if ($hasextra) {
 		}
 	print &ui_table_row(&hlink($text{'user_extra'}, "extraemail"),
 			    &ui_textarea("extra", join("\n", @extra), 5, 50),
-			    2, \@tds);
+			    2, \@tds, $d->{'mail'} ? undef : ['style="display: none"']);
 	}
 
 if ($in{'new'} && &will_send_user_email($d, 1)) {
@@ -284,7 +294,7 @@ if ($in{'new'} && &will_send_user_email($d, 1)) {
 				$user->{'email'} ? $text{'user_newmail1'}
 						 : $text{'user_newmail2'},
 				$text{'user_newmail0'}),
-		2, \@tds);
+		2, \@tds, $d->{'mail'} ? undef : ['style="display: none"']);
 	}
 elsif (!$in{'new'} && &will_send_user_email($d, 0)) {
 	# Show option to re-send info email
@@ -293,7 +303,7 @@ elsif (!$in{'new'} && &will_send_user_email($d, 0)) {
 			  [ [ 1, $text{'user_remail1'} ],
 			    [ 0, $text{'user_remail0'} ] ])." ".
 		    &ui_textbox("remail", $user->{'email'}, 40),
-		    2, \@tds);
+		    2, \@tds, $d->{'mail'} ? undef : ['style="display: none"']);
 	}
 
 # Show spam check flag
@@ -318,7 +328,7 @@ if ($hasspam) {
 			&ui_radio("nospam", int($user->{'nospam'}),
 				  [ [ 0, $text{'yes'} ], [ 1, $text{'no'} ] ]).
 			$awl_link,
-		2, \@tds);
+		2, \@tds, $d->{'mail'} ? undef : ['style="display: none"']);
 	}
 
 # Show most recent logins
@@ -331,7 +341,8 @@ if ($hasemail && !$in{'new'}) {
 		}
 	print &ui_table_row(&hlink($text{'user_lastlogin'}, "lastlogin"),
 		@grid ? &ui_grid_table(\@grid, 2, 50)
-		      : $text{'user_lastlogin_never'});
+		      : $text{'user_lastlogin_never'}, undef, undef,
+		          $d->{'mail'} ? undef : ['style="display: none"']);
 	}
 
 if ($hasemail) {
@@ -350,11 +361,15 @@ if (($user->{'email'} || $user->{'noprimary'}) && !$user->{'noalias'}) {
 		$simple = { 'tome' => 1 };
 		}
 	else {
-		$simple = &get_simple_alias($d, $user);
+		$simple = &get_simple_alias($d, $user, 1);
 		}
 	if ($simple && ($simple->{'local'} || $simple->{'bounce'})) {
-		# Local and bounce delivery are not allowed on the simple form
-		$simple = undef;
+		# Local and bounce delivery are not allowed on the simple form,
+		# unless we can merge some (@) local users with forward users, 
+		# which will be handled automatically on save to prevent showing
+		# advanced form for no reason
+		$simple = undef
+			if (!$simple->{'local-all'} || $simple->{'bounce'});
 		}
 
 	if ($simple) {
@@ -523,10 +538,10 @@ else {
 	&ui_print_footer("", $text{'index_return'});
 	}
 
-# quota_field(name, value, used, filesystem, &user)
+# quota_field(name, value, used, files-used, filesystem, &user)
 sub quota_field
 {
-my ($name, $value, $used, $fs, $u) = @_;
+my ($name, $value, $used, $fused, $fs, $u) = @_;
 my $rv;
 my $color = $u->{'over_quota'} ? "#ff0000" :
 	    $u->{'warn_quota'} ? "#ff8800" :
@@ -544,7 +559,9 @@ else {
 	$rv .= ($q ? &quota_show($q, $_[3]) : $text{'form_unlimit'})."\n";
 	}
 if (!$in{'new'}) {
-	my $umsg = $used ? &text('user_used', &quota_show($used, $fs))
+	my $umsg = $used && $fused ? &text('user_used2',
+					&quota_show($used, $fs), $fused) :
+		   $used ? &text('user_used', &quota_show($used, $fs))
 		         : &text('user_noneused');
 	if ($color) {
 		$umsg = "<font color=$color>$umsg</font>";

@@ -116,6 +116,8 @@ local $sitefunc = "script_${name}_site";
 local $authorfunc = "script_${name}_author";
 local $overlapfunc = "script_${name}_overlap";
 local $migratedfunc = "script_${name}_migrated";
+local $testpathfunc = "script_${name}_testpath";
+local $testargsfunc = "script_${name}_testargs";
 
 # Check for critical functions
 return undef if (!defined(&$dfunc) || !defined(&$vfunc));
@@ -177,6 +179,8 @@ local $rv = { 'name' => $name,
 	      'pear_mods_func' => "script_${name}_pear_modules",
 	      'perl_mods_func' => "script_${name}_perl_modules",
 	      'perl_opt_mods_func' => "script_${name}_opt_perl_modules",
+	      'python_fullver_func' => "script_${name}_python_fullver",
+	      'python_maxver_func' => "script_${name}_python_maxver",
 	      'python_mods_func' => "script_${name}_python_modules",
 	      'python_opt_mods_func' => "script_${name}_opt_python_modules",
 	      'gem_version_func' => "script_${name}_gem_version",
@@ -194,6 +198,9 @@ local $rv = { 'name' => $name,
 	      'minversion' => $unavail{$name."_minversion"},
 	      'abandoned_func' => "script_${name}_abandoned",
 	      'migrated_func' => "script_${name}_migrated",
+	      'testable_func' => "script_${name}_testable",
+	      'testpath_func' => "script_${name}_testpath",
+	      'testargs_func' => "script_${name}_testargs",
 	    };
 if (defined(&$catfunc)) {
 	my @cats = &$catfunc();
@@ -503,7 +510,12 @@ if ($newsuffix) {
 	if ($dleft != 0 && &can_edit_databases()) {
 		# Choose a name ether based on the allowed prefix, or the
 		# default DB name
-		$newdbtype = $d->{'mysql'} ? "mysql" : "postgres";
+		$newdbtype = $d->{'mysql'} ? "mysql" :
+		             $d->{'postgres'} ? "postgres" : undef;
+		if (!$newdbtype) {
+			return &text('scripts_nodbavail',
+				&vui_edit_link_icon("edit_domain.cgi?dom=$d->{'id'}"));
+			}
 		if ($tmpl->{'mysql_suffix'} ne "none") {
 			local $prefix = &substitute_domain_template(
 						$tmpl->{'mysql_suffix'}, $d);
@@ -613,11 +625,12 @@ eval {
 	elsif ($dbtype eq "postgres") {
 		# Delete from PostgreSQL
 		&require_postgres();
-		foreach my $t (&postgresql::list_tables($dbname)) {
+		foreach my $t (&list_postgres_tables($d, $dbname)) {
 			if (ref($tables) && &indexoflc($t, @$tables) >= 0 ||
 			    !ref($tables) && $t =~ /^$tables/i) {
 				eval {
-					&postgresql::execute_sql_logged($dbname,
+					&execute_dom_psql(
+						$d, $dbname,
 						"drop table ".
 						&postgresql::quote_table($t));
 					};
@@ -1057,15 +1070,43 @@ local $out = &backquote_command("$perl -e 'use $mod' 2>&1");
 return $? ? 0 : 1;
 }
 
-# check_python_module(mod, &domain)
+# check_python_module(mod, &domain, python-ver)
 # Checks if some Python module exists
 sub check_python_module
 {
-local ($mod, $d) = @_;
-my $python = &get_python_path();
+local ($mod, $d, $pyver) = @_;
+my $python = &get_python_path($pyver);
 local $out = &backquote_command("echo import ".quotemeta($mod).
 				" | $python 2>&1");
 return $? ? 0 : 1;
+}
+
+# setup_python_version(&domain, &script, version, path)
+# Checks if a script needs a specific Python version, and if so returns it.
+# Otherwise returns undef and an error message.
+sub setup_python_version
+{
+local ($d, $script, $scriptver, $path) = @_;
+my $minfunc = $script->{'python_fullver_func'};
+my $maxfunc = $script->{'python_maxver_func'};
+return (undef, undef) if (!defined(&$minfunc));
+my $ver = &$minfunc($scriptver);
+return (undef, undef) if (!$ver);
+my $maxver = defined(&$maxfunc) ? &$maxfunc($scriptver) : undef;
+my $basever = substr($ver, 0, 1);
+my $path = get_python_path($basever);
+return (undef, "Python version $ver is not available") if (!$path);
+my $gotver = &get_python_version($path);
+return (undef, "Could not find version of Python command $path") if (!$gotver);
+&compare_versions($gotver, $ver) >= 0 ||
+	return (undef, "Python version $ver is required, ".
+		       "but $path is version $gotver");
+if ($maxver) {
+	&compare_versions($gotver, $maxver) < 0 ||
+		return (undef, "Python version below $maxver is required, ".
+			       "but $path is version $gotver");
+	}
+return ($gotver, undef);
 }
 
 # check_php_version(&domain, [number])
@@ -1216,8 +1257,11 @@ foreach my $m (@mods) {
 		# can use it
 		$m = "mysqli";
 		}
-	next if (&check_php_module($m, $phpver, $d) == 1);
-	if(!$installing++) {
+	# Module name can never contain `pecl-`, unlike package name!
+	my $mphp = $m;
+	$mphp =~ s/^pecl-//;
+	next if (&check_php_module($mphp, $phpver, $d) == 1);
+	if (!$installing++) {
 		&$first_print($text{'scripts_install_phpmods_check'});
 		&$indent_print();
 		}
@@ -1237,46 +1281,6 @@ foreach my $m (@mods) {
 			$text{'scripts_noini'} : $text{'scripts_noini2'});
 		if ($opt) { next; }
 		else { return 0; }
-		}
-
-	# Configure the domain's php.ini to load it, if needed
-	local $pconf = &phpini::get_config($inifile);
-	local @allexts = grep { $_->{'name'} eq 'extension' } @$pconf;
-	local @exts = grep { $_->{'enabled'} } @allexts;
-	local ($got) = grep { $_->{'value'} eq "$m.so" } @exts;
-	local $backupinifile;
-	if (!$got) {
-		# Needs to be enabled
-		$backupinifile = &transname();
-		&copy_source_dest($inifile, $backupinifile);
-		local $lref = &read_file_lines($inifile);
-		if (@exts) {
-			# After current extensions
-			splice(@$lref, $exts[$#exts]->{'line'}+1, 0,
-			       "extension=$m.so");
-			}
-		elsif (@allexts) {
-			# After commented out extensions
-			splice(@$lref, $allexts[$#allexts]->{'line'}+1, 0,
-			       "extension=$m.so");
-			}
-		else {
-			# At end of file (should never happen, but..)
-			push(@$lref, "extension=$m.so");
-			}
-		if ($mode eq "mod_php" || $mode eq "fpm") {
-			&flush_file_lines($inifile);
-			}
-		else {
-			&write_as_domain_user($d,
-				sub { &flush_file_lines($inifile) });
-			}
-		undef($phpini::get_config_cache{$inifile});
-		undef(%main::php_modules);
-		if (&check_php_module($m, $phpver, $d) == 1) {
-			# We have it now!
-			goto GOTMODULE;
-			}
 		}
 
 	# Make sure the software module is installed and can do updates
@@ -1379,21 +1383,53 @@ foreach my $m (@mods) {
 	push(@$installed, @newpkgs) if ($installed);
 	if (!$iok) {
 		&$second_print(&text('scripts_phpmodfailed', scalar(@poss)));
-		&copy_source_dest($backupinifile, $inifile) if ($backupinifile);
 		if ($opt) { next; }
 		else { return 0; }
 		}
 
 	# Finally re-check to make sure it worked
-	GOTMODULE:
 	undef(%main::php_modules);
-	if (&check_php_module($m, $phpver, $d) != 1) {
+	if (&check_php_module($mphp, $phpver, $d) != 1) {
 		&$second_print($text{'scripts_einstallmod'});
-		&copy_source_dest($backupinifile, $inifile) if ($backupinifile);
 		if ($opt) { next; }
 		else { return 0; }
 		}
 	else {
+
+		# On success configure the domain's php.ini to load it, if needed
+		local $pconf = &phpini::get_config($inifile);
+		local @allexts = grep { $_->{'name'} eq 'extension' } @$pconf;
+		local @exts = grep { $_->{'enabled'} } @allexts;
+		local ($got) = grep { $_->{'value'} eq "${mphp}.so" ||
+		                      $_->{'value'} eq $mphp } @exts;
+		if (!$got && &check_php_module($mphp, $phpver, $d) != 1) {
+			# Needs to be enabled
+			local $lref = &read_file_lines($inifile);
+			if (@exts) {
+				# After current extensions
+				splice(@$lref, $exts[$#exts]->{'line'}+1, 0,
+				       "extension=${mphp}.so");
+				}
+			elsif (@allexts) {
+				# After commented out extensions
+				splice(@$lref, $allexts[$#allexts]->{'line'}+1, 0,
+				       "extension=${mphp}.so");
+				}
+			else {
+				# At end of file (should never happen, but..)
+				push(@$lref, "extension=${mphp}.so");
+				}
+			if ($mode eq "mod_php" || $mode eq "fpm") {
+				&flush_file_lines($inifile);
+				}
+			else {
+				&write_as_domain_user($d,
+					sub { &flush_file_lines($inifile) });
+				}
+			undef($phpini::get_config_cache{$inifile});
+			undef(%main::php_modules);
+			}
+
 		&$second_print(&text('setup_done', $m));
 		}
 
@@ -1627,9 +1663,10 @@ if (&foreign_installed("software")) {
 		$canpkgs = 1;
 		}
 	}
-my $python = &get_python_path();
+my $python = &get_python_path($opts->{'pyver'});
+my $pyver = &get_python_version($python);
 foreach my $m (@mods) {
-	next if (&check_python_module($m, $d) == 1);
+	next if (&check_python_module($m, $d, $pyver) == 1);
 	local $opt = &indexof($m, @optmods) >= 0 ? 1 : 0;
 	&$first_print(&text($opt ? 'scripts_optpythonmod'
 				 : 'scripts_needpythonmod', "<tt>$m</tt>"));
@@ -1652,19 +1689,14 @@ foreach my $m (@mods) {
 			push(@pkgs, "python-subversion");
 			}
 		elsif ($mp eq "psycopg2") {
-			push(@pkgs, ($python =~ /python3/i ? 
-				         "python3-psycopg2" :
-				         "python-psycopg2"));
+			push(@pkgs, $pyver >= 3 ? "python3-psycopg2" :
+				         	  "python-psycopg2");
 			}
-		elsif ($m eq "MySQLdb" &&
-			   $python =~ /python3/i) {
+		elsif ($m eq "MySQLdb" && $pyver >= 3) {
 			push(@pkgs, "python3-mysqldb");
 			}
 		else {
-			my $python_package = "python";
-			if ($python =~ /python3/i) {
-				$python_package = "python3";
-				}
+			my $python_package = $pyver >= 3 ? "python3" : "python";
 			push(@pkgs, "$python_package-$mp");
 			}
 		}
@@ -1672,29 +1704,43 @@ foreach my $m (@mods) {
 		# For YUM, naming is less standard .. the MySQLdb package
 		# is in MySQL-python
 		if ($m eq "MySQLdb") {
-			push(@pkgs, ($python =~ /python3/i ?
-				         "python3-mysqlclient" :
-				         "python3-mysql"));
+			# XXX
+			if ($pyver =~ /^3\.(\d)/) {
+				push(@pkgs, "python3-mysqlclient",
+					    "python3-mysql",
+					    "python3$1-mysql");
+				}
+			else {
+				push(@pkgs, "python-mysqlclient",
+					    "python-mysql");
+				}
 			}
 		elsif ($m eq "setuptools") {
 			push(@pkgs, "setuptools", "python-setuptools");
 			}
 		elsif ($mp eq "psycopg2") {
 			# Try to install old and new versions
-			push(@pkgs, ($python =~ /python3/i ? 
-				         "python3-psycopg2" :
-				         "python-psycopg2"));
+			if ($pyver =~ /^3\.(\d)/) {
+				push(@pkgs, "python3-psycopg2");
+				push(@pkgs, "python3$1-psycopg2");
+				push(@pkgs, "python3$1-pg8000");
+				}
+			else {
+				push(@pkgs, "python-psycopg2");
+				}
 			}
 		elsif ($m eq "svn") {
 			push(@pkgs, "subversion-python");
 			}
 		else {
 			$mp = lc($mp);
-			my $python_package = "python";
-			if ($python =~ /python3/i) {
-				$python_package = "python3";
+			if ($pyver =~ /^3\.(\d)/) {
+				push(@pkgs, "python3-$mp");
+				push(@pkgs, "python3$1-$mp");
 				}
-			push(@pkgs, "$python_package-$mp");
+			else {
+				push(@pkgs, "python-$mp");
+				}
 			}
 		}
 	elsif ($software::config{'package_system'} eq 'pkgadd') {
@@ -1851,7 +1897,7 @@ $stable .= &ui_columns_table(
 	undef,
 	undef,
 	);
-
+$stable = "<div data-table-name='template-script'>$stable</div>";
 print &ui_table_row(undef, $stable, 2);
 }
 
@@ -1979,12 +2025,12 @@ else {
 
 # post_http_connection(&domain, page, &cgi-params, &out, &err,
 #		       &moreheaders, &returnheaders, &returnheaders-array,
-#		       form-data-mode)
+#		       form-data-mode, [timeout])
 # Makes an HTTP post to some URL, sending the given CGI parameters as data.
 sub post_http_connection
 {
 local ($d, $page, $params, $out, $err, $headers,
-       $returnheaders, $returnheaders_array, $formdata) = @_;
+       $returnheaders, $returnheaders_array, $formdata, $timeout) = @_;
 local $ip = $d->{'ip'};
 local $host = &get_domain_http_hostname($d);
 my $usessl = &domain_has_ssl($d);
@@ -1992,6 +2038,9 @@ my $port = $usessl ? $d->{'web_sslport'} : $d->{'web_port'};
 
 local $oldproxy = $gconfig{'http_proxy'};	# Proxies mess up connection
 $gconfig{'http_proxy'} = '';			# to the IP explicitly
+$main::download_timed_out = undef;
+local $SIG{ALRM} = \&download_timeout;
+alarm($timeout || 300);
 local $h = &make_http_connection($ip, $port, $usessl, "POST", $page,
 			 undef, undef, { 'host' => $host, 'nocheckhost' => 1 });
 $gconfig{'http_proxy'} = $oldproxy;
@@ -2039,10 +2088,16 @@ else {
 	&write_http_connection($h, "$params\r\n");
 	}
 
+alarm(0);
+$h = $main::download_timed_out if ($main::download_timed_out);
+if (!ref($h)) {
+	if ($err) { $$err = $h; return; }
+	else { &error($h); }
+	}
+
 # Read back the results
 $post_http_headers = undef;
 $post_http_headers_array = undef;
-local $SIG{'ALRM'} = 'IGNORE';		# Let complete function run forever
 &complete_http_connection($d, $h, $out, $err, \&capture_http_headers, 0,
 			  $host, $port, $page, $headers);
 if ($returnheaders && $post_http_headers) {
@@ -2737,6 +2792,16 @@ if ($copydir) {
 		last if ($out !~ /permission\s+denied/i);
 		}
 
+	# If the destination has an index.html file and the source does not,
+	# but does have index.php, remove the HTML
+	my $hfile = $copydir."/index.html";
+	$hfile = $copydir."/index.htm" if (!-r $hfile);
+	my $pfile = $dir.($subdir ? "/$subdir" : "")."/index.php";
+	$pfile = glob($pfile);
+	if (-r $hfile && -r $pfile) {
+		&unlink_file_as_domain_user($d, $hfile);
+		}
+
 	local $out;
 	if (-f $path) {
 		# Copy one file
@@ -3392,17 +3457,32 @@ foreach my $file (split(/\r?\n/, $out)) {
 return @fixed;
 }
 
+# get_python_path([major-version])
+# Returns the full path to python
 sub get_python_path
 {
-return &has_command($config{'python_cmd'}) ||
-       &has_command("python3") || &has_command("python30") ||
-       &has_command("python3.9") || &has_command("python39") ||
-       &has_command("python3.8") || &has_command("python38") ||
-       &has_command("python3.7") || &has_command("python37") ||
-       &has_command("python3.6") || &has_command("python36") ||
-       &has_command("python2.7") || &has_command("python27") ||
-       &has_command("python2.6") || &has_command("python26") ||
-       "python";
+my ($ver) = @_;
+my $basever = substr($ver, 0, 1);
+my @opts = ( $config{'python_cmd'} );
+if (!$basever || $basever == 3) {
+	push(@opts, "python3", "python30",
+		    "python3.9", "python39",
+		    "python3.8", "python38",
+		    "python3.7", "python37",
+		    "python3.6", "python36");
+	}
+if (!$basever || $basever == 2) {
+	push(@opts, "python2.7", "python27",
+		    "python2.6", "python26");
+	}
+push(@opts, "python");
+foreach my $o (@opts) {
+	my $p = &has_command($o);
+	next if (!$p);
+	next if ($ver && &get_python_version($p) !~ /^\Q$ver\E(\.|$)/);
+	return $p;
+	}
+return undef;
 }
 
 # list_used_tcp_ports()
@@ -3525,6 +3605,22 @@ return $slname if ($text == 2);
 return $shref if ($text == 1);
 return &text($lang, $shref, $slname) if ($lang);
 return &ui_link($shref, $slname, undef, "target=_blank");
+}
+
+# get_script_link(&dom, &script-info, [full-url])
+# Returns script link, if partially installed
+# still returns a link in italic
+sub get_script_link
+{
+my ($d, $sinfo, $fullurl) = @_;
+my $path = $sinfo->{'opts'}->{'path_real'} ||
+           $sinfo->{'opts'}->{'path'} ||
+           $sinfo->{'path'};
+my $surl = $sinfo->{'url'} ? $sinfo->{'url'} :
+	((&domain_has_ssl($d) ? 'https://' : 'http://') ."$d->{'dom'}${path}/");
+my $slabel = $fullurl ? $surl : $path;
+my $slink = "<a href='$surl' target=_blank>$slabel</a>";
+return $sinfo->{'url'} ? $slink : "<i>$slink</i>";
 }
 
 1;

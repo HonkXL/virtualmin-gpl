@@ -323,7 +323,7 @@ foreach my $desturl (@$desturls) {
 	local ($mode, $user, $pass, $server, $path, $port) =
 		&parse_backup_url($desturl);
 	if ($mode < 0) {
-		&$first_print(&text('backup_edesturl', $desturl, $user));
+		&$first_print(&text('backup_edesturl', &nice_backup_url($desturl), $user));
 		return (0, 0, $doms);
 		}
 	local $starpass = "*" x length($pass);
@@ -331,13 +331,15 @@ foreach my $desturl (@$desturls) {
 		# Always create virtualmin-backup directory
 		$mkdir = 1;
 		}
+
+	&$first_print(&text('backup_desttest', &nice_backup_url($desturl)));
 	if ($mode == 1) {
 		# Try FTP login
 		local $ftperr;
 		&ftp_onecommand($server, "PWD", \$ftperr, $user, $pass, $port);
 		if ($ftperr) {
 			$ftperr =~ s/\Q$pass\E/$starpass/g;
-			&$first_print(&text('backup_eftptest', $ftperr));
+			&$second_print(&text('backup_eftptest', $ftperr));
 			next;
 			}
 		if ($dirfmt) {
@@ -397,7 +399,7 @@ foreach my $desturl (@$desturls) {
 			}
 		if ($scperr) {
 			$scperr =~ s/\Q$pass\E/$starpass/g;
-			&$first_print(&text('backup_escptest', $scperr));
+			&$second_print(&text('backup_escptest', $scperr));
 			next;
 			}
 
@@ -447,24 +449,24 @@ foreach my $desturl (@$desturls) {
 					     $s3_upload_tries,
 					     $config{'s3_location'});
 		if ($err) {
-			&$first_print($err);
+			&$second_print($err);
 			next;
 			}
 		}
 	elsif ($mode == 6) {
 		# Connect to Rackspace cloud files and create container
 		if (!$path && !$dirfmt) {
-			&$first_print($text{'backup_ersnopath'});
+			&$second_print($text{'backup_ersnopath'});
 			next;
 			}
 		$rsh = &rs_connect($config{'rs_endpoint'}, $user, $pass);
 		if (!ref($rsh)) {
-			&$first_print($rsh);
+			&$second_print($rsh);
 			next;
 			}
 		local $err = &rs_create_container($rsh, $server);
 		if ($err) {
-			&$first_print($err);
+			&$second_print($err);
 			next;
 			}
 
@@ -473,7 +475,7 @@ foreach my $desturl (@$desturls) {
 		# Connect to Google and create the bucket
 		local $buckets = &list_gcs_buckets();
 		if (!ref($buckets)) {
-			&$first_print($buckets);
+			&$second_print($buckets);
 			next;
 			}
 		my ($already) = grep { $_->{'name'} eq $server } @$buckets;
@@ -481,7 +483,7 @@ foreach my $desturl (@$desturls) {
 			local $err = &create_gcs_bucket(
 				$server, $config{'google_location'});
 			if ($err) {
-				&$first_print($err);
+				&$second_print($err);
 				next;
 				}
 			}
@@ -502,7 +504,7 @@ foreach my $desturl (@$desturls) {
 			if (!$already) {
 				my $err = &create_dropbox_dir("/".$server);
 				if ($err) {
-					&$first_print($err);
+					&$second_print($err);
 					next;
 					}
 				}
@@ -523,7 +525,7 @@ foreach my $desturl (@$desturls) {
 		if ($@) {
 			my $err = $@;
 			$err =~ s/\s+at\s+\S+\s+line\s+\d+.*//g;
-			&$first_print($err);
+			&$second_print($err);
 			next;
 			}
 		}
@@ -531,13 +533,13 @@ foreach my $desturl (@$desturls) {
 		# Connect to Backblaze and create the bucket
 		local $already = &get_bb_bucket($server);
 		if ($already && !ref($already)) {
-			&$first_print($already);
+			&$second_print($already);
 			next;
 			}
 		if (!$already) {
 			local $err = &create_bb_bucket($server);
 			if ($err) {
-				&$first_print($err);
+				&$second_print($err);
 				next;
 				}
 			}
@@ -546,14 +548,14 @@ foreach my $desturl (@$desturls) {
 		# Connect to Azure and create the container
 		local $containers = &list_azure_containers();
 		if (!ref($containers)) {
-			&$first_print($containers);
+			&$second_print($containers);
 			next;
 			}
 		my ($already) = grep { $_->{'name'} eq $server } @$containers;
 		if (!$already) {
 			local $err = &create_azure_container($server);
 			if ($err) {
-				&$first_print($err);
+				&$second_print($err);
 				next;
 				}
 			}
@@ -562,46 +564,59 @@ foreach my $desturl (@$desturls) {
 		# Make sure target is / is not a directory
 		if ($dirfmt && !-d $desturl) {
 			# Looking for a directory
+			my $destdir = $desturl;
+			$destdir =~ s/\/[^\/]+$//;
+			my $derr;
 			if ($mkdir) {
-				local $derr;
-				if (!-d $desturl) {
-					# Create the directory as the domain
-					# user, and check that it worked
-					$derr = &make_backup_dir(
-						$desturl, 0700, 1, $asd);
-					}
-				if ($derr) {
-					&$first_print(&text('backup_emkdir',
-						   "<tt>$desturl</tt>", $derr));
-					next;
-					}
+				# Create the directory as the domain
+				# user, and check that it worked
+				$derr = &make_backup_dir(
+					$desturl, 0700, 1, $asd);
+				}
+			elsif ($destdir && -d $destdir &&
+			       $opts->{'dir'}->{'strftime'}) {
+				# Caller didn't request that the destination
+				# directory be created, but since the last part
+				# of the path is date-formatted, create it
+				# anyway
+				$derr = &make_backup_dir(
+					$desturl, 0700, 1, $asd);
 				}
 			else {
-				&$first_print(&text('backup_edirtest',
-						    "<tt>$desturl</tt>"));
+				# Destination directory doesn't exist yet
+				&$second_print(&text('backup_edirtest',
+						     "<tt>$desturl</tt>"));
+				next;
+				}
+			if ($derr) {
+				&$second_print(&text('backup_emkdir',
+					"<tt>$desturl</tt>", $derr));
 				next;
 				}
 			}
 		elsif (!$dirfmt && -d $desturl) {
-			&$first_print(&text('backup_enotdirtest',
-					    "<tt>$desturl</tt>"));
+			# Destination already exists and is a directory, but
+			# we're expecting to write a file
+			&$second_print(&text('backup_enotdirtest',
+					     "<tt>$desturl</tt>"));
 			next;
 			}
 		if (!$dirfmt && $mkdir) {
-			# Create parent directories if requested
+			# Create parent directories for a file backup
 			local $dirdest = $desturl;
 			$dirdest =~ s/\/[^\/]+$//;
 			if ($dirdest && !-d $dirdest) {
 				local $derr = &make_backup_dir(
 						$dirdest, 0700, 0, $asd);
 				if ($derr) {
-					&$first_print(&text('backup_emkdir',
-						   "<tt>$dirdest</tt>", $derr));
+					&$second_print(&text('backup_emkdir',
+						"<tt>$dirdest</tt>", $derr));
 					next;
 					}
 				}
 			}
 		}
+	&$second_print($text{'setup_done'});
 
 	# If we made it this far, the URL is valid
 	push(@okurls, $desturl);
@@ -687,8 +702,18 @@ foreach my $desturl (@$desturls) {
 		}
 	local $lockfile = $backup_locks_dir."/".$lockname;
 	local $lpid = &test_lock($lockfile);
-	if ($lpid) {
-		if ($kill && $lpid && $lpid != $$) {
+	if ($kill == 2 && $lpid) {
+		# Destination is locked, wait for it to free up
+		&$first_print(&text('backup_waitlock', $lpid));
+		while($lpid = &test_lock($lockfile)) {
+			sleep(1);
+			}
+		&$second_print($text{'backup_donelock'});
+		}
+	elsif ($kill != 2 && $lpid) {
+		# Destination is already locked
+		if ($kill == 1 && $lpid != $$) {
+			# Kill the current backup
 			&kill_logged('TERM', $lpid);
 			sleep(2);
 			if (&test_lock($lockfile)) {
@@ -697,6 +722,7 @@ foreach my $desturl (@$desturls) {
 			&$second_print(&text('backup_ekilllock', $lpid));
 			}
 		else {
+			# Exit immediatel
 			&$second_print(&text('backup_esamelock', $lpid));
 			return (0, 0, $doms);
 			}
@@ -719,6 +745,7 @@ local $failalldoms;
 DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
 	# Force lock and re-read the domain in case it has changed
 	&obtain_lock_everything($d);
+	&lock_domain($d);
 	my $reread_d = &get_domain($d->{'id'}, undef, 1);	
 	if ($reread_d) {
 		$d = $reread_d;
@@ -1119,6 +1146,7 @@ DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
 	if ($parent) {
 		&release_lock_everything($parent);
 		}
+	&unlock_domain($d);
 	&release_lock_everything($d);
 	}
 
@@ -2456,6 +2484,36 @@ if ($ok) {
 					}
 				}
 
+			# Is the Cloud DNS provider valid? If not, forget it
+			if ($d->{'dns_cloud'}) {
+				my ($c) = &get_domain_dns_cloud($d);
+				if (!$c) {
+					delete($d->{'dns_cloud'});
+					}
+				else {
+					my $sfunc = "dnscloud_".$c->{'id'}.
+						    "_get_state";
+					my $s = defined(&$sfunc) ? &$sfunc()
+								 : undef;
+					if (!$s || !$s->{'ok'}) {
+						delete($d->{'dns_cloud'});
+						}
+					}
+				}
+
+			# Is the remote DNS server valid?
+			if ($d->{'dns_remote'}) {
+				if (!defined(&list_remote_dns)) {
+					delete($d->{'dns_remote'});
+					}
+				else {
+					my $r = &get_domain_remote_dns($d);
+					if (!$r || $r->{'id'} == 0) {
+						delete($d->{'dns_remote'});
+						}
+					}
+				}
+
 			# If this was a DNS sub-domain and the parent no longer
 			# exists, use a separate zone file
 			if ($d->{'dns_subof'}) {
@@ -2479,6 +2537,27 @@ if ($ok) {
 				else {
 					&$second_print(&text('restore_eugroup',
 							     $d->{'ugroup'}));
+					$ok = 0;
+					if ($continue) { next DOMAIN; }
+					else { last DOMAIN; }
+					}
+				}
+
+			# If the domain was syncing the SSL cert with another
+			# domain, make sure it exists
+			if ($d->{'ssl_same'} &&
+			    !&get_domain($d->{'ssl_same'})) {
+				if ($skipwarnings) {
+					&$second_print(
+						$text{'restore_esslsame2'});
+					foreach my $t (&list_ssl_file_types()) {
+						delete($d->{'ssl_'.$t});
+						}
+					delete($d->{'ssl_same'});
+					}
+				else {
+					&$second_print(
+						$text{'restore_esslsame'});
 					$ok = 0;
 					if ($continue) { next DOMAIN; }
 					else { last DOMAIN; }
@@ -2753,6 +2832,7 @@ if ($ok) {
 				$d->{'provision_'.$f} = 0;
 				}
 			delete($d->{'dns_cloud'});
+			delete($d->{'dns_remote'});
 			&set_provision_features($d);
 
 			# Check for clashes
@@ -3918,7 +3998,8 @@ elsif ($url =~ /^(s3|s3rrs):\/\/([^:]*):([^\@]*)\@([^\/]+)(\/(.*))?$/) {
 	# S3 with a username and password
 	@rv = (3, $2, $3, $4, $6, $1 eq "s3rrs" ? 1 : 0);
 	}
-elsif ($url =~ /^(s3|s3rrs):\/\/([^\/]+)(\/(.*))?$/ && $config{'s3_akey'} &&
+elsif ($url =~ /^(s3|s3rrs):\/\/([^\/]+)(\/(.*))?$/ &&
+       ($config{'s3_akey'} || &can_use_aws_s3_creds()) &&
        &can_use_cloud("s3")) {
 	# S3 with the default login
 	return (3, $config{'s3_akey'}, $config{'s3_skey'}, $2, $4,
@@ -4191,9 +4272,9 @@ $st .= "<tr> <td>$text{'backup_login'}</td> <td>".
 $st .= "<tr> <td>$text{'backup_pass4'}</td> <td>".
        "<span style='white-space: nowrap;'>" .
        &ui_password($name."_spass", $mode == 2 && $pass !~ /\// ? $pass : undef,
-                    25, 0, undef, $noac). "&nbsp;$text{'backup_pass4_or'} &nbsp;" .
+                    25, 0, undef, "$noac placeholder=\"$text{'backup_pass41_desc'}\""). "&nbsp;$text{'backup_pass4_or'} &nbsp;" .
        &ui_filebox($name."_sshkey", $mode == 2 && $pass =~ /\// ? $pass : undef,
-                    25, 0, undef, $noac)."</span>".
+                    25, 0, undef, "$noac placeholder=\"$text{'backup_pass42_desc'}\"")."</span>".
        "</td> </tr>\n";
 $st .= "</table>\n";
 push(@opts, [ 2, $text{'backup_mode2'}, $st ]);
@@ -4226,12 +4307,14 @@ if (&can_use_cloud("s3")) {
 	$s3pass ||= $config{'s3_skey'};
 	}
 local $st = &$tablestart('s3');
-$st .= "<tr> <td>$text{'backup_akey'}</td> <td>".
-       &ui_textbox($name."_akey", $s3user, 40, 0, undef, $noac).
-       "</td> </tr>\n";
-$st .= "<tr> <td>$text{'backup_skey'}</td> <td>".
-       &ui_password($name."_skey", $s3pass, 40, 0, undef, $noac).
-       "</td> </tr>\n";
+if ($s3user || !&can_use_aws_s3_creds()) {
+	$st .= "<tr> <td>$text{'backup_akey'}</td> <td>".
+	       &ui_textbox($name."_akey", $s3user, 40, 0, undef, $noac).
+	       "</td> </tr>\n";
+	$st .= "<tr> <td>$text{'backup_skey'}</td> <td>".
+	       &ui_password($name."_skey", $s3pass, 40, 0, undef, $noac).
+	       "</td> </tr>\n";
+	}
 $st .= "<tr> <td>$text{'backup_s3path'}</td> <td>".
        &ui_textbox($name."_s3path", $mode != 3 ? "" :
 				    $server.($path ? "/".$path : ""), 50).
@@ -4420,11 +4503,16 @@ elsif ($mode == 3) {
 	$in{$name.'_s3path'} =~ /\\/ && &error($text{'backup_es3pathslash'});
 	($in{$name.'_s3path'} =~ /^\// || $in{$name.'_s3path'} =~ /\/$/) &&
 		&error($text{'backup_es3path2'});
-	$in{$name.'_akey'} =~ /^\S+$/i || &error($text{'backup_eakey'});
-	$in{$name.'_skey'} =~ /^\S+$/i || &error($text{'backup_eskey'});
 	local $proto = $in{$name.'_rrs'} ? 's3rrs' : 's3';
-	return $proto."://".$in{$name.'_akey'}.":".$in{$name.'_skey'}."\@".
-	       $in{$name.'_s3path'};
+	if (!&can_use_aws_s3_creds()) {
+		$in{$name.'_akey'} =~ /^\S+$/i || &error($text{'backup_eakey'});
+		$in{$name.'_skey'} =~ /^\S+$/i || &error($text{'backup_eskey'});
+		return $proto."://".$in{$name.'_akey'}.":".$in{$name.'_skey'}.
+		       "\@".$in{$name.'_s3path'};
+		}
+	else {
+		return $proto."://".$in{$name.'_s3path'};
+		}
 	}
 elsif ($mode == 4) {
 	# Just download
@@ -5013,16 +5101,25 @@ elsif ($mode == 8) {
 return ( );
 }
 
-# purge_domain_backups(dest, days, [time-now], [&as-domain])
+# purge_domain_backups(dest, days, [time-now], [&as-domain], [detailed-output])
 # Searches a backup destination for backup files or directories older than
 # same number of days, and deletes them. May print stuff using first_print.
 sub purge_domain_backups
 {
-local ($dest, $days, $start, $asd) = @_;
+local ($dest, $days, $start, $asd, $detail) = @_;
 local $asuser = $asd ? $asd->{'user'} : undef;
 local ($mode, $user, $pass, $host, $path, $port) = &parse_backup_url($dest);
 local ($base, $re) = &extract_purge_path($dest);
-&$first_print(&text('backup_purging3', $days, &nice_backup_url($base),
+local $nicebase = $base;
+if ($dest =~ /^(([a-z0-9]+):\/\/[^\/]*\@[^\/]*)/) {
+	# Add protocol prefix back, if formatted like ftp://user:pass@host/dir
+	$nicebase = $1.$nicebase;
+	}
+elsif ($dest =~ /^(([a-z0-9]+):\/\/)/) {
+	# Add protocol prefix back, if formatted like bb://bucket/dir
+	$nicebase = $1.$nicebase;
+	}
+&$first_print(&text('backup_purging3', $days, &nice_backup_url($nicebase),
 				       "<tt>".&html_escape($re)."</tt>"));
 if (!$base && !$re) {
 	&$second_print($text{'backup_purgenobase'});
@@ -5040,14 +5137,28 @@ if ($mode == 0) {
 	# Just search a local directory for matching files, and remove them
 	opendir(PURGEDIR, $base);
 	foreach my $f (readdir(PURGEDIR)) {
+		next if ($f eq "." || $f eq "..");
 		local $path = "$base/$f";
 		local @st = stat($path);
-		if ($f ne "." && $f ne ".." && $f =~ /^$re$/ &&
-		    $f !~ /\.(dom|info)$/) {
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $path,
+					    &make_date($st[9])));
+			}
+		if ($f =~ /^$re$/ && $f !~ /\.(dom|info)$/) {
 			# Found one to delete
 			$mcount++;
-			next if (!$st[9] || $st[9] >= $cutoff);
+			if (!$st[9] || $st[9] >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $st[9]) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text(-d $path ? 'backup_deletingdir'
 					             : 'backup_deletingfile',
 				            "<tt>$path</tt>", $old));
@@ -5057,6 +5168,9 @@ if ($mode == 0) {
 			&unlink_file($path);
 			&$second_print(&text('backup_deleted', $sz));
 			$pcount++;
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
 			}
 		}
 	closedir(PURGEDIR);
@@ -5077,12 +5191,24 @@ elsif ($mode == 1) {
 		return 0;
 		}
 	foreach my $f (@$dir) {
-		if ($f->[13] =~ /^$re$/ &&
-		    $f->[13] !~ /\.(dom|info)$/ &&
-		    $f->[13] ne "." && $f->[13] ne "..") {
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f->[13],
+					    &make_date($f->[9])));
+			}
+		if ($f->[13] =~ /^$re$/ && $f->[13] !~ /\.(dom|info)$/) {
 			$mcount++;
-			next if (!$f->[9] || $f->[9] >= $cutoff);
+			if (!$f->[9] || $f->[9] >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $f->[9]) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingftp',
 					    "<tt>$base/$f->[13]</tt>", $old));
 			local $err;
@@ -5104,6 +5230,9 @@ elsif ($mode == 1) {
 						     &nice_size($sz)));
 				$pcount++;
 				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
 			}
 		}
 	}
@@ -5129,12 +5258,25 @@ elsif ($mode == 2) {
 	foreach my $l (split(/\r?\n/, $lsout)) {
 		local @st = &parse_lsl_line($l);
 		next if (!scalar(@st));
-		if ($st[13] =~ /^$re$/ &&
-		    $st[13] !~ /\.(dom|info)$/ &&
-		    $st[13] ne "." && $st[13] ne "..") {
+		next if ($st[13] eq "." || $st[13] eq "..");
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f->[13],
+					    &make_date($f->[9])));
+			}
+		if ($st[13] =~ /^$re$/ && $st[13] !~ /\.(dom|info)$/) {
 			$mcount++;
-			next if (!$st[9] || $st[9] >= $cutoff);
+			if (!$st[9] || $st[9] >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $st[9]) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingssh',
 					    "<tt>$base/$st[13]</tt>", $old));
 			local $rmcmd = $sshcmd." rm -rf".
@@ -5152,6 +5294,9 @@ elsif ($mode == 2) {
 						     &nice_size($st[7])));
 				$pcount++;
 				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
 			}
 		}
 	}
@@ -5179,12 +5324,25 @@ elsif ($mode == 9) {
 		}
 	foreach my $f (@$files) {
 		my ($fn, @st) = @$f;
-		if ($fn =~ /^$re$/ &&
-		    $fn !~ /\.(dom|info)$/ &&
-		    $fn ne "." && $fn ne "..") {
+		next if ($fn eq "." || $fn eq "..");
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $fn,
+					    &make_date($st[9])));
+			}
+		if ($fn =~ /^$re$/ && $fn !~ /\.(dom|info)$/) {
 			$mcount++;
-			next if (!$st[9] || $st[9] >= $cutoff);
+			if (!$st[9] || $st[9] >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $st[9]) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingwebmin',
 					    "<tt>$base/$fn</tt>", $old));
 			eval {
@@ -5208,7 +5366,9 @@ elsif ($mode == 9) {
 				$pcount++;
 				}
 			}
-
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
 		}
 	}
 
@@ -5220,12 +5380,26 @@ elsif ($mode == 3 && $host =~ /\%/) {
 		return 0;
 		}
 	foreach my $b (@$buckets) {
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs2', $b->{'Name'},
+					    $b->{'CreationDate'}));
+			}
 		if ($b->{'Name'} =~ /^$re$/) {
 			# Found one to delete
 			local $ctime = &s3_parse_date($b->{'CreationDate'});
 			$mcount++;
-			next if (!$ctime || $ctime >= $cutoff);
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingbucket',
 					    "<tt>$b->{'Name'}</tt>", $old));
 
@@ -5250,6 +5424,9 @@ elsif ($mode == 3 && $host =~ /\%/) {
 				$pcount++;
 				}
 			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
 		}
 	}
 
@@ -5261,14 +5438,28 @@ elsif ($mode == 3 && $path =~ /\%/) {
 		return 0;
 		}
 	foreach my $f (@$files) {
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f->{'Key'},
+					    $f->{'LastModified'}));
+			}
 		if (($f->{'Key'} =~ /^$re$/ ||
 		     $f->{'Key'} =~ /^$re\/.*\.(tar\.gz|tar\.bz2|zip|tar)$/) &&
 		    $f->{'Key'} !~ /\.(dom|info)$/) {
 			# Found one to delete
 			local $ctime = &s3_parse_date($f->{'LastModified'});
 			$mcount++;
-			next if (!$ctime || $ctime >= $cutoff);
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingfile',
 					    "<tt>$f->{'Key'}</tt>", $old));
 			local $err = &s3_delete_file($user, $pass, $host,
@@ -5287,6 +5478,9 @@ elsif ($mode == 3 && $path =~ /\%/) {
 				$pcount++;
 				}
 			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
 		}
 	}
 
@@ -5302,14 +5496,28 @@ elsif ($mode == 6 && $host =~ /\%/) {
 		return 0;
 		}
 	foreach my $c (@$containers) {
+		local $st = &rs_stat_container($rsh, $c);
+		next if (!ref($st));
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs3', $c,
+					    $st->{'X-Timestamp'}));
+			}
 		if ($c =~ /^$re$/) {
 			# Found one to delete
-			local $st = &rs_stat_container($rsh, $c);
-			next if (!ref($st));
 			local $ctime = int($st->{'X-Timestamp'});
 			$mcount++;
-			next if (!$ctime || $ctime >= $cutoff);
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingcontainer',
 					    "<tt>$c</tt>", $old));
 
@@ -5324,6 +5532,9 @@ elsif ($mode == 6 && $host =~ /\%/) {
 			          &nice_size($st->{'X-Container-Bytes-Used'})));
 				$pcount++;
 				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
 			}
 		}
 	}
@@ -5340,15 +5551,29 @@ elsif ($mode == 6 && $path =~ /\%/) {
 		return 0;
 		}
 	foreach my $f (@$files) {
+		local $st = &rs_stat_object($rsh, $host, $f);
+		next if (!ref($st));
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $c,
+					    $st->{'X-Timestamp'}));
+			}
 		if ($f =~ /^$re($|\/)/ && $f !~ /\.(dom|info)$/ &&
 		    $f !~ /\.\d+$/) {
 			# Found one to delete
-			local $st = &rs_stat_object($rsh, $host, $f);
-			next if (!ref($st));
 			local $ctime = int($st->{'X-Timestamp'});
 			$mcount++;
-			next if (!$ctime || $ctime >= $cutoff);
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingfile',
 					    "<tt>$f</tt>", $old));
 			local $err = &rs_delete_object($rsh, $host, $f);
@@ -5364,6 +5589,9 @@ elsif ($mode == 6 && $path =~ /\%/) {
 				$pcount++;
 				}
 			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
 		}
 	}
 
@@ -5376,12 +5604,26 @@ elsif ($mode == 7 && $host =~ /\%/) {
 		}
 	foreach my $st (@$buckets) {
 		my $c = $st->{'name'};
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs2', $c,
+					    $st->{'timeCreated'}));
+			}
 		if ($c =~ /^$re$/) {
 			# Found one with a name to delete
 			local $ctime = &google_timestamp($st->{'timeCreated'});
 			$mcount++;
-			next if (!$ctime || $ctime >= $cutoff);
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingbucket',
 					    "<tt>$c</tt>", $old));
 
@@ -5398,6 +5640,9 @@ elsif ($mode == 7 && $host =~ /\%/) {
 				$pcount++;
 				}
 			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
 		}
 	}
 
@@ -5410,13 +5655,27 @@ elsif ($mode == 7 && $path =~ /\%/) {
 		}
 	foreach my $st (@$files) {
 		my $f = $st->{'name'};
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f,
+					    $st->{'updated'}));
+			}
 		if ($f =~ /^$re($|\/)/ && $f !~ /\.(dom|info)$/ &&
 		    $f !~ /\.\d+$/) {
 			# Found one to delete
 			local $ctime = &google_timestamp($st->{'updated'});
 			$mcount++;
-			next if (!$ctime || $ctime >= $cutoff);
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingfile',
 					    "<tt>$f</tt>", $old));
 			local $err = &delete_gcs_file($host, $f);
@@ -5431,6 +5690,9 @@ elsif ($mode == 7 && $path =~ /\%/) {
 				     &nice_size($st->{'size'})));
 				$pcount++;
 				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
 			}
 		}
 	}
@@ -5463,11 +5725,25 @@ elsif ($mode == 8) {
 		else {
 			$ctime = &dropbox_timestamp($st->{'client_modified'});
 			}
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f,
+					    &make_date($ctime)));
+			}
 		if ($f =~ /^$re($|\/)/ && $f !~ /\.(dom|info)$/) {
 			# Found one to delete
 			$mcount++;
-                        next if (!$ctime || $ctime >= $cutoff);
+                        if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
                         local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingfile',
                                             "<tt>$f</tt>", $old));
 			my $p = $st->{'path'};
@@ -5490,6 +5766,9 @@ elsif ($mode == 8) {
 				$pcount++;
 				}
 			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
 		}
 	}
 
@@ -5510,7 +5789,7 @@ elsif ($mode == 10) {
 		if ($st->{'folder'}) {
 			# Age is age of the oldest file
 			$ctime = time();
-			my $subfiles = &list_dropbox_files($base, $f);
+			my $subfiles = &list_bb_files($base, $f);
 			if (ref($subfiles)) {
 				foreach my $sf (@$subfiles) {
 					$ctime = $sf->{'time'}
@@ -5521,28 +5800,52 @@ elsif ($mode == 10) {
 		else {
 			$ctime = $st->{'time'};
 			}
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f,
+					    &make_date($ctime)));
+			}
 		if ($f =~ /^$re($|\/)/ && $f !~ /\.(dom|info)$/) {
 			# Found one to delete
 			$mcount++;
-                        next if (!$ctime || $ctime >= $cutoff);
+                        if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
                         local $old = int((time() - $ctime) / (24*60*60));
-			&$first_print(&text('backup_deletingfile',
-                                            "<tt>$f</tt>", $old));
-			my $size = $st->{'folder'} ?
-					&size_bb_directory($base, $f) :
-					$st->{'size'};
-			local $err = &delete_bb_file($base, $f);
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
+			my ($size, $err);
+			if ($st->{'folder'}) {
+				&$first_print(&text('backup_deletingdir',
+						    "<tt>$f</tt>", $old));
+				$size = &size_bb_directory($base, $f);
+				$err = &delete_bb_directory($base, $f);
+				}
+			else {
+				&$first_print(&text('backup_deletingfile',
+						    "<tt>$f</tt>", $old));
+				$size = $st->{'size'};
+				$err = &delete_bb_file($base, $f);
+				}
 			if ($err) {
 				&$second_print(&text('backup_edelbucket',$err));
 				$ok = 0;
 				}
 			else {
-				&delete_dropbox_path($base, $f.".dom");
-				&delete_dropbox_path($base, $f.".info");
+				&delete_bb_file($base, $f.".dom");
+				&delete_bb_file($base, $f.".info");
 				&$second_print(&text('backup_deleted',
 				     &nice_size($size)));
 				$pcount++;
 				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
 			}
 		}
 	}
@@ -5556,14 +5859,28 @@ elsif ($mode == 11 && $path =~ /\%/) {
 		}
 	foreach my $st (@$files) {
 		my $f = $st->{'name'};
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f,
+				$st->{'properties'}->{'lastModified'}));
+			}
 		if ($f =~ /^$re($|\/)/ && $f !~ /\.(dom|info)$/ &&
 		    $f !~ /\.\d+$/) {
 			# Found one to delete
 			local $ctime = &google_timestamp(
 				$st->{'properties'}->{'lastModified'});
 			$mcount++;
-			next if (!$ctime || $ctime >= $cutoff);
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
 			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
 			&$first_print(&text('backup_deletingfile',
 					    "<tt>$f</tt>", $old));
 			local $err = &delete_azure_file($host, $f);
@@ -5578,6 +5895,9 @@ elsif ($mode == 11 && $path =~ /\%/) {
 				     &nice_size($st->{'properties'}->{'contentLength'})));
 				$pcount++;
 				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
 			}
 		}
 	}

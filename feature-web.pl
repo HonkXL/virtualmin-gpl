@@ -78,9 +78,10 @@ if ($d->{'alias'} && $tmpl->{'web_alias'} == 1) {
 		}
 	$d->{'alias_mode'} = 1;
 
-	# Redirect webmail and admin in the alias to Usermin and Webmin
-	if (&has_webmail_rewrite($d)) {
-		&add_webmail_redirect_directives($d, $tmpl);
+	# If the target domain had redirects enabled, also do it for the alias
+	if (&has_webmail_rewrite($d) &&
+	    &get_webmail_redirect_directives($alias)) {
+		&add_webmail_redirect_directives($d, $tmpl, 1);
 		}
 	}
 else {
@@ -204,9 +205,10 @@ else {
 		&find_html_cgi_dirs($d);
 		}
 
-	# Redirect webmail and admin to Usermin and Webmin
-	if (&has_webmail_rewrite($d)) {
-		&add_webmail_redirect_directives($d, $tmpl);
+	# Redirect webmail and admin to Usermin and Webmin, if enabled in
+	# the template
+	if (&has_webmail_rewrite($d) && !$d->{'nowebmailredirect'}) {
+		&add_webmail_redirect_directives($d, $tmpl, 0);
 		}
 
 	# For Apache 2.4+, add a "Require all granted" directive
@@ -253,6 +255,13 @@ if (!$d->{'alias'}) {
 local $web_user = &get_apache_user($d);
 if ($tmpl->{'web_user'} ne 'none' && $web_user) {
 	&add_user_to_domain_group($d, $web_user, 'setup_webuser');
+	}
+
+# If creating web after domain creation,
+# maybe add autoconfig DNS records
+if ($config{'mail_autoconfig'} && $d->{'mail'} &&
+    !$d->{'creating'} && !$d->{'alias'}) {
+	&enable_email_autoconfig($d);
 	}
 
 &$first_print($text{'setup_webpost'});
@@ -1012,10 +1021,8 @@ else {
 
 	# Validate the FPM port
 	if ($mode eq "fpm") {
-		my ($ok, $port) = &get_domain_php_fpm_port($d);
-		if ($ok == 0) {
-			return &text('validate_ewebphpfpmport', $port);
-			}
+		my ($fpmerr) = &get_php_fpm_port_error($d);
+		return $fpmerr if ($fpmerr);
 		}
 
 	# If there are suexec directives, validate them
@@ -1037,6 +1044,17 @@ else {
 	elsif ($need_suexec) {
 		# Is missing suexec, but needs it
 		return $text{'validate_ewebphpsuexec'};
+		}
+
+	# If using fcgiwrap, make sure the server is running
+	if ($d->{'fcgiwrap_port'}) {
+		my $st = &get_fcgiwrap_status($d);
+		if ($st == 0) {
+			return $text{'validate_efcgiwrapinit'};
+			}
+		elsif ($st == 1) {
+			return $text{'validate_efcgiwraprun'};
+			}
 		}
 
 	# Make sure a <Directory> exists for the document root, and that
@@ -1078,6 +1096,39 @@ else {
 		}
 	}
 return undef;
+}
+
+# get_php_fpm_port_error(&domain)
+# Returns any error message that should be displayed about the FPM port
+sub get_php_fpm_port_error
+{
+my ($d) = @_;
+my ($ok, $port) = &get_domain_php_fpm_port($d);
+if ($ok == 0) {
+	return (&text('validate_ewebphpfpmport', $port), undef);
+	}
+else {
+	my ($clash, $conf, $port, $otherid) = &check_php_fpm_port_clash($d);
+	my $cd = $clash ? &get_domain($clash) : undef;
+	$cd = undef if ($cd && $cd->{'id'} eq $d->{'id'});
+	if ($cd) {
+		# Owned by another domain
+		if ($otherid && $otherid ne $cd->{'id'}) {
+			return (&text('validate_ewebphpfpmport4', $port,
+				      &show_domain_name($cd)), $cd->{'id'});
+			}
+		else {
+			return (&text('validate_ewebphpfpmport2', $port,
+				      &show_domain_name($cd)), undef);
+			}
+		}
+	elsif ($clash) {
+		# Owned by another pool file
+		return (&text('validate_ewebphpfpmport3', $port,
+			      $conf->{'dir'}."/".$clash.".conf"), undef);
+		}
+	}
+return ();
 }
 
 # disable_web(&domain)
@@ -1142,12 +1193,8 @@ if ($tmpl->{'disabled_url'} eq 'none') {
 	&flush_file_lines($virt->{'file'});
 	local $def_tpl = &read_file_contents("$default_content_dir/index.html");
 	local %hashtmp = %$d;
-	$hashtmp{'TMPLTTITLE'} = $text{'deftmplt_website_disabled'};
-	$hashtmp{'TMPLTSLOGAN'} = $text{'deftmplt_disable_slog'};
-	if ($d->{'disabled_why'}) {
-		$hashtmp{'TMPLTCONTENT'} = $d->{'disabled_why'};
-		}
-	%hashtmp = populate_default_index_page(%hashtmp);
+	%hashtmp = &populate_default_index_page($d, %hashtmp);
+	$def_tpl = &replace_default_index_page($d, $def_tpl);
 	$def_tpl = &substitute_virtualmin_template($def_tpl, \%hashtmp);
 	local $msg = $tmpl->{'disabled_web'} eq 'none' ?
 		$def_tpl :
@@ -1470,41 +1517,59 @@ return &check_pid_file(&apache::get_pid_file());
 # text lines
 sub apache_template
 {
-local $dirs = $_[0];
+my ($dirs, $d) = @_;
 $dirs =~ s/\t/\n/g;
-$dirs = &substitute_domain_template($dirs, $_[1]);
+$dirs = &substitute_domain_template($dirs, $d);
 local @dirs = split(/\n/, $dirs);
 local ($sudir, $ppdir);
 foreach (@dirs) {
 	$sudir++ if (/^\s*SuexecUserGroup\s/i);
 	$ppdir++ if (/^\s*ProxyPass\s/);
 	}
-local $tmpl = &get_template($_[1]->{'template'});
-local $pdom = $_[1]->{'parent'} ? &get_domain($_[1]->{'parent'}) : $_[1];
+local $tmpl = &get_template($d->{'template'});
+local $pdom = $d->{'parent'} ? &get_domain($d->{'parent'}) : $d;
 if (!$sudir && $pdom->{'unix'}) {
 	# Automatically add suexec directives if missing
 	unshift(@dirs, "SuexecUserGroup \"#$pdom->{'uid'}\" ".
 		       "\"#$pdom->{'ugid'}\"");
 	}
-if (!$ppdir && $_[1]->{'proxy_pass'}) {
+if (!$ppdir && $d->{'proxy_pass'}) {
 	# Add proxy directives
-	push(@dirs, &apache_proxy_directives($_[1]));
+	push(@dirs, &apache_proxy_directives($d));
 	}
 if ($tmpl->{'web_writelogs'}) {
 	# Fix any CustomLog or ErrorLog directives to write via writelogs.pl
-	foreach $d (@dirs) {
-		if ($d =~ /^(\s*)(CustomLog|ErrorLog)\s+(\S+)(\s*\S*)/) {
-			$d = "$1$2 \"|$writelogs_cmd $_[1]->{'id'} $3\"$4";
+	foreach my $dir (@dirs) {
+		if ($dir =~ /^(\s*)(CustomLog|ErrorLog)\s+(\S+)(\s*\S*)/) {
+			$dir = "$1$2 \"|$writelogs_cmd $d->{'id'} $3\"$4";
 			}
 		}
 	}
-if ($tmpl->{'web_http2'} && &supports_http2()) {
-	# Enable HTTPv2 if supported by Apache
-	push(@dirs, "Protocols h2 h2c http/1.1");
+# Enable or Disable HTTPv2 if supported by Apache
+my $supp = &supports_http2();
+if ($supp) {
+	if ($tmpl->{'web_http2'} == 1) {
+		# Enable HTTPv2
+		push(@dirs, "Protocols h2 h2c http/1.1")
+		}
+	elsif ($tmpl->{'web_http2'} == 2 && $supp == 2) {
+		# Disable HTTPv2 explicitly, as Apache 2.4.37+ have HTTP2
+		# enabled by default, but we want it to be disabled
+		push(@dirs, "Protocols http/1.1")
+		}
 	}
 if (!&supports_suexec()) {
 	# Remove unsupported SuexecUserGroup directive
 	@dirs = grep { !/^\s*SuexecUserGroup\s/i } @dirs;
+	}
+if ($d->{'dom_defnames'}) {
+	# If domain level config has server default
+	# names set, remove those not in the list
+	@dirs = grep { &indexof($_, grep {
+		$_ =~ /^(ServerName|ServerAlias)\s+(?<r_serv_name>.*)/ &&
+		&indexof($+{r_serv_name}, split(/\s+/, $d->{'dom_defnames'})) < 0
+		} @dirs) < 0 } @dirs;
+	# XXXX Maybe add too? It already works in Nginx
 	}
 return @dirs;
 }
@@ -1572,6 +1637,7 @@ if ($d->{'alias'} && $d->{'alias_mode'}) {
 local ($virt, $vconf) = &get_apache_virtual($d->{'dom'},
 					    $d->{'web_port'});
 if ($virt) {
+	# Save the Apache config
 	local $lref = &read_file_lines($virt->{'file'});
 	local $l;
 	local @adoms = &get_domain_by("alias", $d->{'id'});
@@ -1627,6 +1693,7 @@ if ($virt) {
 			return 0;
 			}
 		}
+
 	return 1;
 	}
 else {
@@ -1889,7 +1956,7 @@ foreach $l (&unique(@logs)) {
 		while(<LOG>) {
 			if (/^(\S+)\s+(\S+)\s+(\S+)\s+\[(\d+)\/(\S+)\/(\d+):(\d+):(\d+):(\d+)\s+(\S+)\]\s+"([^"]*)"\s+(\S+)\s+(\S+)/) {
 				# Valid-looking log line .. work out the time
-				local $ltime = timelocal($9, $8, $7, $4, $apache_mmap{lc($5)}, $6-1900);
+				local $ltime = timelocal($9, $8, $7, $4, $apache_mmap{lc($5)}, $6);
 				if ($ltime > $_[1]) {
 					local $day = int($ltime / (24*60*60));
 					$_[2]->{"web_".$day} += $13;
@@ -1908,7 +1975,15 @@ return $max_ltime;
 # that have not been modified since some time
 sub all_log_files
 {
-$_[0] =~ /^(.*)\/([^\/]+)$/;
+my ($file, $ltime) = @_;
+if ($file =~ /\|$/) {
+	# Running a command
+	return ($file);
+	}
+if ($file !~ /^(.*)\/([^\/]+)$/) {
+	# Not a valid path?!
+	return ( );
+	}
 local $dir = $1;
 local $base = $2;
 local ($f, @rv, %mtime);
@@ -1917,7 +1992,7 @@ foreach $f (readdir(DIR)) {
 	if ($f =~ /^\Q$base\E/ && -f "$dir/$f" && $f ne $base.".offset") {
 		local @st = stat("$dir/$f");
 		if ($f ne $base) {
-			next if ($_[1] && $st[9] <= $_[1]);
+			next if ($ltime && $st[9] <= $ltime);
 			}
 		$mtime{"$dir/$f"} = $st[9];
 		push(@rv, "$dir/$f");
@@ -2617,7 +2692,7 @@ if ($config{'web'}) {
 	local $ndi = &none_def_input("web", $tmpl->{'web'}, $text{'tmpl_webbelow'}, 1,
 				     0, undef, \@webfields);
 	print &ui_table_row(&hlink($text{'tmpl_web'}, "template_web"),
-		$ndi."<br>\n".
+		$ndi."\n".
 		&ui_textarea("web", $tmpl->{'web'} eq "none" ? "" :
 					join("\n", split(/\t/, $tmpl->{'web'})),
 			     10, 60));
@@ -2651,19 +2726,21 @@ if ($config{'web'}) {
 				  [ [ 1, $text{'tmpl_web_fcgiwrap1'} ],
 				    [ 0, $text{'tmpl_web_fcgiwrap0'} ] ]));
 		}
+	}
 
-	# HTML sub-directory input
-	print &ui_table_row(&hlink($text{'newweb_htmldir'}, "template_html_dir_def"),
-		&ui_opt_textbox("html_dir", $tmpl->{'web_html_dir'}, 20,
-				"$text{'default'} (<tt>public_html</tt>)<br>",
-				$text{'newweb_htmldir0'})."<br>\n".
-		("&nbsp;" x 3).$text{'newweb_htmldir0suf'});
-	local $hdir = $tmpl->{'web_html_dir'} || "public_html";
+# HTML sub-directory input
+print &ui_table_row(&hlink($text{'newweb_htmldir'}, "template_html_dir_def"),
+	&ui_opt_textbox("html_dir", $tmpl->{'web_html_dir'}, 20,
+			"$text{'default'} (<tt>public_html</tt>)<br>",
+			$text{'newweb_htmldir0'})."<br>\n".
+	("&nbsp;" x 3).$text{'newweb_htmldir0suf'});
+local $hdir = $tmpl->{'web_html_dir'} || "public_html";
 
-	# HTML directory permissions
-	print &ui_table_row(&hlink($text{'newweb_htmlperms'}, "template_html_perms"),
-		&ui_textbox("html_perms", $tmpl->{'web_html_perms'}, 4));
+# HTML directory permissions
+print &ui_table_row(&hlink($text{'newweb_htmlperms'}, "template_html_perms"),
+	&ui_textbox("html_perms", $tmpl->{'web_html_perms'}, 4));
 
+if ($config{'web'}) {
 	# Alias mode
 	print &ui_table_row(&hlink($text{'tmpl_alias'}, "template_alias_mode"),
 		&ui_radio("alias_mode", int($tmpl->{'web_alias'}),
@@ -2811,7 +2888,10 @@ if ($config{'proxy_pass'} == 2) {
 
 # Enable HTTP2 for new websites
 print &ui_table_row(&hlink($text{'newweb_http2'}, 'template_web_http2'),
-	&ui_yesno_radio("web_http2", $tmpl->{'web_http2'}));
+    &ui_radio("web_http2", int($tmpl->{'web_http2'}),
+	      [ [ 0, $text{'default'} ],
+	        [ 1, $text{'yes'} ],
+	        [ 2, $text{'no'} ] ]));
 
 # Default redirects
 print &ui_table_hr();
@@ -2928,6 +3008,20 @@ if ($config{'web'}) {
 			$tmpl->{'web_ruby_suexec'} = $in{'web_ruby_suexec'};
 			}
 		}
+	}
+else {
+	# Some options apply to any webserver
+	if ($in{'html_dir_def'}) {
+		delete($tmpl->{'web_html_dir'});
+		}
+	else {
+		$in{'html_dir'} =~ /^\S+$/ && $in{'html_dir'} !~ /^\// &&
+		    $in{'html_dir'} !~ /\.\./ || &error($text{'newweb_ehtml'});
+		$tmpl->{'web_html_dir'} = $in{'html_dir'};
+		}
+	$in{'html_perms'} =~ /^[0-7]{3,4}$/ ||
+		&error($text{'newweb_ehtmlperms'});
+	$tmpl->{'web_html_perms'} = $in{'html_perms'};
 	}
 
 if ($config{'web'} && $config{'webalizer'}) {
@@ -3303,7 +3397,10 @@ if (&indexof($mode, @supp) < 0) {
 	}
 if ($mode) {
 	&save_domain_php_mode($d, $mode, $port, 1);
-	if ($tmpl->{'php_log'}) {
+	if ($d->{'php_error_log'}) {
+		&save_domain_php_error_log($d, $d->{'php_error_log'});
+		}
+	elsif ($tmpl->{'php_log'}) {
 		&save_domain_php_error_log($d, &get_default_php_error_log($d));
 		}
 	}
@@ -3321,18 +3418,17 @@ if (defined(&save_domain_ruby_mode)) {
 return $err;
 }
 
-# add_webmail_redirect_directives(&domain, &template)
+# add_webmail_redirect_directives(&domain, &template, [force-enable])
 # Add mod_rewrite directives to direct webmail.$DOM and admin.$DOM to
 # Usermin and Webmin. Also updates the ServerAlias if needed.
 sub add_webmail_redirect_directives
 {
-local ($d, $tmpl) = @_;
-return 1 if ($d->{'alias'});	# Don't bother for alias domains, due to
-				# Apache config clashes
+local ($d, $tmpl, $force) = @_;
 $tmpl ||= &get_template($d->{'template'});
 local $p = &domain_has_website($d);
 if ($p && $p ne 'web') {
-	return &plugin_call($p, "feature_add_web_webmail_redirect", $d, $tmpl);
+	return &plugin_call($p, "feature_add_web_webmail_redirect", $d, $tmpl,
+			    $force);
 	}
 &require_apache();
 my @ports = ( $d->{'web_port'} );
@@ -3340,7 +3436,7 @@ push(@ports, $d->{'web_sslport'}) if ($d->{'ssl'});
 
 my $fixed = 0;
 foreach my $r ('webmail', 'admin') {
-	next if (!$tmpl->{'web_'.$r});
+	next if (!$tmpl->{'web_'.$r} && !$force);
 
 	# Get directives we will be changing
 	foreach my $port (@ports) {
@@ -3363,17 +3459,8 @@ foreach my $r ('webmail', 'admin') {
 			my ($port, $proto);
 			if ($r eq 'webmail') {
 				# From Usermin
-				if (&foreign_installed("usermin")) {
-					&foreign_require("usermin");
-					local %miniserv;
-					&usermin::get_usermin_miniserv_config(
-						\%miniserv);
-					$proto = $miniserv{'ssl'} ? 'https' : 'http';
-					$port = $miniserv{'port'};
-					}
-				# Fall back to standard defaults
-				$proto ||= "http";
-				$port ||= 20000;
+				($port, $proto) =
+					&get_usermin_miniserv_port_proto();
 				}
 			else {
 				# From Webmin
@@ -3493,7 +3580,7 @@ local @rrule = &apache::find_directive("RewriteRule", $vconf);
 local @rv;
 local $i = 0;
 foreach my $r (@rcond) {
-	if ($r =~ /^\%\{HTTP_HOST\}\s+=(\S+)/) {
+	if ($r =~ /^\%\{HTTP_HOST\}\s+=([^\.]+\.\Q$d->{'dom'}\E)/) {
 		my $rhost = $1;
 		my $rr = $rrule[$i];
 		if ($rr && $rr =~ /^(\S+)\s+(http|https):/) {
@@ -3986,7 +4073,8 @@ return $apache::site{'fullversion'} &&
 }
 
 # supports_http2()
-# Returns 1 if HTTPv2 is supported by Apache on this system
+# Returns 1 if HTTPv2 is supported by Apache on this system, 2 if it is enabled
+# by default, or 0 if not supported at all
 sub supports_http2
 {
 &require_apache();
@@ -4001,7 +4089,9 @@ elsif (!$apache::site{'fullversion'} ||
        &compare_versions($apache::site{'fullversion'}, "2.4.17") < 0) {
 	$err = "Apache must be at least version 2.4.17";
 	}
-my @rv = ($err ? 0 : 1, $err);
+my $ok = $err ? 0 :
+	 &compare_versions($apache::site{'fullversion'}, "2.4.37") >= 0 ? 2 : 1;
+my @rv = ($ok, $err);
 return wantarray ? @rv : $rv[0];
 }
 
@@ -4423,15 +4513,16 @@ return undef;
 
 # modify_web_home_directory(&domain, &old-domain, &virt, &vconf, &apache-config,
 # 			    [php-mode])
-# Updates all directives that refer to the old home directory, by modifying
-# the Apache config files directly. Also updates PHP config files. Invalidates
-# the Apache config cache.
+# Updates all directives that refer to the old home directory or domain ID, by
+# modifying the Apache config files directly. Also updates PHP config files.
+# Invalidates the Apache config cache.
 sub modify_web_home_directory
 {
 local ($d, $oldd, $virt, $vconf, $conf, $mode) = @_;
 local $lref = &read_file_lines($virt->{'file'});
 for(my $i=$virt->{'line'}; $i<=$virt->{'eline'}; $i++) {
 	$lref->[$i] =~ s/\Q$oldd->{'home'}\E/$d->{'home'}/g;
+	$lref->[$i] =~ s/\Q$oldd->{'id'}\E/$d->{'id'}/g;
 	}
 &flush_file_lines($virt->{'file'});
 undef(@apache::get_config_cache);
@@ -4712,6 +4803,29 @@ sub get_allowed_options_list
 {
 return "Options=ExecCGI,Includes,IncludesNOEXEC,".
        "Indexes,MultiViews,SymLinksIfOwnerMatch";
+}
+
+# supports_ssi(&domain)
+# Does this webserver support server-side includes?
+sub supports_ssi
+{
+my ($d) = @_;
+my $p = &domain_has_website($d);
+if ($p && $p ne 'web') {
+	# Check with plugin
+	if (&plugin_defined($p, "feature_web_supports_ssi")) {
+		return &plugin_call($p, "feature_web_supports_ssi", $d);
+		}
+	return 0;
+	}
+elsif ($p) {
+	# Check Apache module
+	&require_apache();
+	return $apache::httpd_modules{'mod_include'} ? 1 : 0;
+	}
+else {
+	return 0;
+	}
 }
 
 # get_domain_web_ssi(&domain)
@@ -5143,6 +5257,7 @@ if ($d->{'fcgiwrap_port'} =~ /^(\/\S+)\/socket$/) {
 	my $domdir = $1;
 	&unlink_file($d->{'fcgiwrap_port'});
 	&unlink_file($domdir);
+	delete($d->{'fcgiwrap_port'});
 	}
 }
 
@@ -5177,6 +5292,20 @@ $name =~ s/\./-/g;
 return $name;
 }
 
+# get_fcgiwrap_status(&domain)
+# Returns 0 if no init script exists, 1 if it exists but is down, or 2 if 
+# exists and is running
+sub get_fcgiwrap_status
+{
+my ($d) = @_;
+my $name = &init_script_fcgiwrap_name($d);
+&foreign_require("init");
+my $st = &init::action_status($name);
+return 0 if (!$st);
+my $r = &init::status_action($name);
+return $r == 1 ? 2 : 1;
+}
+
 # enable_apache_fcgiwrap(&domain)
 # Turn on fcgiwrap for running CGIs for a domain
 sub enable_apache_fcgiwrap
@@ -5197,9 +5326,8 @@ foreach my $p (@ports) {
 		&apache::save_directive("SetHandler",
 		  [ "proxy:unix:$port|fcgi://localhost" ],
 		  $dir->{'members'}, $conf);
-		&apache::save_directive("ProxyFCGISetEnvIf",
-		  [ "true SCRIPT_FILENAME \"$d->{'home'}%{reqenv:SCRIPT_NAME}\"" ],
-		  $dir->{'members'}, $conf);
+		&apache::save_directive("ProxyFCGIBackendType", ["GENERIC"],
+					$dir->{'members'}, $conf);
 		&flush_file_lines($virt->{'file'});
 		}
 	else {
@@ -5231,6 +5359,8 @@ foreach my $p (@ports) {
 		&apache::save_directive("SetHandler", \@sh,
 					$dir->{'members'}, $conf);
 		&apache::save_directive("ProxyFCGISetEnvIf", [],
+					$dir->{'members'}, $conf);
+		&apache::save_directive("ProxyFCGIBackendType", [],
 					$dir->{'members'}, $conf);
 		&flush_file_lines($virt->{'file'});
 		}

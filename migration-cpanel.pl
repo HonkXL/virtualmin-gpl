@@ -158,9 +158,7 @@ if (-d $daily) {
 	local $named = &extract_cpanel_file("$daily/files/_etc_named.conf.gz");
 	local $zone;
 	if ($named) {
-		# Check for DNS zone
-		$zone = &get_bind_zone($dom, undef, $named);
-		push(@got, "dns") if ($zone);
+		push(@got, "dns");
 		}
 	local $localdomains = &extract_cpanel_file("$daily/files/_etc_localdomains.gz");
 	if ($localdomains) {
@@ -662,6 +660,8 @@ if ($owner && !$parent) {
 		local $dstfolder = { 'type' => $mtype, 'file' => $mfile };
 		&mailboxes::mailbox_move_folder($srcfolder, $dstfolder);
 		&set_mailfolder_owner($dstfolder, $owner);
+		&mailboxes::mailbox_uncompress_folder($dstfolder)
+			if (defined(&mailboxes::mailbox_uncompress_folder));
 		&$second_print(".. done");
 		}
 	else {
@@ -759,9 +759,8 @@ if ($got{'mail'}) {
 				local $uinfo = $useremail{$name};
 				local $olduinfo = { %$uinfo };
 				local $touser = $uinfo->{'user'};
-				if ($config{'mail_system'} == 0 &&
-				    $escuser =~ /\@/) {
-					$touser = &replace_atsign($touser);
+				if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
+					$touser = &escape_replace_atsign_if_exists($touser);
 					}
 				$touser = "\\".$touser;
 				$uinfo->{'to'} = [ $touser, @values ];
@@ -1076,6 +1075,12 @@ foreach my $pdom (&unique(@parked)) {
 	if ($alias{'mail'}) {
 		&cpanel_migrate_mailboxes($alias{'dom'}, \%alias, undef);
 		}
+
+	# Create parked domain aliases
+	&$first_print("Copying email aliases for parked domain $pdom ..");
+	my $acount = &cpanel_migrate_addon_aliases($pdom);
+	&$second_print(".. done (migrated $acount aliases)");
+
 	&$outdent_print();
 	&$second_print($text{'setup_done'});
 	push(@rvdoms, \%alias);
@@ -1289,68 +1294,7 @@ foreach my $vf (readdir(VF)) {
 
 	# Create parked domain aliases
 	&$first_print("Copying email aliases for addon domain $vf ..");
-	local $acount = 0;
-	local %gotvirt = map { $_->{'from'}, $_ } &list_virtusers();
-	open(VA, "<$userdir/va/$vf");
-	while(<VA>) {
-		s/\r|\n//g;
-		s/^\s*#.*$//;
-		if (/^(\S+):\s*(.*)$/) {
-			local ($name, $v) = ($1, $2);
-			next if (!$name);
-			local @values;
-			if ($v !~ /,/ && $v !~ /"/) {
-				# A single destination, not quoted!
-				@values = ( $v );
-				}
-			else {
-				# Comma-separated alias destinations
-				while($v =~ /^\s*,?\s*"(\|)([^"]+)"(.*)$/ ||
-				      $v =~ /^\s*,?\s*()"([^"]+)"(.*)$/ ||
-				      $v =~ /^\s*,?\s*(\|)"([^"]+)"(.*)$/ ||
-				      $v =~ /^\s*,?\s*()([^,\s]+)(.*)$/) {
-					push(@values, $1.$2);
-					$v = $3;
-					}
-				}
-			local $mailman = 0;
-			foreach my $v (@values) {
-				if ($v =~ /:fail:\s+(.*)/) {
-					# Fix bounce alias
-					$v = "BOUNCE $1";
-					}
-				local ($atype, $aname) = &alias_type($v, $name);
-				if ($atype == 4 && $aname =~ /autorespond\s+(\S+)\@(\S+)\s+(\S+)/) {
-					# Turn into Virtualmin auto-responder
-					$v = "| $module_config_directory/autoreply.pl $3/$name $1";
-					&set_ownership_permissions(
-						undef, undef, 0755,
-						$3, "$3/$name");
-					}
-				elsif ($atype == 4 && $aname =~ /mailman/) {
-					$mailman++;
-					}
-				}
-			# Don't create aliases for mailman lists
-			next if ($mailman || $name =~ /^owner-/);
-
-			# Already done a domain forward
-			next if ($name =~ /^\*/);
-
-			# Just create an alias
-			if ($name !~ /\@/) {
-				$name .= "\@".$dom;
-				}
-			local $virt = { 'from' => $name =~ /^\*/ ? "\@".$vf
-								 : $name,
-					'to' => \@values };
-			local $clash = $gotvirt{$virt->{'from'}};
-			&delete_virtuser($clash) if ($clash);
-			&create_virtuser($virt);
-			$acount++;
-			}
-		}
-	close(VA);
+	my $acount = &cpanel_migrate_addon_aliases($vf);
 	&$second_print(".. done (migrated $acount aliases)");
 	}
 }
@@ -1482,6 +1426,7 @@ foreach my $vf (readdir(VF)) {
 				'nocopyskel', 1,
 				'no_tmpl_aliases', 1,
 				);
+		$subd{'mail'} = 0;
 		foreach my $f (@subdom_features) {
 			if ($f eq 'mail') {
 				$subd{$f} = $subof{$f} && -r "$userdir/va/$vf";
@@ -1519,6 +1464,8 @@ foreach my $vf (readdir(VF)) {
 
 		&create_virtual_server(\%subd, $parentdom,
 				       $parentdom->{'user'});
+		&create_standard_directory_for_domain(
+		    \%subd, $subd{'cgi_bin_path'}, $tmpl->{'web_html_perms'}); 
 
 		# Cpanel sub-domains always seem to forward mail to the parent
 		if ($subd{'mail'}) {
@@ -1609,6 +1556,8 @@ while(<PASSWD>) {
 				     'type' => $crtype };
 		&mailboxes::mailbox_move_folder($srcfolder, $dstfolder);
 		&set_mailfolder_owner($dstfolder, $uinfo);
+		&mailboxes::mailbox_uncompress_folder($dstfolder)
+			if (defined(&mailboxes::mailbox_uncompress_folder));
 		opendir(DIR, $mailsrc);
 		while(my $mf = readdir(DIR)) {
 			next if ($mf eq "." || $mf eq ".." ||
@@ -1622,6 +1571,8 @@ while(<PASSWD>) {
 			&mailboxes::mailbox_move_folder($srcfolder,
 							$dstfolder);
 			&set_mailfolder_owner($dstfolder, $uinfo);
+			&mailboxes::mailbox_uncompress_folder($dstfolder)
+				if (defined(&mailboxes::mailbox_uncompress_folder));
 			}
 		closedir(DIR);
 		}
@@ -1693,6 +1644,75 @@ while(<PASSWD>) {
 	}
 close(PASSWD);
 &$second_print(".. done (migrated $mcount mail users)");
+}
+
+# cpanel_migrate_addon_aliases(domain)
+sub cpanel_migrate_addon_aliases
+{
+local ($vf) = @_;
+local $acount = 0;
+local %gotvirt = map { $_->{'from'}, $_ } &list_virtusers();
+open(VA, "<$userdir/va/$vf");
+while(<VA>) {
+	s/\r|\n//g;
+	s/^\s*#.*$//;
+	if (/^(\S+):\s*(.*)$/) {
+		local ($name, $v) = ($1, $2);
+		next if (!$name);
+		local @values;
+		if ($v !~ /,/ && $v !~ /"/) {
+			# A single destination, not quoted!
+			@values = ( $v );
+			}
+		else {
+			# Comma-separated alias destinations
+			while($v =~ /^\s*,?\s*"(\|)([^"]+)"(.*)$/ ||
+			      $v =~ /^\s*,?\s*()"([^"]+)"(.*)$/ ||
+			      $v =~ /^\s*,?\s*(\|)"([^"]+)"(.*)$/ ||
+			      $v =~ /^\s*,?\s*()([^,\s]+)(.*)$/) {
+				push(@values, $1.$2);
+				$v = $3;
+				}
+			}
+		local $mailman = 0;
+		foreach my $v (@values) {
+			if ($v =~ /:fail:\s+(.*)/) {
+				# Fix bounce alias
+				$v = "BOUNCE $1";
+				}
+			local ($atype, $aname) = &alias_type($v, $name);
+			if ($atype == 4 && $aname =~ /autorespond\s+(\S+)\@(\S+)\s+(\S+)/) {
+				# Turn into Virtualmin auto-responder
+				$v = "| $module_config_directory/autoreply.pl $3/$name $1";
+				&set_ownership_permissions(
+					undef, undef, 0755,
+					$3, "$3/$name");
+				}
+			elsif ($atype == 4 && $aname =~ /mailman/) {
+				$mailman++;
+				}
+			}
+		# Don't create aliases for mailman lists
+		next if ($mailman || $name =~ /^owner-/);
+
+		# Already done a domain forward
+		next if ($name =~ /^\*/);
+
+		# Just create an alias
+		if ($name !~ /\@/) {
+			$name .= "\@".$vf;
+			}
+		local $virt = { 'from' => $name =~ /^\*/ ? "\@".$vf
+							 : $name,
+				'to' => \@values };
+		local $clash = $gotvirt{$virt->{'from'}};
+		&delete_virtuser($clash) if ($clash);
+		&create_virtuser($virt);
+		$acount++;
+		}
+	}
+close(VA);
+return $acount;
 }
 
 # get_cpanel_db_list(file, user, origuser)

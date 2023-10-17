@@ -17,8 +17,33 @@ my $ng = $p =~ /nginx/;
 
 &ui_print_header(&domain_in($d), $text{'phpmode_title2'}, "");
 
+# Check for FPM port clash or error
+my $fixport = 0;
+my $clashdomid;
+if ($mode eq "fpm" && $can) {
+	my ($fpmerr, $otherid) = &get_php_fpm_port_error($d);
+	if ($fpmerr) {
+		my $otherd;
+		if ($otherid) {
+			# Has to be fixed on the other domain's page
+			$otherd = &get_domain_by($otherid);
+			}
+		if ($otherd && &can_edit_phpmode($otherd)) {
+			$fpmerr .= "<p>\n".&text('phpmode_fixport_desc2',
+				&ui_link("edit_phpmode.cgi?dom=$otherid",
+					 $text{'phpmode_title2'}));
+			}
+		else {
+			$fpmerr .= "<p>\n".$text{'phpmode_fixport_desc'};
+			}
+		print &ui_alert_box($fpmerr, 'warn');
+		$fixport = 1;
+		}
+	}
+
 print &ui_form_start("save_phpmode.cgi");
 print &ui_hidden("dom", $d->{'id'}),"\n";
+print &ui_hidden("fixport", $fixport),"\n" if (!$clashdomid);
 print &ui_hidden_table_start($text{'phpmode_header'}, "width=100%", 2,
 			     "phpmode", 1, [ "width=30%" ]);
 
@@ -45,12 +70,18 @@ if ($can) {
 	    ($p eq 'web' || &plugin_defined($p, "feature_get_web_php_children"))) {
 		$children = &get_domain_php_children($d);
 		if (defined($children) && $children >= 0) {
-			print &ui_table_row(&hlink($text{'phpmode_children'},
-						   "phpmode_children"),
-				    &ui_opt_textbox("children", $children > 0 ? $children : '', 5,
-				        $mode eq 'fcgid' ?
-				        $text{'tmpl_phpchildrenauto'} : 
-				        &text('tmpl_phpchildrennone', &get_php_max_childred_allowed())));
+			my $dom_limits = {};
+			if (defined(&supports_resource_limits) && &supports_resource_limits()) {
+				$dom_limits = &get_domain_resource_limits($d);
+				}
+			if (!$dom_limits->{'procs'}) {
+				print &ui_table_row(&hlink($text{'phpmode_children'},
+							   "phpmode_children"),
+					    &ui_opt_textbox("children", $children > 0 ? $children : '', 5,
+					        $mode eq 'fcgid' ?
+					        $text{'tmpl_phpchildrenauto'} : 
+					        &text('tmpl_phpchildrennone', &get_php_max_childred_allowed())));
+				}
 			}
 		}
 
@@ -66,6 +97,34 @@ if ($can) {
 			&ui_opt_textbox("maxtime", $max == 0 ? undef : $max,
 					5, $text{'form_unlimit'})." ".
 				    	$text{'rfile_secs'});
+		}
+	}
+
+# Show PHP error log
+if (&can_php_error_log($mode)) {
+	my $plog = &get_domain_php_error_log($d);
+	my $defplog = &get_default_php_error_log($d);
+	my $lmode = !$plog ? 1 :
+		    $plog eq $defplog ? 2 : 0;
+	if (&can_log_paths()) {
+		# Can set to any path
+		print &ui_table_row(&hlink($text{'phpmode_plog'}, 'phplog'),
+			&ui_radio_table("plog_def", $lmode,
+			[ [ 1, $text{'phpmode_noplog'} ],
+			  [ 2, $text{'phpmode_defplog'},
+			       "<tt>$defplog</tt>" ],
+			  [ 0, $text{'phpmode_fileplog'},
+			    &ui_textbox("plog", $lmode == 0 ? $plog : "", 60) ],
+			]));
+		}
+	else {
+		# Can just turn on or off
+		print &ui_table_row(&hlink($text{'phpmode_plog'}, 'phplog'),
+			&ui_radio("plog_def", $lmode == 1 ? 1 : 0,
+				  [ [ 1, $text{'phpmode_noplog'} ],
+				    [ 0, $lmode != 0 ? $text{'phpmode_defplog'}
+						    : $text{'phpmode_fileplog'}.
+						      " <tt>$plog</tt>" ] ]));
 		}
 	}
 
@@ -167,7 +226,7 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 			   $text{'phpver_ver'} );
 		print &ui_table_row(
 			&hlink($text{'phpmode_versions'}, "phpmode_versions"),
-			&ui_columns_table(\@heads, 100, \@table));
+			&ui_columns_table(\@heads, 100, \@table), undef, undef, ["data-table-id='php-multi'"]);
 
 		# Warn if changing mode would remove per-dir versions
 		if ($mode eq "cgi" || $mode eq "fcgid") {
@@ -177,22 +236,6 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 				}
 			}
 		}
-	}
-
-# Show PHP error log
-if (&can_php_error_log($mode)) {
-	$plog = &get_domain_php_error_log($d);
-	$defplog = &get_default_php_error_log($d);
-	$mode = !$plog ? 1 :
-		$plog eq $defplog ? 2 : 0;
-	print &ui_table_row(&hlink($text{'phpmode_plog'}, 'phplog'),
-		&ui_radio_table("plog_def", $mode,
-		[ [ 1, $text{'phpmode_noplog'} ],
-		  [ 2, $text{'phpmode_defplog'},
-		       "<tt>$defplog</tt>" ],
-		  [ 0, $text{'phpmode_fileplog'},
-		    &ui_textbox("plog", $mode == 0 ? $plog : "", 60) ],
-		]));
 	}
 
 print &ui_hidden_table_end();

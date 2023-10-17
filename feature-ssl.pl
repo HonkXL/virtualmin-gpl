@@ -1,4 +1,5 @@
 
+
 sub init_ssl
 {
 $feature_depends{'ssl'} = [ 'web', 'dir' ];
@@ -674,6 +675,18 @@ if ($err) {
 	return $err;
 	}
 
+# Check the key type
+local $type = &get_ssl_key_type($key, $d->{'ssl_pass'});
+$type || return &text('validate_esslkeytype', "<tt>$key</tt>");
+
+# Make sure the cert and key match
+my $certdata = &read_file_contents($cert);
+my $keydata = &read_file_contents($key);
+my $err = check_cert_key_match($certdata, $keydata);
+if ($err) {
+	return $err;
+	}
+
 # Make sure this domain or www.domain matches cert. Include aliases, because
 # in some cases the alias may be the externally visible domain
 my $match = 0;
@@ -910,30 +923,43 @@ if ($virt) {
 			}
 		}
 
-	# Restore the cert and key, if any and if saved
-	local $cert = $d->{'ssl_cert'} ||
+	if (!$d->{'ssl_same'}) {
+		# Restore the cert and key, if any and if saved and if not
+		# shared with another domain
+		local $cert = $d->{'ssl_cert'} ||
 		      &apache::find_directive("SSLCertificateFile", $vconf, 1);
-	if ($cert && -r $file."_cert") {
-		&lock_file($cert);
-		&write_ssl_file_contents($d, $cert, $file."_cert");
-		&unlock_file($cert);
-		}
-	local $key = $d->{'ssl_key'} ||
+		if ($cert && -r $file."_cert") {
+			&lock_file($cert);
+			&write_ssl_file_contents($d, $cert, $file."_cert");
+			&unlock_file($cert);
+			&save_website_ssl_file($d, "cert", $cert);
+			}
+		local $key = $d->{'ssl_key'} ||
 		     &apache::find_directive("SSLCertificateKeyFile", $vconf,1);
-	if ($key && -r $file."_key" && $key ne $cert) {
-		&lock_file($key);
-		&write_ssl_file_contents($d, $key, $file."_key");
-		&unlock_file($key);
+		if ($key && -r $file."_key" && $key ne $cert) {
+			&lock_file($key);
+			&write_ssl_file_contents($d, $key, $file."_key");
+			&unlock_file($key);
+			&save_website_ssl_file($d, "key", $key);
+			}
+		local $ca = $d->{'ssl_chain'} ||
+		    &apache::find_directive("SSLCACertificateFile", $vconf,1) ||
+		    &apache::find_directive("SSLCertificateChainFile", $vconf, 1);
+		if ($ca && -r $file."_ca") {
+			&lock_file($ca);
+			&write_ssl_file_contents($d, $ca, $file."_ca");
+			&unlock_file($ca);
+			&save_website_ssl_file($d, "ca", $ca);
+			}
+		&refresh_ssl_cert_expiry($d);
+		&sync_combined_ssl_cert($d);
 		}
-	local $ca = $d->{'ssl_chain'} ||
-	    &apache::find_directive("SSLCACertificateFile", $vconf,1) ||
-	    &apache::find_directive("SSLCertificateChainFile", $vconf, 1);
-	if ($ca && -r $file."_ca") {
-		&lock_file($ca);
-		&write_ssl_file_contents($d, $ca, $file."_ca");
-		&unlock_file($ca);
+	else {
+		# Make sure that the Apache config uses the correct SSL path
+		&save_website_ssl_file($d, "cert", $d->{'ssl_cert'});
+		&save_website_ssl_file($d, "key", $d->{'ssl_key'});
+		&save_website_ssl_file($d, "ca", $d->{'ssl_chain'});
 		}
-	&sync_combined_ssl_cert($d);
 
 	# Re-setup any SSL passphrase
 	&save_domain_passphrase($d);
@@ -959,10 +985,12 @@ if ($virt) {
 	&remove_dav_directives($d, $virt, $vconf, $conf);
 
 	# Re-save CA cert path based on actual config
-	$d->{'ssl_chain'} = &get_website_ssl_file($d, 'ca');
+	if (!$d->{'ssl_same'}) {
+		$d->{'ssl_chain'} = &get_website_ssl_file($d, 'ca');
 
-	# Sync cert to Dovecot, Postfix, Webmin, etc..
-	&enable_domain_service_ssl_certs($d);
+		# Sync cert to Dovecot, Postfix, Webmin, etc..
+		&enable_domain_service_ssl_certs($d);
+		}
 
 	&$second_print($text{'setup_done'});
 	}
@@ -1052,7 +1080,7 @@ while(<OUT>) {
 	if (/subject=.*L\s*=\s*([^\/,]+)/) {
 		$rv{'l'} = $1;
 		}
-	if (/subject=.*O\s*=\s*([^\/,]+)/) {
+	if (/subject=.*O\s*=\s*"(.*?)"/ || /subject=.*O\s*=\s*([^\/,]+)/) {
 		$rv{'o'} = $1;
 		}
 	if (/subject=.*OU\s*=\s*([^\/,]+)/) {
@@ -1074,7 +1102,7 @@ while(<OUT>) {
 	if (/issuer=.*L\s*=\s*([^\/,]+)/) {
 		$rv{'issuer_l'} = $1;
 		}
-	if (/issuer=.*O\s*=\s*([^\/,]+)/) {
+	if (/issuer=.*O\s*=\s*"(.*?)"/ || /issuer=.*O\s*=\s*([^\/,]+)/) {
 		$rv{'issuer_o'} = $1;
 		}
 	if (/issuer=.*OU\s*=\s*([^\/,]+)/) {
@@ -1127,6 +1155,30 @@ $rv{'type'} = $rv{'self'} ? $text{'cert_typeself'} : $text{'cert_typereal'};
 return \%rv;
 }
 
+# convert_ssl_key_format(&domain, file, "pkcs1"|"pkcs8", [outfile])
+# Convert an SSL key into a different format
+sub convert_ssl_key_format
+{
+my ($d, $file, $fmt, $outfile) = @_;
+$outfile ||= $file;
+my $cmd;
+if ($fmt eq "pkcs1") {
+	$cmd = "openssl rsa -in ".quotemeta($file)." -out ".quotemeta($outfile);
+	}
+elsif ($fmt eq "pkcs8") {
+	$cmd = "openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt -in ".
+	       quotemeta($file)." -out ".quotemeta($outfile);
+	}
+else {
+	return "Unknown format $fmt";
+	}
+if ($d && &is_under_directory($d->{'home'}, $file)) {
+	$cmd = &command_as_user($d->{'user'}, 0, $cmd);
+	}
+my $out = &backquote_logged("$cmd 2>&1 </dev/null");
+return $? ? $out : undef;
+}
+
 # parse_notafter_date(str)
 # Parse a date string like "Nov 30 07:46:00 2016 GMT" into a Unix time
 sub parse_notafter_date
@@ -1173,6 +1225,31 @@ foreach my $sp (&cert_file_split($file2)) {
 return 0;
 }
 
+# get_ssl_key_type(file, [passphrase])
+# Returns 'rsa' or 'ec' depending on the key type
+sub get_ssl_key_type
+{
+my ($key, $pass) = @_;
+
+# First check if it's in the key file format
+my $lref = &read_file_lines($key, 1);
+foreach my $l (@$lref) {
+	if ($l =~ /-----BEGIN\s+(RSA|EC)\s+PRIVATE\s+KEY----/) {
+		return lc($1);
+		}
+	}
+
+# Fallback to seeing if the openssl command can parse it
+my $qpass = $pass ? quotemeta($pass) : "NONE";
+foreach my $t ('rsa', 'ec') {
+	my $ex = &execute_command("openssl $t -in ".quotemeta($key).
+				  " -text -passin pass:".$qpass);
+	return $t if (!$ex);
+	}
+
+return undef;
+}
+
 # check_passphrase(key-data, passphrase)
 # Returns 0 if a passphrase is needed by not given, 1 if not needed, 2 if OK
 sub check_passphrase
@@ -1183,13 +1260,14 @@ local $temp = &transname();
 &set_ownership_permissions(undef, undef, 0700, $temp);
 &print_tempfile(KEY, $newkey);
 &close_tempfile(KEY);
-local $rv = &execute_command("openssl rsa -in ".quotemeta($temp).
+my $type = &get_ssl_key_type($temp, $pass);
+local $rv = &execute_command("openssl $type -in ".quotemeta($temp).
 			     " -text -passin pass:NONE");
 if (!$rv) {
 	return 1;
 	}
 if ($pass) {
-	local $rv = &execute_command("openssl rsa -in ".quotemeta($temp).
+	local $rv = &execute_command("openssl $type -in ".quotemeta($temp).
 				     " -text -passin pass:".quotemeta($pass));
 	if (!$rv) {
 		return 2;
@@ -1203,8 +1281,9 @@ return 0;
 sub get_key_size
 {
 local ($file) = @_;
+my $type = &get_ssl_key_type($file);
 local $out = &backquote_command(
-	"openssl rsa -in ".quotemeta($file)." -text 2>&1 </dev/null");
+	"openssl $type -in ".quotemeta($file)." -text 2>&1 </dev/null");
 if ($out =~ /Private-Key:\s+\((\d+)/i) {
 	return $1;
 	}
@@ -1262,33 +1341,68 @@ my $pps_file = @pps_str ? $pps_str[0]->{'file'} : $conf->[0]->{'file'};
 # on success or an error message on failure.
 sub check_cert_key_match
 {
-local ($certtext, $keytext) = @_;
-local $certfile = &transname();
-local $keyfile = &transname();
-foreach $tf ([ $certtext, $certfile ], [ $keytext, $keyfile ]) {
+my ($certtext, $keytext) = @_;
+my $certfile = &transname();
+my $keyfile = &transname();
+foreach my $tf ([ $certtext, $certfile ], [ $keytext, $keyfile ]) {
 	&open_tempfile(CERTOUT, ">$tf->[1]", 0, 1);
 	&print_tempfile(CERTOUT, $tf->[0]);
 	&close_tempfile(CERTOUT);
 	}
-# Get certificate modulus
-local $certmodout = &backquote_command(
-	"openssl x509 -noout -modulus -in ".quotemeta($certfile)." 2>&1");
-$certmodout =~ /Modulus=([A-F0-9]+)/i ||
-	return "Certificate data is not valid : $certmodout";
-local $certmod = $1;
+my $type = &get_ssl_key_type($keyfile);
 
-# Get key modulus
-local $keymodout = &backquote_command(
-	"openssl rsa -noout -modulus -in ".quotemeta($keyfile)." 2>&1");
-$keymodout =~ /Modulus=([A-F0-9]+)/i ||
-	return "Key data is not valid : $keymodout";
-local $keymod = $1;
+if ($type eq "ec") {
+	# Get the public key data from the cert
+	my $x;
+	my $certpub = &extract_public_key($x=&backquote_command(
+		"openssl x509 -noout -text -in ".quotemeta($certfile)." 2>&1"));
+	my $keypub = &extract_public_key($x=&backquote_command(
+		"openssl ec -noout -text -in ".quotemeta($keyfile)." 2>&1"));
+	$certpub eq $keypub ||
+		return "Certificate and private key do not match";
+	}
+else {
+	# Get certificate modulus
+	my $certmodout = &backquote_command(
+	    "openssl x509 -noout -modulus -in ".quotemeta($certfile)." 2>&1");
+	$certmodout =~ /Modulus=([A-F0-9]+)/i ||
+		return "Certificate data is not valid : $certmodout";
+	my $certmod = $1;
 
-# Make sure they match
-$certmod eq $keymod ||
-	return "Certificate and private key do not match";
+	# Get key modulus
+	my $keymodout = &backquote_command(
+	    "openssl $type -noout -modulus -in ".quotemeta($keyfile)." 2>&1");
+	$keymodout =~ /Modulus=([A-F0-9]+)/i ||
+		return "Key data is not valid : $keymodout";
+	my $keymod = $1;
+
+	# Make sure they match
+	$certmod eq $keymod ||
+		return "Certificate and private key do not match";
+	}
 
 return undef;
+}
+
+# extract_public_key(text)
+# Given openssl -text output, extract the public key data
+sub extract_public_key
+{
+my ($txt) = @_;
+my $found = 0;
+my $pub = "";
+foreach my $l (split(/\r?\n/, $txt)) {
+	if ($l =~ /^\s*pub:\s*$/) {
+		$found = 1;
+		}
+	elsif ($l =~ /^\s+([a-f0-9:]+)\s*$/ && $found) {
+		$pub .= $1;
+		}
+	elsif ($found) {
+		last;
+		}
+	}
+return $pub;
 }
 
 # validate_cert_format(data|file, type)
@@ -1518,7 +1632,7 @@ else {
 	local @tls = ( "SSLv2", "SSLv3" );
 	if ($apache::httpd_modules{'core'} >= 2.4) {
 		push(@tls, "TLSv1");
-		if (&get_openssl_version() >= 1) {
+		if (&compare_version_numbers(&get_openssl_version(), '>=', '1.0.0')) {
 			push(@tls, "TLSv1.1");
 			}
 		}
@@ -1684,7 +1798,7 @@ return &webmin::find_openssl_config_file();
 # files. Returns undef on success, or an error message on failure.
 sub generate_self_signed_cert
 {
-local ($certfile, $keyfile, $size, $days, $country, $state, $city, $org,
+my ($certfile, $keyfile, $size, $days, $country, $state, $city, $org,
        $orgunit, $common, $email, $altnames, $d, $ctype) = @_;
 $ctype ||= $config{'default_ctype'};
 &foreign_require("webmin");
@@ -1692,23 +1806,37 @@ $size ||= $webmin::default_key_size;
 $days ||= 1825;
 
 # Prepare for SSL alt names
-local @cnames = ( $common );
+my @cnames = ( $common );
 push(@cnames, @$altnames) if ($altnames);
-local $conf = &webmin::build_ssl_config(\@cnames);
-local $subject = &webmin::build_ssl_subject($country, $state, $city, $org,
-					    $orgunit, \@cnames, $email);
+my $conf = &webmin::build_ssl_config(\@cnames);
+my $subject = &webmin::build_ssl_subject($country, $state, $city, $org,
+					 $orgunit, \@cnames, $email);
 
 # Call openssl and write to temp files
-local $outtemp = &transname();
-local $keytemp = &transname();
-local $certtemp = &transname();
-local $ctypeflag = $ctype eq "sha2" ? "-sha256" : "";
-local $addtextsup = &get_openssl_version() >= 1.1 ? "-addext extendedKeyUsage=serverAuth" : "";
-local $out = &backquote_logged(
-	"openssl req $ctypeflag -reqexts v3_req -newkey rsa:$size ".
-	"-x509 -nodes -out ".quotemeta($certtemp)." -keyout ".quotemeta($keytemp)." ".
-	"-days $days -config ".quotemeta($conf)." -subj ".quotemeta($subject)." $addtextsup -utf8 2>&1");
-local $rv = $?;
+my $keytemp = &transname();
+my $certtemp = &transname();
+my $ctypeflag = $ctype eq "sha2" || $ctype =~ /^ec/ ? "-sha256" : "";
+my $addtextsup = &compare_version_numbers(&get_openssl_version(), '>=', '1.1.1') ? "-addext extendedKeyUsage=serverAuth" : "";
+my $out;
+if ($ctype =~ /^ec/) {
+	my $pubtemp = &transname();
+	$out = &backquote_logged(
+		"openssl ecparam -genkey -name prime256v1 ".
+		"-noout -out ".quotemeta($keytemp)." 2>&1 && ".
+		"openssl ec -in ".quotemeta($keytemp)." -pubout ".
+		"-out ".quotemeta($pubtemp)." 2>&1 && ".
+		"openssl req -new -x509 -reqexts v3_req -days $days ".
+		"-config ".quotemeta($conf)." -subj ".quotemeta($subject).
+		" $addtextsup -utf8 -key ".quotemeta($keytemp)." ".
+		"-out ".quotemeta($certtemp)." 2>&1");
+	}
+else {
+	$out = &backquote_logged(
+		"openssl req $ctypeflag -reqexts v3_req -newkey rsa:$size ".
+		"-x509 -nodes -out ".quotemeta($certtemp)." -keyout ".quotemeta($keytemp)." ".
+		"-days $days -config ".quotemeta($conf)." -subj ".quotemeta($subject)." $addtextsup -utf8 2>&1");
+	}
+my $rv = $?;
 if (!-r $certtemp || !-r $keytemp || $rv) {
 	# Failed .. return error
 	return &text('csr_ekey', "<pre>$out</pre>");
@@ -1730,24 +1858,34 @@ return undef;
 # files. Returns undef on success, or an error message on failure.
 sub generate_certificate_request
 {
-local ($csrfile, $keyfile, $size, $country, $state, $city, $org,
+my ($csrfile, $keyfile, $size, $country, $state, $city, $org,
        $orgunit, $common, $email, $altnames, $d, $ctype) = @_;
 $ctype ||= $config{'cert_type'};
 &foreign_require("webmin");
 $size ||= $webmin::default_key_size;
 
 # Generate the key
-local $keytemp = &transname();
-local $out = &backquote_command("openssl genrsa -out ".quotemeta($keytemp)." $size 2>&1 </dev/null");
-local $rv = $?;
+my $keytemp = &transname();
+my $out;
+if ($ctype =~ /^ec/) {
+	$out = &backquote_command(
+		"openssl ecparam -genkey -name prime256v1 -out ".
+		quotemeta($keytemp)." 2>&1 </dev/null");
+	}
+else {
+	$out = &backquote_command(
+		"openssl genrsa -out ".quotemeta($keytemp).
+		" $size 2>&1 </dev/null");
+	}
+my $rv = $?;
 if (!-r $keytemp || $rv) {
 	return &text('csr_ekey', "<pre>$out</pre>");
 	}
 
 # Generate the CSR
-local @cnames = ( $common );
+my @cnames = ( $common );
 push(@cnames, @$altnames) if ($altnames);
-local ($ok, $csrtemp) = &webmin::generate_ssl_csr($keytemp, $country, $state, $city, $org, $orgunit, \@cnames, $email, $ctype);
+my ($ok, $csrtemp) = &webmin::generate_ssl_csr($keytemp, $country, $state, $city, $org, $orgunit, \@cnames, $email, $ctype);
 if (!$ok) {
 	return &text('csr_ecsr', "<pre>$csrtemp</pre>");
 	}
@@ -1872,20 +2010,20 @@ if ($save) {
 # cert if needed. May print stuff.
 sub generate_default_certificate
 {
-local ($d) = @_;
+my ($d) = @_;
 $d->{'ssl_cert'} ||= &default_certificate_file($d, 'cert');
 $d->{'ssl_key'} ||= &default_certificate_file($d, 'key');
 if (!-r $d->{'ssl_cert'} && !-r $d->{'ssl_key'}) {
 	# Need to do it
-	local $temp = &transname();
+	my $temp = &transname();
 	&$first_print($text{'setup_openssl'});
 	&lock_file($d->{'ssl_cert'});
 	&lock_file($d->{'ssl_key'});
-	local @alts = ( $d->{'dom'}, "localhost",
+	my @alts = ( $d->{'dom'}, "localhost",
 			&get_system_hostname(0),
 			&get_system_hostname(1) );
 	@alts = &unique(@alts);
-	local $err = &generate_self_signed_cert(
+	my $err = &generate_self_signed_cert(
 		$d->{'ssl_cert'}, $d->{'ssl_key'}, undef, 1825,
 		undef, undef, undef, $d->{'owner'}, undef,
 		"*.$d->{'dom'}", $d->{'emailto_addr'},
@@ -1912,6 +2050,11 @@ if (!-r $d->{'ssl_cert'} && !-r $d->{'ssl_key'}) {
 return 0;
 }
 
+sub list_ssl_file_types
+{
+return ('cert', 'key', 'chain', 'combined', 'everything');
+}
+
 # break_ssl_linkage(&domain, &old-same-domain)
 # If domain was using the SSL cert from old-same-domain before, break the link
 # by copying the cert into the default location for domain and updating the
@@ -1923,7 +2066,7 @@ my @beforecerts = &get_all_domain_service_ssl_certs($d);
 
 # Copy the cert and key to the new owning domain's directory
 &create_ssl_certificate_directories($d);
-foreach my $k ('cert', 'key', 'chain') {
+foreach my $k (&list_ssl_file_types()) {
 	if ($d->{'ssl_'.$k}) {
 		$d->{'ssl_'.$k} = &default_certificate_file($d, $k);
 		&write_ssl_file_contents(
@@ -1935,7 +2078,8 @@ delete($d->{'ssl_same'});
 # Re-generate any combined cert files
 &sync_combined_ssl_cert($d);
 
-if ($d->{'web'}) {
+my $p = &domain_has_website($d);
+if ($p eq 'web') {
 	# Update Apache config to point to the new cert file
 	local ($ovirt, $ovconf, $conf) = &get_apache_virtual(
 		$d->{'dom'}, $d->{'web_sslport'});
@@ -1956,6 +2100,12 @@ if ($d->{'web'}) {
 			$ovconf, $conf);
 		&flush_file_lines($ovirt->{'file'});
 		}
+	}
+else {
+	# Update the other webserver's config
+	&save_website_ssl_file($d, "cert", $d->{'ssl_cert'});
+	&save_website_ssl_file($d, "key", $d->{'ssl_key'});
+	&save_website_ssl_file($d, "ca", $d->{'ssl_chain'});
 	}
 
 # Update any service certs for this domain
@@ -2197,6 +2347,8 @@ else {
 		}
 	else {
 		# May need to add or update
+		my $pdname = $d->{'dom'};
+		$pdname =~ s/^[^\.]+\.//;
 		foreach my $n (@dnames) {
 			my ($l) = grep { $_->{'value'} eq $n } @loc;
 			if ($l) {
@@ -2225,7 +2377,9 @@ else {
 						  'file' => $cfile, },
 						],
 					  'file' => $cfile };
-				&dovecot::create_section($conf, $l);
+				my ($plocal) = grep { $_->{'value'} eq $pdname } @loc;
+				&dovecot::create_section($conf, $l, undef,
+							 $plocal);
 				push(@$conf, $l);
 				&flush_file_lines($l->{'file'}, undef, 1);
 				}
@@ -2499,13 +2653,17 @@ elsif (&postfix_supports_sni()) {
 		}
 	else {
 		# Add or update map entries for domain
+		my $pdname = $d->{'dom'};
+		$pdname =~ s/^[^\.]+\.//;
 		foreach my $dname (@dnames) {
 			my ($r) = grep { $_->{'name'} eq $dname } @$map;
+			my ($pdr) = grep { $_->{'name'} eq $pdname } @$map;
 			if (!$r) {
 				# Need to add
 				&postfix::create_mapping(
 				    "tls_server_sni_maps",
-				    { 'name' => $dname, 'value' => $certstr });
+				    { 'name' => $dname, 'value' => $certstr },
+				    undef, undef, $pdr);
 				}
 			else {
 				# Update existing certs
@@ -2535,9 +2693,7 @@ else {
 	# Cannot use per-domain or per-IP cert
 	return 0;
 	}
-if ($changed) {
-	&register_post_action(\&restart_mail_server);
-	}
+&register_post_action(\&restart_mail_server);
 return 1;
 }
 
@@ -2710,8 +2866,8 @@ foreach my $d (&list_domains()) {
 	next if (time() - $d->{'letsencrypt_last'} < 60*60);
 
 	# Is it time? Either the user-chosen number of months has passed, or
-	# the cert is within 21 days of expiry
-	my $before = $config{'renew_letsencrypt'} || 21;
+	# the cert is within 30 days of expiry
+	my $before = $config{'renew_letsencrypt'} || 30;
 	my $day = 24 * 60 * 60;
 	my $age = time() - $ltime;
 	my $rf = rand() * 3600;
@@ -2734,6 +2890,7 @@ foreach my $d (&list_domains()) {
 	$done++;
 	my ($ok, $err, $dnames) = &renew_letsencrypt_cert($d);
 	my ($subject, $body);
+	&lock_domain($d);
 	if (!$ok) {
 		# Failed! Tell the user
 		$subject = $text{'letsencrypt_sfailed'};
@@ -2754,6 +2911,7 @@ foreach my $d (&list_domains()) {
 	# Send email
 	my $from = &get_global_from_address($d);
 	&send_notify_email($from, [$d], $d, $subject, $body);
+	&unlock_domain($d);
 	}
 
 $config{'last_letsencrypt_mass_renewal'} = $now;
@@ -2792,7 +2950,10 @@ if ($merr) {
 else {
 	my $before = &before_letsencrypt_website($d);
 	($ok, $cert, $key, $chain) =
-		&request_domain_letsencrypt_cert($d, \@dnames);
+		&request_domain_letsencrypt_cert($d, \@dnames, 0,
+		    $d->{'letsencrypt_size'}, undef, $d->{'letsencrypt_ctype'},
+		    $d->{'letsencrypt_server'}, $d->{'letsencrypt_key'},
+		    $d->{'letsencrypt_hmac'});
 	&after_letsencrypt_website($d, $before);
 	}
 
@@ -2857,7 +3018,8 @@ $d->{'ssl_pass'} = undef;
 
 # And the chained file
 if ($chain) {
-	$chainfile = &default_certificate_file($d, 'ca');
+	$chainfile = $d->{'ssl_chain'} ||
+	    &default_certificate_file($d, 'ca');
 	$chain_text = &read_file_contents($chain);
 	&lock_file($chainfile);
 	&write_ssl_file_contents($d, $chainfile, $chain_text);
@@ -2873,19 +3035,25 @@ if ($chain) {
 &update_caa_record($d);
 }
 
-# update_caa_record(&domain)
+# update_caa_record(&domain, [force-letsencrypt])
 # Update the CAA record for Let's Encrypt if needed
 sub update_caa_record
 {
-my ($d) = @_;
+my ($d, $letsencrypt_cert) = @_;
 &require_bind();
 return undef if (!$d->{'dns'});
 return undef if (!$d->{'dns_cloud'} &&
 		 &compare_version_numbers($bind8::bind_version, "9.9.6") < 0);
 my ($recs, $file) = &get_domain_dns_records_and_file($d);
 my @caa = grep { $_->{'type'} eq 'CAA' } @$recs;
-my $info = &cert_info($d);
-my $lets = &is_letsencrypt_cert($info) ? 1 : 0;
+# At this stage the cert is always self-signed,
+# so we need to force it for Let's Encrypt
+my $lets = $letsencrypt_cert;
+if (!$lets) {
+	my $info = &cert_info($d);
+	$lets = &is_letsencrypt_cert($info) ? 1 : 0;
+	}
+# Need delay for DNS propagation
 if (!@caa && $lets) {
 	# Need to add a Let's Encrypt record
 	&pre_records_change($d);
@@ -2922,7 +3090,8 @@ if ($d->{'ssl_same'}) {
 	}
 
 # Create file of all the certs
-my $combfile = &default_certificate_file($d, 'combined');
+my $combfile = $d->{'ssl_combined'} ||
+       &default_certificate_file($d, 'combined');
 &lock_file($combfile);
 &create_ssl_certificate_directories($d);
 my $comb = &read_file_contents($d->{'ssl_cert'})."\n";
@@ -2934,7 +3103,8 @@ if (-r $d->{'ssl_chain'}) {
 $d->{'ssl_combined'} = $combfile;
 
 # Create file of all the certs, and the key
-my $everyfile = &default_certificate_file($d, 'everything');
+my $everyfile = $d->{'ssl_everything'} ||
+       &default_certificate_file($d, 'everything');
 &lock_file($everyfile);
 my $every = &read_file_contents($d->{'ssl_key'})."\n".
 	    &read_file_contents($d->{'ssl_cert'})."\n";
@@ -2951,7 +3121,7 @@ $d->{'ssl_everything'} = $everyfile;
 sub get_openssl_version
 {
 my $out = &backquote_command("openssl version 2>/dev/null");
-if ($out =~ /OpenSSL\s+(\d\.\d)/) {
+if ($out =~ /OpenSSL\s+(\d\.\d\.\d)/) {
 	return $1;
 	}
 return 0;
@@ -3023,43 +3193,66 @@ foreach my $h (@$dnames) {
 return \@rv;
 }
 
-# request_domain_letsencrypt_cert(&domain, &dnames, [staging], [size], [mode])
+# request_domain_letsencrypt_cert(&domain, &dnames, [staging], [size], [mode],
+# 				  [key-type], [letsencrypt-server],
+# 				  [server-key], [server-hmac])
 # Attempts to request a Let's Encrypt cert for a domain, trying both web and
-# DNS modes if possible
+# DNS modes if possible. The key type must be one of 'rsa' or 'ecdsa'
 sub request_domain_letsencrypt_cert
 {
-my ($d, $dnames, $staging, $size, $mode) = @_;
-my $dnames = &filter_ssl_wildcards($dnames);
+my ($d, $dnames, $staging, $size, $mode, $ctype, $server, $keytype, $hmac) = @_;
+my ($ok, $cert, $key, $chain, @errs);
+my @tried = !$config{'letsencrypt_retry'} ? (0..1) : (1);
+$dnames = &filter_ssl_wildcards($dnames);
 $size ||= $config{'key_size'};
 &foreign_require("webmin");
 my $phd = &public_html_dir($d);
-my ($ok, $cert, $key, $chain);
-my @errs;
+my $actype = $ctype =~ /^ec/ ? "ecdsa" : "rsa";
+my $dctype = $d->{'letsencrypt_ctype'} =~ /^ec/ ? "ecdsa" : "rsa";
+my $actype_reuse = $actype eq $dctype ? 1 : 0;
 my @wilds = grep { /^\*\./ } @$dnames;
 &lock_file($ssl_letsencrypt_lock);
-if (&domain_has_website($d) && !@wilds && (!$mode || $mode eq "web")) {
-	# Try using website first
-	($ok, $cert, $key, $chain) = &webmin::request_letsencrypt_cert(
-		$dnames, $phd, $d->{'emailto'}, $size, "web", $staging,
-		&get_global_from_address());
-	push(@errs, &text('letsencrypt_eweb', $cert)) if (!$ok);
-	}
-if (!$ok && &get_webmin_version() >= 1.834 && $d->{'dns'} &&
-    (!$mode || $mode eq "dns")) {
-	# Fall back to DNS
-	($ok, $cert, $key, $chain) = &webmin::request_letsencrypt_cert(
-		$dnames, undef, $d->{'emailto'}, $size, "dns", $staging,
-		&get_global_from_address());
-	push(@errs, &text('letsencrypt_edns', $cert)) if (!$ok);
-	}
-elsif (!$ok) {
-	if (!$cert) {
-		$cert = "Domain has no website, ".
-			"and DNS-based validation is not possible";
-		push(@errs, $cert);
+&disable_quotas($d);
+foreach (@tried) {
+	my $try = $_;
+	@errs = ();
+	if (&domain_has_website($d) && !@wilds && (!$mode || $mode eq "web")) {
+		# Try using website first
+		($ok, $cert, $key, $chain) = &webmin::request_letsencrypt_cert(
+			$dnames, $phd, $d->{'emailto'}, $size, "web", $staging,
+			&get_global_from_address(), $actype, $actype_reuse,
+			$server, $keytype, $hmac);
+		push(@errs, &text('letsencrypt_eweb', $cert)) if (!$ok);
+		}
+	if (!$ok && &get_webmin_version() >= 1.834 && $d->{'dns'} &&
+		(!$mode || $mode eq "dns")) {
+		# Fall back to DNS
+		($ok, $cert, $key, $chain) = &webmin::request_letsencrypt_cert(
+			$dnames, undef, $d->{'emailto'}, $size, "dns", $staging,
+			&get_global_from_address(), $actype, $actype_reuse,
+			$server, $keytype, $hmac);
+		push(@errs, &text('letsencrypt_edns', $cert)) if (!$ok);
+		}
+	elsif (!$ok) {
+		if (!$cert) {
+			$cert = "Domain has no website, ".
+				"and DNS-based validation is not possible";
+			push(@errs, $cert);
+			}
+		}
+	if (!$ok && !$try) {
+		# Try again after a small delay, which works in 99% of
+		# cases, considering initial configuration was correct
+		my %webmin_mod_config = &foreign_config("webmin");
+		sleep((int($webmin_mod_config{'letsencrypt_dns_wait'}) || 10) * 2);
+		}
+	else {
+		last;
 		}
 	}
+&enable_quotas($d);
 &unlock_file($ssl_letsencrypt_lock);
+# Return results
 if (!$ok) {
 	return ($ok, join("&nbsp;&nbsp;&nbsp;", @errs), $key, $chain);
 	}
@@ -3086,6 +3279,17 @@ foreach my $f (@$feats) {
 		}
 	}
 return @rv;
+}
+
+# letsencrypt_supports_ec()
+# Returns 1 if Let's Encrypt client supports EC certificates
+sub letsencrypt_supports_ec
+{
+&foreign_require("webmin");
+return 0 if (&webmin::check_letsencrypt());	# Not installed
+return 0 if (!$webmin::letsencrypt_cmd);	# Missing native client
+my $ver = &webmin::get_certbot_major_version($webmin::letsencrypt_cmd);
+return &compare_versions($ver, 2.0) >= 0;
 }
 
 # sync_webmin_ssl_cert(&domain, [enable-or-disable])
@@ -3202,6 +3406,18 @@ if ($cert_info) {
 	}
 }
 
+# get_ssl_cert_expiry(&domain)
+# Returns the cached SSL cert expiry for a domain
+sub get_ssl_cert_expiry
+{
+my ($d) = @_;
+if ($d->{'ssl_same'}) {
+	my $s = &get_domain($d->{'ssl_same'});
+	return $s ? &get_ssl_cert_expiry($s) : undef;
+	}
+return $d->{'ssl_cert_expiry'};
+}
+
 # can_reset_ssl(&domain)
 # Resetting SSL on it's own doesn't make sense, since it's included in the web
 # feature reset
@@ -3246,7 +3462,7 @@ print &ui_table_row(&hlink($text{'newweb_usermin'},
 		  $tmpl->{'web_usermin_ssl'} ? 1 : 0,
 		  [ [ 1, $text{'yes'} ], [ 0, $text{'no'} ] ]));
 
-# Setup Dovecot and Postfix SSL certs
+# Setup Dovecot, Postfix and MySQL SSL certs
 print &ui_table_row(&hlink($text{'newweb_dovecot'},
 			   "template_web_dovecot_ssl"),
 	&ui_yesno_radio("web_dovecot_ssl", $tmpl->{'web_dovecot_ssl'}));
@@ -3254,6 +3470,10 @@ print &ui_table_row(&hlink($text{'newweb_dovecot'},
 print &ui_table_row(&hlink($text{'newweb_postfix'},
 			   "template_web_postfix_ssl"),
 	&ui_yesno_radio("web_postfix_ssl", $tmpl->{'web_postfix_ssl'}));
+
+print &ui_table_row(&hlink($text{'newweb_mysql'},
+			   "template_web_mysql_ssl"),
+	&ui_yesno_radio("web_mysql_ssl", $tmpl->{'web_mysql_ssl'}));
 }
 
 # parse_template_ssl(&tmpl)
@@ -3281,6 +3501,7 @@ $tmpl->{'web_webmin_ssl'} = $in{'web_webmin_ssl'};
 $tmpl->{'web_usermin_ssl'} = $in{'web_usermin_ssl'};
 $tmpl->{'web_postfix_ssl'} = $in{'web_postfix_ssl'};
 $tmpl->{'web_dovecot_ssl'} = $in{'web_dovecot_ssl'};
+$tmpl->{'web_mysql_ssl'} = $in{'web_mysql_ssl'};
 }
 
 # chained_ssl(&domain, [&old-domain])

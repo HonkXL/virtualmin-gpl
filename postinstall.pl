@@ -307,15 +307,21 @@ my @supp = &supported_php_modes();
 my %cannums = map { $mmap->{$_}, 1 } @supp;
 if (!$cannums{int($tmpl->{'web_php_suexec'})} && @supp) {
 	# Default mode cannot be used .. change to first that can
-	$tmpl->{'web_php_suexec'} = $mmap->{$supp[0]};
+	my @goodsupp = grep { $_ ne 'none' } @supp;
+	@goodsupp = @supp if (!@goodsupp);
+	$tmpl->{'web_php_suexec'} = $mmap->{$goodsupp[0]};
 	&save_template($tmpl);
 	}
 
-# Cache current PHP modes
+# Cache current PHP modes and error log files
 foreach my $d (grep { &domain_has_website($_) && !$_->{'alias'} }
 		    &list_domains()) {
 	if (!$d->{'php_mode'}) {
 		$d->{'php_mode'} = &get_domain_php_mode($d);
+		&save_domain($d);
+		}
+	if (!defined($d->{'php_error_log'})) {
+		$d->{'php_error_log'} = &get_domain_php_error_log($d) || "";
 		&save_domain($d);
 		}
 	}
@@ -363,8 +369,8 @@ foreach my $m ("mysql", "postgresql", "ldap-client", "ldap-server",
 		}
 	}
 
-# Always update outdated (lower than v2.0)
-# Virtualmin website default (landing) page
+# Always update outdated (lower than v3.0)
+# Virtualmin default default page
 my $readdir = sub {
     my ($dir) = @_;
     my @hdirs;
@@ -376,86 +382,61 @@ my $readdir = sub {
     return @hdirs;
     };
 foreach my $d (@doms) {
-    my $dpubdir = $d->{'public_html_path'};
-    if (-d $dpubdir) {
-        my @dpubifiles = &$readdir($dpubdir);
-        @dpubifiles = grep (/^$dpubdir\/(index\.html|disabled_by_virtualmin\.html)$/, @dpubifiles);
-        foreach my $dpubifile (@dpubifiles) {
-            my $dpubifilelines = &read_file_lines($dpubifile, 1);
-            my ($efix, $eptitle, $eerr, $edom, $etitle, $emessage);
-            foreach my $l (@{$dpubifilelines}) {
-            	
-            	# Get beginning of the string for speed and run
-            	# extra check to make sure we have a needed file
-            	$l = substr($l, 0, 512);
+	my $dpubdir = $d->{'public_html_path'};
+	if (-d $dpubdir) {
+		my @dpubifiles = &$readdir($dpubdir);
+		@dpubifiles = grep (/^$dpubdir\/(index\.html|disabled_by_virtualmin\.html)$/, @dpubifiles);
+		foreach my $dpubifile (@dpubifiles) {
+			my $dpubifilelines = &read_file_lines($dpubifile, 1);
+			my $lims           = 256;
+			my $efix;
+			my $line;
+			foreach my $l (@{$dpubifilelines}) {
+				# If the file is larger than 256 lines, skip the rest
+				last if ($line++ > $lims);
 
-                # Get existing page title
-                if ($l =~ /\s*<title>(.*?)<\/title>/) {
-                    $eptitle = $1;
-                    }
-                
-                # Test to make sure that given file is Virtualmin website default page
-                $efix++ if (!$efix && $l =~ /iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/);
-                if ($efix == 1 && $l =~ /\*\s(Virtualmin\sLanding|Website\sDefault\sPage)\sv([\d+\.]+)$/) {
-                    my $tmplver = $2;
-                    $efix++ if ($tmplver && &compare_version_numbers($tmplver, "2.0") < 0);
-                    }
-                $efix++ if ($efix == 2 && $l =~ /\*\sCopyright\s+[\d]{4}\sVirtualmin,\sInc\.$/);
-                $efix++ if ($efix == 3 && $l =~ /\*\sLicensed\sunder\sMIT$/);
+				# Get beginning of the string for speed and run
+				# extra check to make sure we have a needed file
+				$l = substr($l, 0, $lims);
 
-                # If existing file is a template and needs a fix extract
-                # current values to preserve to keep user happy too
-                if ($efix == 4) {
-                    # Get existing page error label
-                    if ($l =~ /\s*<h1.*?class=".*?error-message.*?">(.*?)<.*?(h1|br)>/) {
-                        $eerr = $1;
-                        }
-                    # Get existing page domain name
-                    if ($l =~ /\s*<h4.*?class=".*?domain.*?">(.*?)<.*?h4>/) {
-                        $edom = $1;
-                        }
-                    # Get existing page title
-                    if ($l =~ /\s*<h1.*?class=".*?default-title.*?">(.*?)<.*?h1>/) {
-                        my $etitle_tmp = $1;
-                        $etitle = $etitle_tmp
-                            if ($etitle_tmp != $text{'deftmplt_under_construction'});
-                    	}
-                    # Get existing page message
-                    if ($l =~ /\s*<h5.*?class=".*?message.*?">(.*?)<.*?h5>/) {
-                        $emessage = $1;
-                        }
-                    }
-                }
+				# Test to make sure that given file is Virtualmin website default page
+				$efix++ if (!$efix && $l =~ /iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/);
+				if ($efix == 1 &&
+					$l =~ /\*\s(Virtualmin\sLanding|Website\sDefault\sPage|Virtualmin\s+Default\s+Page)\sv([\d+\.]+)$/) {
+					my $tmplver = $2;
+					$efix++ if ($tmplver && &compare_version_numbers($tmplver, '<=', '3.0'));
+					}
+				$efix++ if ($efix == 2 && $l =~ /\*\sCopyright\s+[\d]{4}\sVirtualmin,\sInc\.$/);
+				$efix++ if ($efix == 3 && $l =~ /\*\sLicensed\sunder\sMIT$/);
+				}
 
-            # After existing file is read and if update
-            # to existing default page is needed
-            if ($efix == 4) {
-                my $domtmplfile = "$default_content_dir/index.html";
-                if (-r $domtmplfile) {
-                    my $domtmplfilecontent = &read_file_contents($domtmplfile);
-                    my %hashtmp            = %$d;
-                    my $ddis               = $dpubifile =~ /disabled_by_virtualmin\.html/;
-                    $hashtmp{'TMPLTPAGETITLE'} = $eptitle  || $text{'deftmplt_default_page'};
-                    $hashtmp{'TMPLTERROR'}     = $eerr     || $text{'deftmplt_error'};
-                    $hashtmp{'dom'}            = $edom     || $d->{'dom'};
-                    $hashtmp{'TMPLTTITLE'}     = $etitle   ||
-                                                 ($ddis ? $text{'deftmplt_website_disabled'} :
-                                                          $text{'deftmplt_website_enabled'});
-                    $hashtmp{'TMPLTCONTENT'}   = $emessage || "";
-                    $hashtmp{'TMPLTSLOGAN'}    = $ddis ? $text{'deftmplt_disable_slog'} :
-                                                         $text{'deftmplt_default_slog'};
-                    $domtmplfilecontent =
-                      &substitute_virtualmin_template($domtmplfilecontent, \%hashtmp);
-                    my $fh;
-                    &open_tempfile_as_domain_user($d, $fh, ">$dpubifile", 1);
-                    &print_tempfile($fh, $domtmplfilecontent);
-                    &close_tempfile_as_domain_user($d, $fh);
-                    &set_permissions_as_domain_user($d, 0644, $dpubifile);
-                    }
-                }
-            }
-        }
-    }
+			# After existing file is read and verified to be old
+			# Virtualmin default page replace it with new one
+			if ($efix == 4) {
+				my $domtmplfile = "$default_content_dir/index.html";
+				if (-r $domtmplfile) {
+					my $domtmplfilecontent = &read_file_contents($domtmplfile);
+					my %hashtmp            = %$d;
+					my %domtmp             = %$d;
+
+					# Preserve page type
+					$domtmp{'disabled_time'} = $dpubifile =~ /index\.html/ ? 0 : 1;
+
+					# Substitute and replace
+					%hashtmp            = &populate_default_index_page(\%domtmp, %hashtmp);
+					$domtmplfilecontent = &replace_default_index_page(\%domtmp, $domtmplfilecontent);
+					$domtmplfilecontent = &substitute_virtualmin_template($domtmplfilecontent, \%hashtmp);
+					my $fh;
+					&open_tempfile_as_domain_user($d, $fh, ">$dpubifile", 1);
+					&print_tempfile($fh, $domtmplfilecontent);
+					&close_tempfile_as_domain_user($d, $fh);
+					&set_permissions_as_domain_user($d, 0644, $dpubifile);
+					}
+				}
+			}
+		}
+	}
+
 
 # Create API helper script /usr/bin/virtualmin
 &create_virtualmin_api_helper_command();

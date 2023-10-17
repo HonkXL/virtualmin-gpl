@@ -171,7 +171,9 @@ else {
 		$in{'mailuser'} =~ s/^\s+//;
 		$in{'mailuser'} =~ s/\s+$//;
 		$err = &valid_mailbox_name($in{'mailuser'});
-		&error($err) if ($err);
+		$olderr = $in{'new'} ? undef
+				     : &valid_mailbox_name($user->{'user'});
+		&error($err) if ($err && !$olderr);
 		if ($user->{'person'}) {
 			$in{'real'} =~ /^[^:\r\n]*$/ ||
 				&error($text{'user_ereal'});
@@ -483,10 +485,12 @@ else {
 			# Save alias
 			if ($in{'simplemode'} eq 'simple') {
 				# From simple form
-				$simple = &get_simple_alias($d, $user);
+				$simple = &get_simple_alias($d, $user, 1);
 				&parse_simple_form($simple, \%in, $d, 1, 1, 1,
 						   $user->{'user'});
 				$simple->{'from'} = $fullemail;
+				$user->{'user_extra'} = &replace_atsign($user->{'user'})
+					if (&need_extra_user($user));
 				&save_simple_alias($d, $user, $simple);
 				if (@{$user->{'to'}} == 1 &&
 				    $simple->{'tome'}) {
@@ -600,7 +604,7 @@ else {
 			# Save aliases
 			if ($in{'simplemode'} eq 'simple') {
 				# From simple form
-				$simple = &get_simple_alias($d, \%old);
+				$simple = &get_simple_alias($d, \%old, 1);
 				&parse_simple_form($simple, \%in, $d, 1, 1, 1,
 						   $user->{'user'});
 				$simple->{'from'} = $fullemail;

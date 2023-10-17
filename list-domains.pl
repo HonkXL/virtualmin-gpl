@@ -393,6 +393,10 @@ if ($multi) {
 			my $host = &get_database_host_mysql($d);
 			print "    Hostname for mysql: $host\n";
 			}
+		if ($d->{'postgres'} && $d->{'postgres_module'} ne 'postgresql') {
+			my $host = &get_database_host_postgres($d);
+			print "    Hostname for postgres: $host\n";
+			}
 		print "    Home directory: $d->{'home'}\n";
 		if (!$d->{'parent'} && ($jail = &get_domain_jailkit($d))) {
 			print "    Jail directory: $jail\n";
@@ -691,6 +695,12 @@ if ($multi) {
 		if ($d->{'ssl_chain'}) {
 			print "    SSL CA file: $d->{'ssl_chain'}\n";
 			}
+		if ($d->{'ssl_combined'}) {
+			print "    SSL cert and CA file: $d->{'ssl_combined'}\n";
+			}
+		if ($d->{'ssl_everything'}) {
+			print "    SSL cert and key file: $d->{'ssl_everything'}\n";
+			}
 		$same = $d->{'ssl_same'} ? &get_domain($d->{'ssl_same'})
 					 : undef;
 		if ($same) {
@@ -701,11 +711,9 @@ if ($multi) {
 			print "    SSL candidate hostnames: ",
 				join(" ", @sslhn),"\n";
 			}
-		if ($d->{'ssl_cert_expiry'}) {
-			print "    SSL cert expiry: ",
-			    &make_date($d->{'ssl_cert_expiry'}),"\n";
-			print "    SSL cert expiry time: ",
-			    $d->{'ssl_cert_expiry'},"\n";
+		if ($exp = &get_ssl_cert_expiry($d)) {
+			print "    SSL cert expiry: ",&make_date($exp),"\n";
+			print "    SSL cert expiry time: ",$exp,"\n";
 			}
 		if ($d->{'letsencrypt_renew'} || $d->{'letsencrypt_last'}) {
 			print "    Lets Encrypt renewal: ",
@@ -742,6 +750,9 @@ if ($multi) {
 				my ($cloud) = grep { $_->{'name'} eq
 					$d->{'dns_cloud'} } &list_dns_clouds();
 				$mode = "Cloud DNS Provider $cloud->{'desc'}";
+				}
+			elsif ($f eq "dns" && $d->{'dns_remote'}) {
+				$mode = "Remote DNS server $d->{'dns_remote'}";
 				}
 			print "    Provisioning for ${f}: $mode\n";
 			}
@@ -791,6 +802,17 @@ if ($multi) {
 				print "    Cloud mail filter: ",
 				      $d->{'cloud_mail_provider'},"\n";
 				}
+			}
+
+		# Show secondary mail servers
+		if ($d->{'mx_servers'}) {
+			my %ids = map { $_, 1 }
+				      split(/\s+/, $d->{'mx_servers'});
+			my @servers = grep { $ids{$_->{'id'}} }
+					   &list_mx_servers();
+			print "    Secondary mail servers: ",
+				join(", ", map { $_->{'mxname'} || $_->{'host'}}
+					       @servers),"\n";
 			}
 
 		# Show owner limits

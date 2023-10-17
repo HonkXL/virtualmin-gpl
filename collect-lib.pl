@@ -22,7 +22,8 @@ $info->{'startstop'} = [ &get_startstop_links() ];
 # Counts for domains
 local $dusers = &count_domain_users();
 local $daliases = &count_domain_aliases(1);
-local @doms = &list_domains();
+local @doms = &list_visible_domains();
+local @doms_all = &list_domains();
 local %fcount = map { $_, 0 } @features;
 $fcount{'doms'} = 0;
 foreach my $d (@doms) {
@@ -178,7 +179,7 @@ my @vposs = grep { &is_virtualmin_package($_) } @{$info->{'poss'}};
 $info->{'vposs'} = \@vposs;
 
 # SSL certificate expiries
-foreach my $d (@doms) {
+foreach my $d (@doms_all) {
 	if (!&domain_has_ssl_cert($d)) {
 		# Doesn't even have SSL, so clear cache fields
 		if ($d->{'ssl_cert_expiry'}) {
@@ -201,7 +202,7 @@ foreach my $d (@doms) {
 
 # Domain registration expiries
 my $now = time();
-foreach my $d (@doms) {
+foreach my $d (@doms_all) {
 	next if (!$d->{'dns'});
 	next if ($d->{'whois_next'} && $now < $d->{'whois_next'});
 
@@ -257,12 +258,18 @@ $info->{'startstop'} = [ &get_startstop_links() ];
 }
 
 # refresh_possible_packages(&newpackages)
-# Refresh regularly collected info on available packages
+# Refresh regularly collected info on available packages. Assumes that
+# system_status::refresh_possible_packages has already been called.
 sub refresh_possible_packages
 {
 local ($pkgs) = @_;
 local %pkgs = map { $_, 1 } @$pkgs;
 local $info = &get_collected_info();
+&foreign_require("system-status");
+local $sinfo = &system_status::get_collected_info();
+$info->{'poss'} = $sinfo->{'poss'};
+my @vposs = grep { &is_virtualmin_package($_) } @{$info->{'poss'}};
+$info->{'vposs'} = \@vposs;
 &save_collected_info($info);
 }
 
@@ -474,7 +481,7 @@ if (&foreign_check("net") && $gconfig{'os_type'} =~ /-linux$/) {
 		if (defined(&net::active_interfaces)) {
 			foreach my $i (&net::active_interfaces()) {
 				if ($i->{'virtual'} eq '' &&
-				    $i->{'name'} =~ /^(eth|em|eno|ens|enp|enx|ppp|wlan|ath|wlan)/) {
+				    $i->{'name'} =~ /^(eth|em|eno|ens|enp|enx|enX|ppp|wlan|ath|wlan)/) {
 					push(@ifaces, $i->{'name'});
 					}
 				}
@@ -757,7 +764,7 @@ my @virtualmin_packages = (
 	"subversion", "python", "ruby", "irb", "rdoc", "rubygems",
 	"openssl", "perl", "php.*", "webmin", "usermin",
 	"fcgid", "awstats", "dovecot", "postgrey",
-	"virtualmin-modules", "kvm", "xen", "nginx", "jailkit",
+	"virtualmin-modules", "kvm", "xen", "nginx.*", "jailkit",
         );
 
 # is_virtualmin_package(&package)

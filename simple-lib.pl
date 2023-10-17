@@ -2,13 +2,13 @@
 
 use Time::Local;
 
-# get_simple_alias(&domain, &alias)
+# get_simple_alias(&domain, &alias, [allow-merging-local])
 # If the current forwarding rules are simple (local delivery, autoreply
 # and forwarding only), return a hash ref containing the settings. Otherwise,
 # return undef.
 sub get_simple_alias
 {
-local ($d, $a) = @_;
+local ($d, $a, $allow_merge) = @_;
 local $simple;
 foreach my $v (@{$a->{'to'}}) {
 	local ($atype, $aval) = &alias_type($v, $a->{'user'} || $a->{'name'});
@@ -23,6 +23,11 @@ foreach my $v (@{$a->{'to'}}) {
 	elsif ($atype == 7) {
 		# Local delivery
 		$simple->{'local'} = $aval;
+		push(@{$simple->{'local-all'}}, $aval)
+			if ($allow_merge &&
+			    $config{'mail_system'} == 0 &&
+			    $aval =~ /\@/ &&
+			    getpwnam(&unescape_user($aval)));
 		}
 	elsif ($atype == 10) {
 		# To this user
@@ -53,12 +58,17 @@ foreach my $v (@{$a->{'to'}}) {
 		return undef;
 		}
 	}
-#if (!$simple->{'autoreply'}) {
-#	# Get autoreply message from default file
-#	$simple->{'autoreply'} = "$d->{'home'}/autoreply-".
-#			         ($a->{'user'} || $a->{'from'}).".txt";
-#	&read_autoreply($simple->{'autoreply'}, $simple);
-#	}
+if (!$simple->{'autoreply'}) {
+	# Get autoreply message from default file, if it exists
+	$simple->{'autoreply'} = "$d->{'home'}/autoreply-".
+			         ($a->{'user'} || $a->{'from'}).".txt";
+	if (-r $simple->{'autoreply'}) {
+		&read_autoreply($simple->{'autoreply'}, $simple);
+		}
+	else {
+		delete($simple->{'autoreply'});
+		}
+	}
 $simple->{'cmt'} = $a->{'cmt'};
 return $simple;
 }
@@ -133,10 +143,12 @@ push(@v, @{$simple->{'forward'}});
 if ($simple->{'bounce'}) {
 	push(@v, "BOUNCE");
 	}
-if ($simple->{'local'}) {
+if ($simple->{'local'} &&
+   (!$simple->{'local-all'} ||
+   	&indexof($simple->{'local'}, @{$simple->{'local-all'}}) == -1)) {
 	local $escuser = $simple->{'local'};
 	if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
-		$escuser = &replace_atsign($escuser);
+		$escuser = &escape_replace_atsign_if_exists($escuser);
 		}
 	else {
 		$escuser = &escape_user($escuser);
@@ -144,18 +156,20 @@ if ($simple->{'local'}) {
 	push(@v, "\\".$escuser);
 	}
 if ($simple->{'tome'}) {
-	local $escuser = $alias->{'user'};
+	local $escuser = $alias->{'user_extra'} || $alias->{'user'};
 	if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
-		$escuser = &replace_atsign($escuser);
+		$escuser = &escape_replace_atsign_if_exists($escuser);
 		}
 	else {
 		$escuser = &escape_user($escuser);
 		}
 	push(@v, "\\".($escuser || $alias->{'name'}));
 	}
-if ($simple->{'auto'}) {
-	local $who = $alias->{'user'} || $alias->{'from'};
+local $who = $alias->{'user'} || $alias->{'from'};
+if ($simple->{'auto'} || $simple->{'autotext'}) {
 	$simple->{'autoreply'} ||= "$d->{'home'}/autoreply-$who.txt";
+	}
+if ($simple->{'auto'}) {
 	local $link = &convert_autoreply_file($d, $simple->{'autoreply'});
 	push(@v, "|$module_config_directory/autoreply.pl $simple->{'autoreply'} $who $link");
 	}
@@ -223,6 +237,14 @@ if ($simple->{'autotext'}) {
 			       "$link : $!");
 		}
         }
+elsif ($simple->{'autoreply'}) {
+	# Clean up old autoreply file
+	&unlink_file_as_domain_user($d, $simple->{'autoreply'});
+	local $link = &convert_autoreply_file($d, $simple->{'autoreply'});
+	if ($link) {
+		&unlink_file_as_domain_user($d, $link);
+		}
+	}
 }
 
 # delete_simple_autoreply(&domain, &simple)
@@ -263,7 +285,7 @@ else {
 	print &ui_table_row(&hlink($text{$sfx.'_local'}, $sfx."_local"),
 			    &ui_checkbox("local", 1, $text{'alias_localyes'},
 					 $simple->{'local'})." ".
-			    &ui_textbox("localto", $simple->{'local'}, 40),
+			    &ui_textbox("localto", unescape_user($simple->{'local'}), 40),
 			    undef, $tds);
 	}
 
@@ -277,6 +299,15 @@ if (!$nobounce) {
 
 # Forward to some address
 @fwd = @{$simple->{'forward'}};
+
+# Merge with local @ users if any, because we can properly
+# parse it on save, so we don't fallback to advanced form
+if (defined($simple->{'local-all'})) {
+	my @local_unescaped =
+		map { &unescape_user($_) }
+			@{$simple->{'local-all'}};
+	push(@fwd, @local_unescaped);
+	}
 print &ui_table_row(&hlink($text{$sfx.'_forward'}, $sfx."_forward"),
 		    &ui_checkbox("forward", 1,$text{'alias_forwardyes'},
 				 scalar(@fwd))."<br>\n".
@@ -290,11 +321,23 @@ if (!$noeveryone) {
 				 $simple->{'everyone'}));
 	}
 
-# Autoreply active and text
+# Get possible autoreply even if not active
+my $simple_autotext = $simple->{'autotext'};
+if (!$simple->{'auto'}) {
+	my $simple_ghost;
+	$simple_ghost->{'autoreply'} =
+	    "$d->{'home'}/autoreply-$in{'user'}.txt";
+	if (-r $simple_ghost->{'autoreply'}) {
+		&read_autoreply($simple_ghost->{'autoreply'}, $simple_ghost);
+		my $simple_ghost_autotext = $simple_ghost->{'autotext'};
+		$simple_autotext = $simple_ghost_autotext
+			if ($simple_ghost_autotext);
+		}
+	}
 print &ui_table_row(&hlink($text{$sfx.'_auto'}, $sfx."_auto"),
 		    &ui_checkbox("auto", 1,$text{'alias_autoyes'},
 				 $simple->{'auto'})."<br>\n".
-		    &ui_textarea("autotext", $simple->{'autotext'},
+		    &ui_textarea("autotext", $simple_autotext,
 				 5, 60),
 		    undef, $tds);
 
@@ -390,6 +433,9 @@ if ($in->{'forward'}) {
 	foreach my $f (@{$simple->{'forward'}}) {
 		$f =~ /^([^\|\:\"\' \t\/\\\%]\S*)$/ ||
 			&error(&text('alias_etype1', $f));
+		# If saved forward email is a local user, escape it properly!
+		$f = "\\".&escape_user($f)
+			if ($config{'mail_system'} == 0 && $f =~ /\@/ && getpwnam($f));
 		&can_forward_alias($f) || &error(&text('alias_etype1f', $f));
 		}
 	}
@@ -398,8 +444,8 @@ else {
 	}
 $simple->{'everyone'} = $in->{'everyone'};
 $in->{'autotext'} =~ s/\r//g;
+$simple->{'autotext'} = $in->{'autotext'};
 if ($in->{'autotext'}) {
-	$simple->{'autotext'} = $in->{'autotext'};
 	if ($in->{'period_def'}) {
 		delete($simple->{'replies'});
 		delete($simple->{'period'});

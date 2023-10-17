@@ -133,7 +133,6 @@ if ($d->{'reseller'} && defined(&get_reseller)) {
 		}
 	}
 
-
 # Check if any features are being deleted, and if so ask the user if
 # he is sure
 if (!$in{'confirm'} && !$d->{'disabled'}) {
@@ -237,9 +236,20 @@ if (!$in{'passwd_def'}) {
 		$d->{'disabled_mysqlpass'} = undef;
 		$d->{'disabled_postgrespass'} = undef;
 		}
+	
+	# Password was changed and we need to
+	# check if passwords should be hashed
+	my $hashmode = $in{'hashpass_enable'} ? 1 : 0;
+	my $updated_domain_hashpass = &update_domain_hashpass($d, $hashmode);
+
 	$d->{'pass'} = $in{'passwd'};
 	$d->{'pass_set'} = 1;	# indicates that the password has been changed
 	&generate_domain_password_hashes($d, 0);
+
+	# Clean after hashpass switch
+	if ($updated_domain_hashpass) {
+		&post_update_domain_hashpass($d, $hashmode, $in{'passwd'});
+		}
 	}
 else {
 	$d->{'pass_set'} = 0;
@@ -293,13 +303,15 @@ if (defined($in{'linkdom'})) {
 if (!$d->{'disabled'}) {
 	# Enable or disable features
 	my $f;
-	foreach $f (@dom_features) {
-		if ($config{$f}) {
-			$d->{$f} = $newdom{$f};
-			}
-		}
 	my $oldcount = 0;
 	my $newcount = 0;
+	foreach $f (@dom_features) {
+		if ($config{$f}) {
+			$oldcount++ if ($d->{$f});
+			$d->{$f} = $newdom{$f};
+			$newcount++ if ($d->{$f});
+			}
+		}
 	foreach $f (&list_feature_plugins()) {
 		$oldcount++ if ($d->{$f});
 		$d->{$f} = $newdom{$f};

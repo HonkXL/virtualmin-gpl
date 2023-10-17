@@ -56,7 +56,7 @@ else {
 	$nopurge = 1;
 	}
 
-if ($cbmode == 3 && ($in{'sched'} || $in{'oneoff'})) {
+if ($cbmode == 3 && $sched && ($in{'sched'} || $in{'oneoff'})) {
 	# If this backup is to a domain's directory but the current
 	# user is a reseller, use that domain
 	($mode) = &parse_backup_url($sched->{'dest'});
@@ -71,6 +71,7 @@ $sched ||= { 'all' => 1,
 	     'parent' => 1,
 	     'fmt' => 2,
 	     'onebyone' => 1,
+	     'strftime' => 1,
 	     'email' => $cbmode == 2 ? $d->{'emailto'} :
 			$cbmode == 3 ? $access{'email'} : undef };
 @tds = ( "width=30% ");
@@ -86,14 +87,15 @@ if ($in{'new'} || $in{'sched'}) {
 
 # Fields to select domains
 @bak = split(/\s+/, $sched->{'doms'});
-@doms = grep { &can_backup_domain($_) } &list_domains();
-$dis1 = &js_disable_inputs([ "doms" ], [ ], "onClick");
-$dis2 = &js_disable_inputs([ ], [ "doms" ], "onClick");
+@doms = grep { &can_backup_domain($_) } &list_visible_domains();
+@dlist = ( "doms_opts", "doms_vals", "doms_add", "doms_remove" );
+$dis1 = &js_disable_inputs(\@dlist, [ ], "onClick");
+$dis2 = &js_disable_inputs([ ], \@dlist, "onClick");
 $dsel = &ui_radio("all", int($sched->{'all'}),
 		[ [ 1, $text{'backup_all'}, $dis1 ],
 		  [ 0, $text{'backup_sel'}, $dis2 ],
 		  [ 2, $text{'backup_exc'}, $dis2 ] ])."<br>\n".
-	&servers_input("doms", \@bak, \@doms, $sched->{'all'} == 1);
+	&servers_input("doms", \@bak, \@doms, $sched->{'all'} == 1, 1);
 $dsel .= "<br>".&ui_checkbox(
 	"parent", 1, &hlink($text{'backup_parent'}, 'backup_parent'),
 	$sched->{'parent'});
@@ -108,7 +110,7 @@ if (&can_edit_plans()) {
 			  [ [ 1, $text{'backup_anyplan'} ],
 			    [ 0, $text{'backup_selplan'} ] ])."<br>\n".
 		&ui_select("plan", [ split(/\s+/, $sched->{'plan'}) ],
-			   [ map { [ $_->{'id'}, $_->{'name'} ] } @plans ],
+			   [ map { [ $_->{'id'}, &html_escape($_->{'name'}) ] } @plans ],
 			   5, 1));
 	}
 
@@ -198,10 +200,10 @@ print &ui_table_row(&hlink($text{'backup_exclude'}, 'backup_exclude'),
 print &ui_hidden_table_end("features");
 
 # Build destination field inputs
-if ($in{'sched'} || $in{'oneoff'}) {
+if ($in{'sched'} || $in{'new'} || $in{'oneoff'}) {
 	# Show current scheduled backup destinations
 	@dests = &get_scheduled_backup_dests($sched);
-	push(@dests, undef);
+	push(@dests, undef) if ($in{'sched'} || $in{'oneoff'});
 	@purges = &get_scheduled_backup_purges($sched);
 	}
 else {
@@ -266,12 +268,58 @@ if (@allkeys) {
 	}
 
 # Single/multiple file mode
+my $fmt_script = <<EOF;
+<script>
+(function () {
+	try {
+		let extension;
+		const modes = document.querySelectorAll('[name="fmt"]'),
+			compressions = document.querySelectorAll('[name="compression"]'),
+			inputFields = document.querySelectorAll('[name\$="path"], [name\$="file"]'),
+			strfTime = document.querySelectorAll('[name="strftime"]'),
+			strfTimeFn = function() { return strfTime && strfTime[0] && strfTime[0].checked },
+			modes_check = function() {
+				Array.from(modes).find(radio => radio.checked).dispatchEvent(new Event('input'));
+			},
+			compressions_check = function() {
+				Array.from(compressions).find(radio => radio.checked).dispatchEvent(new Event('input'));
+			};
+		modes.forEach(function(radio) {
+			radio.addEventListener('input', function() {
+				const placeholdertype = this.value,
+					filename = strfTimeFn() ? 'domains-%Y-%m-%d-%H-%M' : 'domains';
+					inputFields.forEach(function(input) {
+					if (placeholdertype == '0') {
+						input.placeholder = \`e.g. /backups/\$\{filename\}.\$\{extension\}\`;
+					} else {
+						const backupPlaceHolder = strfTimeFn() ? 'backups/backup-%Y-%m-%d' : 'backups';
+						input.placeholder = \`e.g. /\$\{backupPlaceHolder\}/\`;
+					}
+				});
+			});
+		});
+		(strfTime && strfTime[0]) && strfTime[0].addEventListener('input', modes_check);
+		compressions.forEach(function(compression) {
+			compression.addEventListener('input', function() {
+				const v = parseInt(this.value || $config{'compression'}),
+					a = {3: 'zip', 2: 'tar', 1: 'tar.bz2', 0: 'tar.gz'};
+				extension = a[v];
+				modes_check();
+			});
+		});
+		compressions_check();
+		modes_check();
+	} catch(e) {}
+})();
+</script>
+EOF
+
 print &ui_table_row(&hlink($text{'backup_fmt'}, "backup_fmt"),
 	&ui_radio("fmt", int($sched->{'fmt'}),
 		  [ [ 0, $text{'backup_fmt0'} ],
 		    $sched->{'fmt'} == 1 ?
 			( [ 1, $text{'backup_fmt1'} ] ) : ( ),
-		    [ 2, $text{'backup_fmt2'} ] ])."<br>".
+		    [ 2, $text{'backup_fmt2'} ] ])."$fmt_script<br>".
 	&ui_checkbox("mkdir", 1, $text{'backup_mkdir'},
 		     int($sched->{'mkdir'})));
 

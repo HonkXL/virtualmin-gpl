@@ -169,7 +169,13 @@ else {
 		}
 	local $wild = &substitute_domain_template($tmpl->{'mysql_wild'}, $d);
 	if (!$d->{'parent'}) {
-		&$first_print($text{'setup_mysqluser'});
+		if ($d->{'mysql_module'} ne 'mysql') {
+			my $host = &get_database_host_mysql($d);
+			&$first_print(&text('setup_mysqluser2', $host));
+			}
+		else {
+			&$first_print($text{'setup_mysqluser'});
+			}
 		local $cfunc = sub {
 			local $encpass = &encrypted_mysql_pass($d);
 			foreach my $h (@hosts) {
@@ -803,18 +809,23 @@ if (%dbmap) {
 	&require_mysql();
 	&$first_print($text{'clone_mysqlcopy'});
 	foreach my $db (&domain_databases($d, [ 'mysql' ])) {
-		local $oldname = $dbmap{$db->{'name'}};
-		local $temp = &transname();
-		local $mymod = &require_dom_mysql($oldd);
-		local $err = &foreign_call(
-			$mymod, "backup_database", $oldname, $temp, 0, 1, 0,
-			undef, undef, undef, undef, 1);
+		my $oldname = $dbmap{$db->{'name'}};
+		my $temp = &transname();
+		my $mymod = &require_dom_mysql($oldd);
+		my $cs;
+		if (&foreign_defined($mymod, "get_character_set")) {
+			$cs = &foreign_call($mymod, "get_character_set", $db);
+			}
+		my $err = &foreign_call(
+			$mymod, "backup_database", $oldname, $temp, 0, 1, undef,
+			$cs, undef, undef, undef,
+			&mysql_single_transaction($d, $db));
 		if ($err) {
 			&$second_print(&text('clone_mysqlbackup',
 					     $oldname, $err));
 			next;
 			}
-		local ($ex, $out) = &execute_dom_sql_file($d, $db->{'name'},
+		my ($ex, $out) = &execute_dom_sql_file($d, $db->{'name'},
 							  $temp);
 		&unlink_file($temp);
 		if ($ex) {
@@ -1118,9 +1129,14 @@ foreach $db (@dbs) {
 		}
 
 	my $mymod = &require_dom_mysql($d);
-	local $err = &foreign_call(
+	my $cs;
+	if (&foreign_defined($mymod, "get_character_set")) {
+		$cs = &foreign_call($mymod, "get_character_set", $db);
+		}
+	my $err = &foreign_call(
 		$mymod, "backup_database", $db, $dbfile, 0, 1, undef,
-		undef, undef, $tables, $d->{'user'}, 1, 0, $allopts->{'skip'});
+		$cs, undef, $tables, $d->{'user'},
+		&mysql_single_transaction($d, $db), 0, $allopts->{'skip'});
 	if (!$err) {
 		$err = &validate_mysql_backup($dbfile);
 		}
@@ -1161,6 +1177,13 @@ local %info;
 &read_file($file, \%info);
 &require_mysql();
 
+# Fail fast if MySQL is down
+my $mymod = &require_dom_mysql($d);
+if (!&foreign_call($mymod, "is_mysql_running")) {
+	&$first_print($text{'restore_mysqlerunning'});
+	return 0;
+	}
+
 # Re-grant allowed hosts from backup + local
 local @lhosts;
 if (!$d->{'parent'} && $info{'hosts'}) {
@@ -1180,6 +1203,7 @@ if (!$d->{'parent'} && $info{'hosts'}) {
 	my $err = &save_mysql_allowed_hosts($d, \@lhosts);
 	if ($err) {
 		&$second_print(&text('restore_emysqlgrant', $err));
+		return 0;
 		}
 	else {
 		&$second_print($text{'setup_done'});
@@ -1343,6 +1367,9 @@ close(DBFILE);
 if ($first =~ /^mysqldump:.*error/i) {
 	return $first;
 	}
+if ($first eq "") {
+	return "MySQL backup is empty!";
+	}
 return undef;
 }
 
@@ -1427,17 +1454,17 @@ return $rv;
 }
 
 # mysql_size(&domain, dbname, [size-only])
-# Returns the size, number of tables in a database, and size included in a
-# domain's Unix quota.
+# Returns the size, number of tables in a database, size included in a
+# domain's Unix quota, and number of files.
 sub mysql_size
 {
 my ($d, $dbname, $sizeonly) = @_;
 &require_mysql();
-local ($size, $qsize);
+local ($size, $qsize, $count);
 local $dd = &get_mysql_database_dir($d, $dbname);
 if ($dd) {
 	# Can check actual on-disk size
-	$size = &disk_usage_kb($dd)*1024;
+	($size, undef, $count) = &recursive_disk_usage_mtime($dd);
 	local @dst = stat($dd);
 	if (&has_group_quotas() && &has_mysql_quotas() &&
             $dst[5] == $d->{'gid'}) {
@@ -1447,11 +1474,13 @@ if ($dd) {
 else {
 	# Use 'show table status'
 	$size = 0;
+	$count = 0;
 	eval {
 		local $main::error_must_die = 1;
 		my $rv = &execute_dom_sql($d, $dbname, "show table status");
 		foreach my $r (@{$rv->{'data'}}) {
 			$size += $r->[6];
+			$count++;
 			}
 		};
 	}
@@ -1468,7 +1497,7 @@ if (!$sizeonly) {
 		@tables = &list_dom_mysql_tables($d, $dbname, 1);
 		};
 	}
-return ($size, scalar(@tables), $qsize);
+return ($size, scalar(@tables), $qsize, $count);
 }
 
 # check_mysql_database_clash(&domain, dbname)
@@ -1521,7 +1550,13 @@ if ($d->{'provision_mysql'}) {
 else {
 	# Create the database locally, unless it already exists
 	if (&indexof($dbname, &list_dom_mysql_databases($d)) < 0) {
-		&$first_print(&text('setup_mysqldb', $dbname));
+		if ($d->{'mysql_module'} ne 'mysql') {
+			my $host = &get_database_host_mysql($d);
+			&$first_print(&text('setup_mysqldb2', $dbname, $host));
+			}
+		else {
+			&$first_print(&text('setup_mysqldb', $dbname));
+			}
 		&execute_dom_sql($d, $mysql::master_db,
 				 "create database ".&mysql::quotestr($dbname).
 				 ($opts->{'charset'} ?
@@ -2003,6 +2038,16 @@ my ($d) = @_;
 my $mymod = &require_dom_mysql($d);
 my %myconfig = &foreign_config($mymod);
 return $myconfig{'host'} || 'localhost';
+}
+
+# get_database_ssl_mysql([&domain])
+# Returns 1 if connections to MySQL should be made using SSL
+sub get_database_ssl_mysql
+{
+my ($d) = @_;
+my $mymod = &require_dom_mysql($d);
+my %myconfig = &foreign_config($mymod);
+return $myconfig{'ssl'};
 }
 
 # sysinfo_mysql()
@@ -2894,14 +2939,25 @@ if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0) {
 			    : "password $encpass"));
 	}
 elsif ($variant eq "mysql" && &compare_versions($ver, "5.7.6") >= 0) {
-	my $changepasssql = "update user set authentication_string = $encpass where user = '$user' and host = '$host'";
+	my $changepasssql;
 	if ($plainpass) {
 		$changepasssql = "alter user '$user'\@'$host' identified $plugin by '".&mysql_escape($plainpass)."'";
+		}
+	else {
+		$changepasssql = "update user set authentication_string = $encpass where user = '$user' and host = '$host'";
 		}
 	return ("insert ignore into user (host, user, ssl_type, ssl_cipher, x509_issuer, x509_subject) values ('$host', '$user', '', '', '', '')", "flush privileges", "$changepasssql", "flush privileges");
 	}
 elsif (&compare_versions($ver, 5) >= 0) {
-	return ("insert ignore into user (host, user, ssl_type, ssl_cipher, x509_issuer, x509_subject) values ('$host', '$user', '', '', '', '')", "flush privileges", "set password for '$user'\@'$host' = $encpass", "flush privileges");
+	my $setpasssql;
+	if ($plainpass) {
+		$setpasssql = "set password for '$user'\@'$host' = ".
+			      &encrypt_plain_mysql_pass($d, $plainpass);
+		}
+	else {
+		$setpasssql = "set password for '$user'\@'$host' = $encpass";
+		}
+	return ("insert ignore into user (host, user, ssl_type, ssl_cipher, x509_issuer, x509_subject) values ('$host', '$user', '', '', '', '')", "flush privileges", $setpasssql, "flush privileges");
 	}
 else {
 	return ("insert ignore into user (host, user, password) values ('$host', '$user', $encpass)");
@@ -3223,6 +3279,7 @@ foreach my $minfo (&get_all_module_infos()) {
 		 $minfo->{'cloneof'} ne 'mysql');
 	my %mconfig = &foreign_config($minfo->{'dir'});
 	my $mm = { 'minfo' => $minfo,
+		   'dbtype' => 'mysql',
 		   'master' => $minfo->{'cloneof'} ? 0 : 1,
 		   'config' => \%mconfig };
 	if ($mconfig{'sock'}) {
@@ -3243,6 +3300,7 @@ foreach my $minfo (&get_all_module_infos()) {
 	else {
 		$mm->{'desc'} = $text{'mysql_rlocal'};
 		}
+	$mm->{'desc'} .= " (SSL)" if ($mconfig{'ssl'});
 	push(@rv, $mm);
 	}
 @rv = sort { $a->{'minfo'}->{'dir'} cmp $b->{'minfo'}->{'dir'} } @rv;
@@ -3316,17 +3374,7 @@ my %cdesc = ( 'desc' => $mm->{'minfo'}->{'desc'} || $defdesc );
 &write_file("$config_directory/$mm->{'minfo'}->{'dir'}/clone", \%cdesc);
 
 # Grant access to the current (root) user
-my %acl;
-&read_acl(undef, \%acl);
-&open_lock_tempfile(ACL, "> ".&acl_filename());
-foreach $u (keys %acl) {
-        my @mods = @{$acl{$u}};
-        if ($u eq $base_remote_user) {
-                @mods = &unique(@mods, $mm->{'minfo'}->{'dir'});
-                }
-        &print_tempfile(ACL, "$u: ",join(' ', @mods),"\n");
-        }
-&close_tempfile(ACL);
+&add_user_module_acl($base_remote_user, $mm->{'minfo'}->{'dir'});
 
 # Refresh visible modules cache
 &flush_webmin_caches();
@@ -3615,6 +3663,14 @@ if (@dbs == 1 && $dbs[0]->{'name'} eq $d->{'db'}) {
 	return undef if (!@tables);
 	}
 return &text('reset_emysql', join(" ", map { $_->{'name'} } @dbs));
+}
+
+# mysql_single_transaction(&domain, db)
+# Should backups be done in a single transaction?
+sub mysql_single_transaction
+{
+my ($d, $db) = @_;
+return $config{'single_tx'};
 }
 
 $done_feature_script{'mysql'} = 1;

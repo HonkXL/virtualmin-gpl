@@ -54,10 +54,8 @@ if (&need_config_check() && &can_check_config()) {
 	print &ui_form_start("edit_newtmpl.cgi");
 	print &ui_submit($text{'index_tmpls'});
 	print &ui_form_end();
+	print "<p></p>\n";
 	$formno++;
-
-	&ui_print_footer("/", $text{'index'});
-	exit;
 	}
 
 # Show any warnings
@@ -79,7 +77,7 @@ if ($config{'localgroup'} && &can_edit_local()) {
 if (!$main::basic_virtualmin_menu) {
 	print &ui_subheading($text{'index_header2'});
 	}
-@alldoms = &list_domains();
+@alldoms = &list_visible_domains();
 @doms = grep { &can_edit_domain($_) } @alldoms;
 if ($config{'display_max'} && @doms > $config{'display_max'}) {
 	# Too many domains to display, so show a search form

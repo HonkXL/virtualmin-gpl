@@ -28,13 +28,6 @@ foreach $id (split(/\0/, $in{'servers'})) {
 					     $server->{'host'}));
 			goto failed;
 			}
-		elsif ($minfo{'version'} < 2.98) {
-			# Old Virtualmin version
-			&$second_print(&text('newmxs_eversion',
-					     $server->{'host'},
-				     	     $minfo{'version'}, 2.98));
-			goto failed;
-			}
 		else {
 			# Ask the remote server if it is OK
 			&remote_foreign_require($server, "virtual-server",
@@ -68,16 +61,20 @@ foreach $id (split(/\0/, $in{'servers'})) {
 &save_mx_servers(\@mxs);
 
 # Update all existing email domains on new MX servers
+my $anychanged = 0;
 foreach my $d (&list_domains()) {
 	next if (!$d->{'mail'});
-	local $oldd = { %$d };
-	&$first_print(&text('newmxs_dom', $d->{'dom'}));
-	&$indent_print();
+	my $oldd = { %$d };
+	my $changed = 0;
 
-	local @ids = split(/\s+/, $d->{'mx_servers'});
-	local @added;
+	my @ids = split(/\s+/, $d->{'mx_servers'});
+	my (@added, @deleted);
 	if ($in{'addexisting'}) {
 		# Add to new secondaries
+		if (!$changed++) {
+			&$first_print(&text('newmxs_dom', $d->{'dom'}));
+			&$indent_print();
+			}
 		foreach $server (@mxs) {
 			if (!$oldmxids{$server->{'id'}}) {
 				&$first_print(&text('newmxs_adding',
@@ -100,6 +97,10 @@ foreach my $d (&list_domains()) {
 	foreach $server (@oldmxs) {
 		if (!$newmxids{$server->{'id'}} &&
 		    &indexof($server->{'id'}, @ids) >= 0) {
+			if (!$changed++) {
+				&$first_print(&text('newmxs_dom', $d->{'dom'}));
+				&$indent_print();
+				}
 			&$first_print(&text('newmxs_removing',
 					    $server->{'host'}));
 			$err = &delete_one_secondary($d, $server);
@@ -110,19 +111,27 @@ foreach my $d (&list_domains()) {
 				&$second_print(&text('newmxs_failed', $err));
 				}
 			@ids = grep { $_ != $server->{'id'} } @ids;
+			push(@deleted, $server);
 			}
 		}
-	$d->{'mx_servers'} = join(" ", @ids);
+	if ($changed) {
+		$d->{'mx_servers'} = join(" ", @ids);
 
-	if ($d->{'dns'}) {
-		# Add or remove DNS MX records
-		&modify_dns($d, $oldd);
+		if ($d->{'dns'}) {
+			# Add or remove DNS MX records
+			&modify_dns($d, $oldd);
+			}
 		}
 
-	# Re-sync virtusers for domain to secondaries, if any were added
-	if (@added) {
+	# Re-sync virtusers for domain to secondaries, if any were added or
+	# removed
+	if (@added || @deleted) {
 		&$first_print($text{'newmxs_syncing'});
-		@rv = &sync_secondary_virtusers($d, \@added);
+		@rv = ( );
+		push(@rv, &sync_secondary_virtusers($d, \@added, 0))
+			if (@added);
+		push(@rv, &sync_secondary_virtusers($d, \@deleted, 1))
+			if (@deleted);
 		@errs = grep { $_->[1] } @rv;
 		if (@errs) {
 			&$second_print(&text('newmxs_esynced',
@@ -136,12 +145,19 @@ foreach my $d (&list_domains()) {
 		}
 
 	&save_domain($d);
-	&$outdent_print();
-	&$second_print($text{'setup_done'});
+	if ($changed) {
+		&$outdent_print();
+		&$second_print($text{'setup_done'});
+		$anychanged++;
+		}
+	}
+if (!$anychanged) {
+	&$first_print($text{'newmxs_nothing'});
 	}
 
 &run_post_actions();
 &webmin_log("mxs");
 failed:			# Goto here if one server fails
-&ui_print_footer("", $text{'index_return'});
+&ui_print_footer("edit_newmxs.cgi", $text{'newmxs_return'},
+                 "", $text{'index_return'});
 

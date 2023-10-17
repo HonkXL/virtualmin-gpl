@@ -85,13 +85,7 @@ elsif ($config{'mail_system'} == 0) {
 
 	# Work out if per-domain outgoing IP support is available
 	if (&compare_versions($postfix::postfix_version, 2.7) >= 0) {
-		$dependent_maps = &postfix::get_real_value(
-			"sender_dependent_default_transport_maps");
-		@dependent_map_files = &postfix::get_maps_files(
-						$dependent_maps);
-		if (@dependent_map_files) {
-			$supports_dependent = 1;
-			}
+		$supports_dependent = 1;
 		}
 
 	$supports_aliascopy = 1;
@@ -153,7 +147,7 @@ if ($config{'mail_system'} != 4) {
 		if ($config{'mail_system'} == 0 && $u->{'user'} =~ /\@/) {
 			# Special case for Postfix @ users
 			$foruser{$pop3."\@".$d->{'dom'}} =
-				&replace_atsign($u->{'user'});
+				&escape_replace_atsign_if_exists($u->{'user'});
 			}
 		}
 	if ($d->{'mail'}) {
@@ -577,7 +571,7 @@ if ($supports_dependent) {
 &delete_everyone_file($d);
 
 # Remove domain from DKIM list
-&update_dkim_domains($d, 'delete', $leave_dns);
+&update_dkim_domains($d, 'delete', $leave_dns || $d->{'deleting'});
 
 # Remove secondary virtusers from slaves
 &sync_secondary_virtusers($d);
@@ -610,7 +604,7 @@ if ($c && defined(&list_smtp_clouds)) {
 	}
 
 # Turn off email autoconfig
-if (&domain_has_website($d) && $config{'mail_autoconfig'}) {
+if (&domain_has_website($d)) {
 	&disable_email_autoconfig($d);
 	}
 
@@ -1034,7 +1028,8 @@ if (!$isalias) {
 	}
 
 # If domain was re-named and had a private DKIM key, update it
-if (!$_[0]->{'alias'} && $config{'dkim_enabled'}) {
+if (!$_[0]->{'alias'} && $config{'dkim_enabled'} &&
+    $_[0]->{'dom'} ne $_[1]->{'dom'}) {
 	my $keyfile = &get_domain_dkim_key($_[1]);
 	if ($keyfile) {
 		my $key = &read_file_contents($keyfile);
@@ -1972,7 +1967,7 @@ elsif ($config{'mail_system'} == 6) {
 &register_sync_secondary_virtuser($_[0]);
 }
 
-# sync_secondary_virtusers(&domain, [&only-servers])
+# sync_secondary_virtusers(&domain, [&only-servers], [delete-all])
 # Find all virtusers in the given domain, and make sure all secondary MX
 # servers running Postfix or Sendmail have only those users on their list to
 # allow relaying for.
@@ -1980,13 +1975,13 @@ elsif ($config{'mail_system'} == 6) {
 # Returns a list of tuples containing the server object and error message.
 sub sync_secondary_virtusers
 {
-local ($d, $onlyservers) = @_;
+local ($d, $onlyservers, $delete) = @_;
 local @servers = $onlyservers ? @$onlyservers : &list_mx_servers();
 return if (!@servers);
 
 # Build list of mailboxes in the domain
 local @mailboxes;
-if (!$d->{'disabled'}) {
+if (!$d->{'disabled'} && !$delete) {
 	foreach my $v (&list_virtusers(1)) {
 		my ($mb, $dom) = split(/\@/, $v->{'from'});
 		if ($dom eq $d->{'dom'}) {
@@ -2032,7 +2027,8 @@ sub update_secondary_mx_virtusers
 {
 local ($dom, $mailboxes) = @_;
 local %mailboxes_map = map { $_, 1 } @$mailboxes;
-&obtain_lock_mail($_[0]);
+local $rv;
+&obtain_lock_mail($dom);
 &require_mail();
 if ($config{'mail_system'} == 1) {
 	# Update Sendmail access list
@@ -2109,6 +2105,7 @@ if ($config{'mail_system'} == 1) {
 					 $afile, $adbm, $adbmtype);
 		}
 	&unlock_file($afile);
+	$rv = undef;
 	}
 elsif ($config{'mail_system'} == 0) {
 	# Update Postfix relay_recipient_maps
@@ -2116,7 +2113,7 @@ elsif ($config{'mail_system'} == 0) {
 	if (!$rrm) {
 		return &text('mxv_rrm', 'relay_recipient_maps');
 		}
-	local @mapfiles = &postfix::get_maps_files();
+	local @mapfiles = &postfix::get_maps_files($rrm);
 	foreach my $f (@mapfiles) {
 		&lock_file($f);
 		}
@@ -2140,14 +2137,16 @@ elsif ($config{'mail_system'} == 0) {
 					   'value' => 'OK' });
 		}
 	&postfix::regenerate_any_table('relay_recipient_maps');
-	foreach my $f (@mapfiles) {
+	foreach my $f (reverse(@mapfiles)) {
 		&unlock_file($f);
 		}
-	return undef;
+	$rv = undef;
 	}
 else {
-	return $text{'mxv_unsupported'};
+	$rv = $text{'mxv_unsupported'};
 	}
+&release_lock_mail($dom);
+return $rv;
 }
 
 # register_sync_secondary_virtuser(&virtuser)
@@ -2315,8 +2314,10 @@ elsif ($config{'mail_system'} == 0) {
 			# we need to create the file without the @ in it, and
 			# link from the @ so that the mail server and Webmin
 			# agree.
-			$mfreal = &postfix::postfix_mail_file(
-					&replace_atsign($user->{'user'}));
+			my $ruser = &replace_atsign_if_exists($user->{'user'});
+			if ($ruser ne $user->{'user'}) {
+				$mfreal = &postfix::postfix_mail_file($ruser);
+				}
 			}
 		}
 	elsif ($s == 2) {
@@ -2359,7 +2360,7 @@ if ($mf) {
 			&unlink_file($mfreal);
 			&open_tempfile(MF, ">$mfreal", 1);
 			&close_tempfile(MF);
-			&set_ownership_permissions($uid, $gid, undef, $mfreal);
+			&set_ownership_permissions($uid, $gid, 0600, $mfreal);
 			&symlink_file($mfreal, $mf);
 			}
 		else {
@@ -2367,7 +2368,7 @@ if ($mf) {
 			&unlink_file($mf);
 			&open_tempfile(MF, ">$mf", 1);
 			&close_tempfile(MF);
-			&set_ownership_permissions($uid, $gid, undef, $mf);
+			&set_ownership_permissions($uid, $gid, 0600, $mf);
 			}
 		}
 	@rv = ( $mf, 0 );
@@ -2502,7 +2503,7 @@ local $noat;
 if ($config{'mail_system'} == 0 && $_[0]->{'user'} =~ /\@/) {
 	# Remove real file as well as link, if any
 	local $fakeuser = { %{$_[0]} };
-	$fakeuser->{'user'} = $noat = &replace_atsign($_[0]->{'user'});
+	$fakeuser->{'user'} = $noat = &replace_atsign_if_exists($_[0]->{'user'});
 	local ($realumf, $realtype) = &user_mail_file($fakeuser);
 	if ($realumf ne $umf && $realtype == 0) {
 		&system_logged("rm -f ".quotemeta($realumf));
@@ -2745,28 +2746,29 @@ return ( );
 }
 
 # mail_file_size(&user)
-# Returns the size in bytes (rounded to blocks), path to and last modified date
-# of a user's mail file or directory
+# Returns the size in bytes (rounded to blocks), path to, last modified date
+# and file count of a user's mail file or directory
 sub mail_file_size
 {
 &require_mail();
 local $umf = &user_mail_file($_[0]);
 if (-d $umf) {
 	# Need to sum up a maildir-format directory, via a recursive search
-	local ($sz, $maxmod) = &recursive_disk_usage_mtime($umf);
-	return ( $sz, $umf, $maxmod );
+	local ($sz, $maxmod, $ct) = &recursive_disk_usage_mtime($umf);
+	return ( $sz, $umf, $maxmod, $ct );
 	}
 else {
 	# Just the size of a single mail file
 	local @st = stat($umf);
-	return ( $st[12]*&quota_bsize("mail", 1) || $st[7], $umf, $st[9] );
+	return ( $st[12]*&quota_bsize("mail", 1) || $st[7], $umf, $st[9], 1 );
 	}
 }
 
 # recursive_disk_usage_mtime(directory, [only-gid], [levels], [&inodes-map])
 # Returns the number of bytes taken up by all files in some directory,
-# and the most recent modification time. The size is based on the filesystem's
-# block size, not the file lengths in bytes.
+# the most recent modification time, and the file and directory counts.
+# The size is based on the filesystem's block size, not the file lengths
+# in bytes.
 sub recursive_disk_usage_mtime
 {
 local ($dir, $gid, $levels, $inodes) = @_;
@@ -2774,27 +2776,28 @@ local $dir = &translate_filename($dir);
 local $bs = &quota_bsize("mail", 1);
 $inodes ||= { };
 if (-l $dir) {
-	return (0, undef);
+	return (0, undef, 1, 0);
 	}
 elsif (!-d $dir) {
 	local @st = stat($dir);
 	if ($inodes{$st[1]}++) {
 		# Already done this inode (ie. hard link)
-		return ( 0, undef );
+		return ( 0, undef, 0, 0 );
 		}
 	elsif (!defined($gid) || $st[5] == $gid) {
-		return ( $st[12]*$bs, $st[9] );
+		return ( $st[12]*$bs, $st[9], 1, 0 );
 		}
 	else {
-		return ( 0, undef );
+		return ( 0, undef, 0, 0 );
 		}
 	}
 else {
 	local @st = stat($dir);
-	local ($rv, $rt) = (0, undef);
+	local ($rv, $rt, $ct, $dct) = (0, undef, 0, 0);
 	if (!defined($gid) || $st[5] == $gid) {
 		$rv = $st[12]*$bs;
 		$rt = $st[9];
+		$dct++;
 		}
 	if (!defined($levels) || $levels > 0) {
 		opendir(DIR, $dir);
@@ -2802,19 +2805,19 @@ else {
 		closedir(DIR);
 		foreach my $f (@files) {
 			next if ($f eq "." || $f eq "..");
-			local ($ss, $st) = &recursive_disk_usage_mtime(
+			local ($ss, $st, $c, $dc) = &recursive_disk_usage_mtime(
 				"$dir/$f", $gid,
 				defined($levels) ? $levels - 1 : undef,
 				$inodes);
 			$rv += $ss;
 			$rt = $st if ($st > $rt);
+			$ct += $c;
+			$dct += $dc;
 			}
 		}
-	return ($rv, $rt);
+	return ($rv, $rt, $ct, $dct);
 	}
 }
-
-
 
 # mail_system_base()
 # Returns the base directory under which user mail files can be found
@@ -3169,7 +3172,7 @@ if (&foreign_check("dovecot") && &foreign_installed("dovecot")) {
 			if (-e "$control/$u->{'user'}") {
 				push(@names, $u->{'user'});
 				}
-			local $repl = &replace_atsign($u->{'user'});
+			local $repl = &replace_atsign_if_exists($u->{'user'});
 			if ($repl ne $u->{'user'} && -e "$control/$repl") {
 				push(@names, $repl);
 				}
@@ -3248,6 +3251,28 @@ if ($url && $burl && $url eq $burl && $allopts->{'repl'} &&
 
 &obtain_lock_mail($d);
 &obtain_lock_unix($d);
+
+# Restore plain-text password file first
+if (-r $file."_plainpass") {
+	if ($_[2]->{'mailuser'}) {
+		# Just copy one plain password
+		local (%oldplain, %newplain);
+		&read_file($file."_plainpass", \%oldplain);
+		&read_file("$plainpass_dir/$d->{'id'}", \%newplain);
+		$newplain{$_[2]->{'mailuser'}} = $oldplain{$_[2]->{'mailuser'}};
+		$newplain{$_[2]->{'mailuser'}." encrypted"} =
+			$oldplain{$_[2]->{'mailuser'}." encrypted"};
+		&write_file("$plainpass_dir/$d->{'id'}", \%newplain);
+		}
+	else {
+		# Copy the whole file
+		&copy_source_dest($file."_plainpass",
+				  "$plainpass_dir/$d->{'id'}");
+		}
+	}
+my %plainpass;
+&read_file("$plainpass_dir/$d->{'id'}", \%plainpass);
+
 if ($opts->{'mailuser'}) {
 	# Just doing a single user .. delete him first if he exists
 	&$first_print(&text('restore_mailusers2', $opts->{'mailuser'}));
@@ -3326,6 +3351,7 @@ while(<UFILE>) {
 			}
 		$uinfo->{'user'} = $user[0];
 		$uinfo->{'pass'} = $user[1];
+		$uinfo->{'plainpass'} = $plainpass{$uinfo->{'user'}};
 		if ($user[2] eq 'w') {
 			# Web management user, so user same UID as server
 			$uinfo->{'uid'} = $d->{'uid'};
@@ -3433,25 +3459,6 @@ while(<UFILE>) {
 	}
 close(UFILE);
 
-# Restore plain-text password file too
-if (-r $file."_plainpass") {
-	if ($_[2]->{'mailuser'}) {
-		# Just copy one plain password
-		local (%oldplain, %newplain);
-		&read_file($file."_plainpass", \%oldplain);
-		&read_file("$plainpass_dir/$d->{'id'}", \%newplain);
-		$newplain{$_[2]->{'mailuser'}} = $oldplain{$_[2]->{'mailuser'}};
-		$newplain{$_[2]->{'mailuser'}." encrypted"} =
-			$oldplain{$_[2]->{'mailuser'}." encrypted"};
-		&write_file("$plainpass_dir/$d->{'id'}", \%newplain);
-		}
-	else {
-		# Copy the whole file
-		&copy_source_dest($file."_plainpass",
-				  "$plainpass_dir/$d->{'id'}");
-		}
-	}
-
 # Restore hashed password file too
 if (-r $file."_hashpass") {
 	if ($_[2]->{'mailuser'}) {
@@ -3538,7 +3545,14 @@ if ($d->{'mail'} && !$d->{'alias'} && $config{'dkim_enabled'} &&
 	&pop_all_print();
 	}
 
-if (@errs) {
+if ($restore_eusersql) {
+	my $errs = join(" ", @errs);
+	$errs =~ s/User\s+already\s+exists\.//;
+	$errs = &trim($errs);
+	$errs = " : $errs" if ($errs);
+	&$second_print(&text('restore_mailerrs', $restore_eusersql . $errs));
+	}
+elsif (@errs) {
 	&$second_print(&text('restore_mailerrs', join(" ", @errs)));
 	}
 elsif ($_[2]->{'mailuser'} && !$foundmailuser) {
@@ -3770,7 +3784,7 @@ if (-r $file."_control" && &foreign_check("dovecot") &&
 		if ($opts->{'mailuser'}) {
 			# Limit extract to one user
 			push(@onefiles, $opts->{'mailuser'});
-			local $at = &replace_atsign($opts->{'mailuser'});
+			local $at = &replace_atsign_if_exists($opts->{'mailuser'});
 			if ($at ne $opts->{'mailuser'}) {
 				push(@onefiles, $at);
 				}
@@ -4370,6 +4384,9 @@ elsif (&foreign_installed("syslog-ng")) {
 foreach my $f ("/var/log/mail", "/var/log/maillog", "/var/log/mail.log") {
 	return $f if (-r $f);
 	}
+if (&has_command("journalctl")) {
+	return "journalctl -u 'postfix*' -u 'dovecot*' |";
+	}
 return undef;
 }
 
@@ -4432,6 +4449,30 @@ if (&foreign_installed("dovecot")) {
 			   'links' => \@dlinks } );
 		}
 	}
+if (&foreign_check("init")) {
+	&foreign_require("init");
+	my $st = &init::action_status("saslauthd");
+	my $r = &init::status_action("saslauthd");
+	if ($st && $r >= 0) {
+		if ($r) {
+			push(@rv,{ 'status' => 1,
+				   'feature' => 'saslauthd',
+				   'name' => $text{'index_saname'},
+				   'desc' => $text{'index_sastop'},
+				   'restartdesc' => $text{'index_sarestart'},
+				   'longdesc' => $text{'index_sastopdesc'},
+				   'links' => [] } );
+			}
+		else {
+			push(@rv,{ 'status' => 0,
+				   'feature' => 'saslauthd',
+				   'name' => $text{'index_saname'},
+				   'desc' => $text{'index_sastart'},
+				   'longdesc' => $text{'index_sastartdesc'},
+				   'links' => [] } );
+			}
+		}
+	}
 return @rv;
 }
 
@@ -4455,6 +4496,20 @@ sub stop_service_dovecot
 {
 &foreign_require("dovecot");
 return &dovecot::stop_dovecot();
+}
+
+sub start_service_saslauthd
+{
+&foreign_require("init");
+my ($ok, $err) = &init::start_action("saslauthd");
+return $ok ? undef : $err;
+}
+
+sub stop_service_saslauthd
+{
+&foreign_require("init");
+my ($ok, $err) = &init::stop_action("saslauthd");
+return $ok ? undef : $err;
 }
 
 # check_secondary_mx()
@@ -4507,7 +4562,7 @@ if ($config{'mail_system'} == 1) {
 elsif ($config{'mail_system'} == 0) {
 	# Add to Postfix relay domains
 	local @rd = split(/[, ]+/,
-			&postfix::get_current_value("relay_domains"));
+			&postfix::get_real_value("relay_domains"));
 	if ($rd[0] =~ /:/) {
 		# Actually in a map
 		local $rmaps = &postfix::get_maps("relay_domains");
@@ -4528,6 +4583,18 @@ elsif ($config{'mail_system'} == 0) {
 		&lock_file($postfix::config{'postfix_config_file'});
 		&postfix::set_current_value("relay_domains", join(", ", @rd));
 		&unlock_file($postfix::config{'postfix_config_file'});
+		}
+
+	# Ensure that relay_recipient_maps is configured
+	local $rrm = &postfix::get_current_value("relay_recipient_maps");
+	if (!$rrm) {
+		my $cdir = $postfix::config{'postfix_config_file'};
+		$cdir =~ s/\/[^\/]+$//;
+		$rrm = "hash:$cdir/relay_recipient_maps";
+		&postfix::set_current_value("relay_recipient_maps", $rrm);
+		&postfix::ensure_map("relay_recipient_maps");
+		&postfix::regenerate_relay_recipient_table();
+		&postfix::reload_postfix();
 		}
 	}
 elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
@@ -4941,14 +5008,7 @@ print &ui_table_row(&hlink($text{'tmpl_othergroups'}, "template_othergroups"),
 print &ui_table_row(&hlink($text{'tmpl_append'}, "template_append"),
 	    &none_def_input("append", $tmpl->{'append_style'}, undef, 1)."\n".
 	    &ui_select("append", $tmpl->{'append_style'},
-		       [ [ 0, "username.domain" ],
-			 [ 2, "domain.username" ],
-			 [ 1, "username-domain" ],
-			 [ 3, "domain-username" ],
-			 [ 4, "username_domain" ],
-			 [ 5, "domain_username" ],
-			 [ 6, "username\@domain" ],
-			 [ 7, "username\%domain" ] ]));
+		       [ &list_append_styles() ]));
 }
 
 # parse_template_mail(&tmpl)
@@ -5084,8 +5144,9 @@ sub show_template_newuser
 local ($tmpl) = @_;
 
 print &ui_table_row(&hlink($text{'tmpl_newuser'}, "template_newuser"),
-	&none_def_input("newuser", $tmpl->{'newuser_on'}, $text{'tmpl_mailbelow'},
-			0, 0, undef, [ "mail", "subject", "cc", "bcc" ]).
+	&none_def_input("newuser", $tmpl->{'newuser_on'},
+			$text{'tmpl_mailbelow'},
+			0, 0, undef, [ "newuser", "subject", "cc", "bcc" ]).
 	"<br>\n".
 	&ui_textarea("newuser", $tmpl->{'newuser'} eq "none" ? "" :
 				join("\n", split(/\t/, $tmpl->{'newuser'})),
@@ -5116,6 +5177,48 @@ $tmpl->{'newuser_bcc'} = $in{'bcc'};
 $tmpl->{'newuser_to_mailbox'} = $in{'mailbox'};
 $tmpl->{'newuser_to_owner'} = $in{'owner'};
 $tmpl->{'newuser_to_reseller'} = $in{'reseller'};
+}
+
+# show_template_updateuser(&tmpl)
+# Show the new mailbox user message template
+sub show_template_updateuser
+{
+local ($tmpl) = @_;
+
+print &ui_table_row(&hlink($text{'tmpl_updateuser'}, "template_updateuser"),
+	&none_def_input("updateuser", $tmpl->{'updateuser_on'},
+			$text{'tmpl_mailbelow'},
+			0, 0, undef, [ "updateuser", "subject", "cc", "bcc" ]).
+	"<br>\n".
+	&ui_textarea("updateuser", $tmpl->{'updateuser'} eq "none" ? "" :
+				join("\n", split(/\t/, $tmpl->{'updateuser'})),
+		     10, 60)."\n".
+	&email_template_input(undef, $tmpl->{'updateuser_subject'},
+		      $tmpl->{'updateuser_cc'}, $tmpl->{'updateuser_bcc'},
+		      $tmpl->{'updateuser_to_mailbox'},
+		      $tmpl->{'updateuser_to_owner'},
+		      $tmpl->{'updateuser_to_reseller'})
+	);
+}
+
+# parse_template_updateuser(&tmpl)
+# Update the new mailbox user message template
+sub parse_template_updateuser
+{
+local ($tmpl) = @_;
+
+$tmpl->{'updateuser_on'} = $in{'updateuser_mode'} == 0 ? "none" :
+		        $in{'updateuser_mode'} == 1 ? "" : "yes";
+if ($tmpl->{'updateuser_on'} eq 'yes') {
+	$in{'updateuser'} =~ s/\r//g;
+	$tmpl->{'updateuser'} = $in{'updateuser'};
+	}
+$tmpl->{'updateuser_subject'} = $in{'subject'};
+$tmpl->{'updateuser_cc'} = $in{'cc'};
+$tmpl->{'updateuser_bcc'} = $in{'bcc'};
+$tmpl->{'updateuser_to_mailbox'} = $in{'mailbox'};
+$tmpl->{'updateuser_to_owner'} = $in{'owner'};
+$tmpl->{'updateuser_to_reseller'} = $in{'reseller'};
 }
 
 # get_generics_hash()
@@ -5587,12 +5690,15 @@ return undef if (!$supports_dependent);
 &require_mail();
 
 # Read the map file to find an entry for the domain
-local $map = &postfix::get_maps("sender_dependent_default_transport_maps");
-local ($rv) = grep { $_->{'name'} eq '@'.$d->{'dom'} } @$map;
+my $dependent_maps = &postfix::get_real_value(
+	"sender_dependent_default_transport_maps");
+return undef if (!$dependent_maps);
+my $map = &postfix::get_maps("sender_dependent_default_transport_maps");
+my ($rv) = grep { $_->{'name'} eq '@'.$d->{'dom'} } @$map;
 return undef if (!$rv);
 
 # Check for a Postfix service
-local $master = &postfix::get_master_config();
+my $master = &postfix::get_master_config();
 foreach my $m (@$master) {
 	if ($m->{'name'} eq $rv->{'value'} && $m->{'enabled'}) {
 		# Found match on the name .. extract the IP
@@ -5612,6 +5718,23 @@ sub save_domain_dependent
 local ($d, $dependent) = @_;
 return undef if (!$supports_dependent);
 &require_mail();
+
+# Setup the map if needed
+my $dependent_maps = &postfix::get_real_value(
+	"sender_dependent_default_transport_maps");
+if (!$dependent_maps) {
+	&lock_file($postfix::config{'postfix_config_file'});
+	my $cdir = $postfix::config{'postfix_config_file'};
+	$cdir =~ s/\/[^\/]+$//;
+	$dependent_maps = "hash:$cdir/sender_dependent_default_transport_maps";
+	&postfix::set_current_value("sender_dependent_default_transport_maps",
+				    $dependent_maps);
+	&postfix::ensure_map("sender_dependent_default_transport_maps");
+	&postfix::regenerate_any_table(
+		"sender_dependent_default_transport_maps");
+	&postfix::reload_postfix();
+	&unlock_file($postfix::config{'postfix_config_file'});
+	}
 
 # Read the map file to find an entry for the domain
 local $map = &postfix::get_maps("sender_dependent_default_transport_maps");
@@ -5657,6 +5780,7 @@ elsif (!$m && $dependent) {
 	if ($d->{'ip6'}) {
 		$m->{'command'} .= " -o smtp_bind_address6=$d->{'ip6'}";
 		}
+	$m->{'command'} .= " -o smtp_helo_name=mail.$d->{'dom'}";
 	$m->{'name'} = "smtp-".$d->{'id'};
 	&postfix::create_master($m);
 	&postfix::reload_postfix();
@@ -5674,6 +5798,10 @@ elsif ($m && $dependent) {
 	    $1 ne $d->{'ip6'}) {
 		$m->{'command'} =~ s/smtp_bind_address6=([a-f0-9:]+)/smtp_bind_address6=$d->{'ip6'}/;
 		$changed++;
+		}
+	if ($m->{'command'} =~ /smtp_helo_name=(\S+)/ &&
+	    $1 ne "mail.$d->{'dom'}") {
+		$m->{'command'} =~ s/smtp_helo_name=\S+/smtp_helo_name=mail.$d->{'dom'}/;
 		}
 	if ($changed) {
 		&postfix::modify_master($m);
@@ -5831,7 +5959,7 @@ while(<MAILLOG>) {
 	# Remove Solaris extra part like [ID 197553 mail.info]
 	s/\[ID\s+\d+\s+\S+\]\s+//;
 
-	if (/^(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\S+)\s+dovecot:\s+(pop3|imap)-login:\s+Login:\s+user=<([^>]+)>/) {
+	if (/^(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\S+)\s+dovecot\S*:\s+(pop3|imap)-login:\s+Login:\s+user=<([^>]+)>/) {
 		# POP3 or IMAP login with dovecot
 		my $ltime;
 		eval { $ltime = timelocal($5, $4, $3, $2,
@@ -6300,12 +6428,27 @@ else {
 	($recs, $file) = &get_domain_dns_records_and_file($d);
 	}
 $file || return "No DNS zone for $d->{'dom'} found";
+my $changed = &create_dns_autoconfig_records($d, $autoconfig, $file, $recs);
+
+if ($changed && !$forcefile) {
+	&post_records_change($d, $recs, $file);
+	&register_post_action(\&restart_bind, $d);
+	}
+&release_lock_dns($d);
+return undef;
+}
+
+# create_dns_autoconfig_records(&domain, autoconfig, file, &recs)
+# Just create the DNS records for some autoconfig hostname
+sub create_dns_autoconfig_records
+{
+my ($d, $autoconfig, $file, $recs) = @_;
 $autoconfig .= ".";
 
 # Add A record for IPv4
 my $changed = 0;
 my ($cr) = grep { $_->{'name'} eq $autoconfig &&
-		     $_->{'type'} eq 'CNAME' } @$recs;
+		  $_->{'type'} eq 'CNAME' } @$recs;
 if (!$cr) {
 	my ($r) = grep { $_->{'name'} eq $autoconfig &&
 			    $_->{'type'} eq 'A' } @$recs;
@@ -6330,15 +6473,9 @@ if (!$cr) {
 		$changed++;
 		}
 	}
-
-if ($changed) {
-	&post_records_change($d, $recs, $file);
-	&register_post_action(\&restart_bind, $d);
-	}
-
-&release_lock_dns($d);
-return undef;
+return $changed;
 }
+
 
 # disable_email_autoconfig(&domain)
 # Delete the DNS entry, ServerAlias and Redirect for mail auto-config
@@ -6439,16 +6576,18 @@ if ($d->{'dns'}) {
 		&release_lock_dns($d);
 		return "No DNS zone for $d->{'dom'} found";
 		}
-	my $changed = 0;
 	my %adots = map { $_.".", 1 } @autoconfig;
+	my @delrecs;
 	foreach my $r (@$recs) {
 		if ($r->{'type'} =~ /^(A|AAAA)$/ &&
 		    $adots{$r->{'name'}}) {
-			&delete_dns_record($recs, $file, $r);
-			$changed++;
+			push(@delrecs, $r);
 			}
 		}
-	if ($changed) {
+	foreach my $r (@delrecs) {
+		&delete_dns_record($recs, $file, $r);
+		}
+	if (@delrecs) {
 		&post_records_change($d, $recs, $file);
 		&register_post_action(\&restart_bind, $d);
 		}
@@ -6706,6 +6845,20 @@ sub reset_mail
 my ($d) = @_;
 &delete_mail($d, 0, 1, 1);
 &setup_mail($d, 1, 1);
+}
+
+# list_append_styles()
+# Returns a list of all support username/domain append styles
+sub list_append_styles
+{
+return ( [ 0, "username.domain" ],
+	 [ 2, "domain.username" ],
+	 [ 1, "username-domain" ],
+	 [ 3, "domain-username" ],
+	 [ 4, "username_domain" ],
+	 [ 5, "domain_username" ],
+	 [ 6, "username\@domain" ],
+	 [ 7, "username\%domain" ] );
 }
 
 $done_feature_script{'mail'} = 1;

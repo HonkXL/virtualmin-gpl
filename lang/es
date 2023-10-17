@@ -1433,21 +1433,7 @@ sub_RPLAINPASS=Contraseña de reseller
 sub_EMAIL=Dirección de mail de contacto del reseller
 sub_WEBMINURL=URL para loguearse a Virtualmin
 
-newuser_title=Email de Nueva Casilla
-newuser_ecannot=Ud. no está autorizado a editar la plantilla de email para nueva casilla de correo
-newuser_desc2=Utilice este formulario para editar el template para el mensaje de mail que se enviará al usuario de mail/FTP luego de que sea creado. Se harán las siguientes sustituciones al texto :
-newuser_header=Detalles del mensaje de mail de nueva cuenta de mail
 newuser_docs=Explicación y sustituciones
-
-newupdate_title=Email de cuenta de mail actualizada
-newupdate_ecannot=No está autorizado a editar el template del mail que se envía cuando se actualiza una cuenta de mail
-newupdate_desc2=Utilice este formulario para editar el template para el mensaje de mail que se enviará al usuario de mail/FTP luego de que sea actualizado. Se harán las siguientes sustituciones al texto :
-newupdate_header=Detalles del mensaje de mail de cuenta de mail actualizada
-
-newlocal_title=Email de nueva Casilla de Correo Local
-newlocal_ecannot=Ud. no está autorizado a editar la plantilla de email de nueva casilla de correo local
-newlocal_desc2=Utilice este formulario para editar el template para el mensaje de mail que puede ser enviado a un nuevo usuario de correo local luego de que sea creado.
-newlocal_header=Detalles del mensaje de mail de nueva cuenta de mail local
 
 newdom_title=Nuevo Email de Servidor Virtual
 newdom_ecannot=Ud no está autorizado a editar la plantilla de email de nuevo servidor virtual
@@ -1979,7 +1965,6 @@ backup_allfeatures=Backup de todas las opciones
 backup_selfeatures=Solo aquellos seleccionados debajo ..
 backup_edests=No se ingresaron destinos para el backup!
 backup_edownloadmany=Cuando se está bajando un backup, tiene que ser el único destino
-backup_edownloadfmt=Solo backups a un solo archivo pueden bajarse a su navegador
 backup_edownloadfailed=Falló el backup intente nuevamente a un archivo en el servidor para ver el mensaje de error completo
 backup_egone=Este backup programado no existe más!
 backup_starting=Iniciando backup a $1 ..
@@ -2323,7 +2308,6 @@ cert_letsonly=Sólo actualizar la renovación
 cert_desc8=Let's Encrypt es una autoridad de certificación gratuita , automatizada y abierta que se puede utilizar para generar un certificado SSL por Virtualmin .
 cert_letsdesc=Esta página se puede utilizar para solicitar un nuevo certificado, que sobre-escribirá a cualquier otro que ya tenga configurado para este dominio. Sin embargo , el servicio de cifrado de Let requiere que su propiedad del dominio certificado se valide comprobando que este sistema alberga la página web para el mismo. Esto se realiza mediante la colocación de un pequeño archivo temporal en el directorio de archivos del sitio web de $1.
 cert_elets=Sin embargo, no se puede utilizar en tu sistema : $1
-cert_ewebminver=Solamente versiones superiores a Webmin  1.780 soportan la encriptación de Let´s
 cert_dnamefor=Solicitar certificado para
 cert_dnamedef=Dominios asociados con este servidor
 cert_dnamesel=Nombres de dominio que se muestran aquí
@@ -3461,7 +3445,6 @@ newmxs_evirtualmin=.. el servidor $1 no tiene Virtualmin instalado
 newmxs_eversion=El servidor $1 tiene Virtualmin $3, pero se necesita la versión $2 o posterior
 newmxs_email=Email no está habilitado está habilitado en este sistema
 newmxs_emailsystem=No se ha configurado ningún sistema de email
-newmxs_esystem=El sistema de mail $1 configurado no está instalado
 newmxs_eprob=El servidor $1 no puede ser utilizado como servidor de mail secundario : $2
 newmxs_already=Este servidor está actualmente haciendo relay o hosteando el dominio
 newmxs_missing=Este servidor no es un relay para el dominio

@@ -98,9 +98,12 @@ if (!$aliasdom && $d->{'dir'}) {
 if ($d->{'ip6'}) {
 	push(@ips, $d->{'ip6'});
 	}
-print &ui_table_row($text{'edit_ips'},
-	join(", ", @ips).
-	($d->{'dns_ip'} ? " (".&text('edit_dnsip2', $d->{'dns_ip'}).")" : ""));
+my $ip = join(", ", @ips).
+	($d->{'dns_ip'} ? " (".&text('edit_dnsip2', $d->{'dns_ip'}).")" : "");
+if (&can_change_ip($d) && &can_edit_domain($d)) {
+	$ip = &ui_link("newip_form.cgi?dom=$d->{'id'}", $ip);
+	}
+print &ui_table_row($text{'edit_ips'}, $ip);
 
 if ($d->{'proxy_pass_mode'} && $d->{'proxy_pass'} && &domain_has_website($d)) {
 	# Show forwarding / proxy destination
@@ -139,7 +142,7 @@ print &ui_hidden_table_start($text{'edit_headerc'}, "width=100%", 2,
 # Show username prefix, with option to change
 if (!$aliasdom && $tmpl->{'append_style'} != 6) {
 	@users = &list_domain_users($d, 1, 1, 1, 1);
-	$msg = &get_prefix_msg($tmpl);
+	$msg = &get_prefix_msg($d);
 	print &ui_table_row($text{'edit_'.$msg},
 		@users ? "<tt>$d->{'prefix'}</tt> (".
 			  &text('edit_noprefix', scalar(@users)).")"
@@ -217,11 +220,17 @@ if (!$parentdom) {
 
 	$smsg = &get_password_synced_types($d) ?
 			"<br>".$text{'edit_dbsync'} : "";
+	my $checked_domain_hashpass = &check_domain_hashpass($d);
+	my $optsextra = $checked_domain_hashpass ? ['hashpass_enable'] : undef;
 	print &ui_table_row($text{'edit_passwd'},
 		&ui_opt_textbox("passwd", undef, 20,
 				$text{'edit_lv'}." ".&show_password_popup($d),
-				$text{'edit_set'}, undef, undef, undef,
+				$text{'edit_set'}, undef, $optsextra, undef,
 			 	"autocomplete=new-password").
+		($checked_domain_hashpass ? 
+			("&nbsp;&nbsp;&nbsp;&nbsp;".&ui_checkbox("hashpass_enable", 1, 
+				$text{'edit_hash'}, $d->{'hashpass'})) :
+			"").
 		$smsg);
 	}
 
@@ -334,6 +343,13 @@ if (!$d->{'disabled'}) {
 		# are in the same state
 		my @ch = &can_chained_feature($f, 1);
 		if (@ch && $d->{$ch[0]} == $d->{$f}) {
+			print &ui_hidden($f, $d->{$f}),"\n";
+			next;
+			}
+
+		# Don't show unix user and directory options if enabled
+		if (($f eq "dir" || $f eq "unix") &&
+		    $config{$f} == 3 && $d->{$f}) {
 			print &ui_hidden($f, $d->{$f}),"\n";
 			next;
 			}

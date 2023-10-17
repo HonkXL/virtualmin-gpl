@@ -50,7 +50,7 @@ if ($in{'all'} == 1) {
 	}
 elsif ($in{'all'} == 2) {
 	# All except selected
-	%exc = map { $_, 1 } split(/\0/, $in{'doms'});
+	%exc = map { $_, 1 } split(/\s+/, $in{'doms'});
 	@doms = grep { &can_backup_domain($_, $acluser) &&
 		       !$exc{$_->{'id'}} } &list_domains();
 	if ($in{'parent'}) {
@@ -59,7 +59,7 @@ elsif ($in{'all'} == 2) {
 	}
 else {
 	# Only selected
-	foreach $did (split(/\0/, $in{'doms'})) {
+	foreach $did (split(/\s+/, $in{'doms'})) {
 		local $dinfo = &get_domain($did);
 		if ($dinfo && &can_backup_domain($dinfo, $acluser)) {
 			push(@doms, $dinfo);
@@ -153,6 +153,7 @@ foreach $f (@do_features) {
 	}
 $options{'dir'}->{'exclude'} = join("\t", split(/\r?\n/, $in{'exclude'}));
 $options{'dir'}->{'include'} = $in{'include'};
+$options{'dir'}->{'strftime'} = $in{'strftime'};
 
 # Parse Virtualmin feature inputs
 if (&can_backup_virtualmin()) {
@@ -222,7 +223,13 @@ if ($dests[0] eq "download:" || $dests[0] eq "downloadlink:") {
 	&run_post_actions();
 	if (!$ok) {
 		unlink($temp);
-		&error($text{'backup_edownloadfailed'});
+		if ($dests[0] eq "download:") {
+			&error($text{'backup_edownloadfailed'});
+			}
+		else {
+			&ui_print_footer("/$module_name/list_sched.cgi",
+					 $text{'sched_return'});
+			}
 		}
 	elsif ($dests[0] eq "download:") {
 		# Just output the file
@@ -242,7 +249,7 @@ if ($dests[0] eq "download:" || $dests[0] eq "downloadlink:") {
 		my $fsize = -s $temp;
 		my $fsizen = &nice_size($fsize);
 		print "<p><b>",
-		      &ui_link("/$module_name/download_backup.cgi?file=".
+		      &ui_link("@{[&get_webprefix_safe()]}/$module_name/download_backup.cgi?file=".
 				&urlize($temp),
 			       &text('backup_downloadfile', $tempfile) . " ($fsizen)" ),
 		      "</b><p>\n";
@@ -335,10 +342,10 @@ else {
 		}
 
 	PREFAILED:
-	if ($ok) {
-		&webmin_log("backup", $dests[0], undef,
-			    { 'doms' => [ map { $_->{'dom'} } @doms ] });
-		}
+	&webmin_log("backup", $dests[0], undef,
+		    { 'doms' => [ map { $_->{'dom'} } @doms ],
+		      'failed' => !$ok,
+		      'sched' => 0, });
 
 	&ui_print_footer("/$module_name/list_sched.cgi", $text{'sched_return'});
 	}

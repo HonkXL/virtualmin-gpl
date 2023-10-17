@@ -95,11 +95,10 @@ else {
 	}
 &error($err) if ($err);
 
-if (defined(&bind8::supports_dnssec) && &bind8::supports_dnssec() &&
-    &can_domain_dnssec($d) && defined($in{'dnssec'})) {
+if (&can_domain_dnssec($d) && defined($in{'dnssec'})) {
 	# Turn DNSSEC on or off
 	&pre_records_change($d);
-	my $key = &bind8::get_dnssec_key(&get_bind_zone($d->{'dom'}));
+	my $key = &has_domain_dnssec($d);
 	my $err;
 	my $changed = 0;
 	if ($key && !$in{'dnssec'}) {
@@ -123,13 +122,26 @@ if (defined(&bind8::supports_dnssec) && &bind8::supports_dnssec() &&
 &save_domain($d);
 
 # Update DNS cloud if changed
-if ($in{'cloud'} ne 'local' && $in{'cloud'} ne 'services') {
+if ($in{'cloud'} =~ /^remote_(\S+)$/) {
+	# On remote DNS
+	$rhost = $1;
+	($rserver) = grep { $_->{'host'} eq $rhost } &list_remote_dns();
+	$rserver || &error($text{'spf_eremoteexists'});
+	$cloud = undef;
+	}
+elsif ($in{'cloud'} ne 'local' && $in{'cloud'} ne 'services') {
+	# On a cloud provider
 	($c) = grep { $_->{'name'} eq $in{'cloud'} } &list_dns_clouds();
 	$c || &error($text{'spf_ecloudexists'});
 	$d->{'dns_cloud'} eq $c->{'name'} || &can_dns_cloud($c) ||
 		&error($text{'spf_ecloudcannot'});
+	$cloud = $in{'cloud'};
 	}
-$err = &modify_dns_cloud($d, $in{'cloud'});
+else {
+	# On local or Cloudmin services
+	$cloud = $in{'cloud'};
+	}
+$err = &modify_dns_cloud($d, $cloud, $rserver);
 $err && &error(&text('spf_ecloud', $err));
 
 &run_post_actions();

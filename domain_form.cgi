@@ -272,7 +272,6 @@ $defplan = &get_default_plan();
 $js = "<script>\n";
 $js .= "function select_plan(num)\n";
 $js .= "{\n";
-$js .= "if (typeof _history_page_back === 'number') {return;}\n";
 $js .= "var domain_form_target = document.querySelectorAll('form[action*=\"domain\"][action*=\".cgi\"]');\n";
 foreach $plan (@availplans) {
 	$js .= "if (num == $plan->{'id'}) {\n";
@@ -339,7 +338,7 @@ print &ui_table_row(&hlink($text{'form_template'},"template"),
 if (!$parentdom) {
 	foreach $p (sort { $a->{'name'} cmp $b->{'name'} }
 			 &list_available_plans()) {
-		push(@popts, [ $p->{'id'}, $p->{'name'} ]);
+		push(@popts, [ $p->{'id'}, &html_escape($p->{'name'}) ]);
 		}
 	print &ui_table_row(&hlink($text{'form_plan'}, "plan"),
 		&ui_select("plan", $defplan->{'id'}, \@popts, 1, 0, 0, 0,
@@ -550,9 +549,14 @@ foreach $f (@dom_features) {
 	$can_feature{$f}++;
 	$can_website = 1 if ($f eq 'web');
 
-	if ($config{$f} == 3) {
-		# This feature is always on, so don't show it
-		print &ui_hidden($f, 1),"\n";
+	if (&can_chained_feature($f, 1)) {
+		# This feature is always on when some other feature is, so
+		# don't show it
+		next;
+		}
+	if (($f eq "dir" || $f eq "unix") && $config{$f} == 3) {
+		# These features are always on for new domains
+		print &ui_hidden($f, 1);
 		next;
 		}
 
@@ -571,6 +575,12 @@ foreach $f (@fplugins) {
 				$parentdom, $aliasdom, $subdom));
 	next if (!&can_use_feature($f));
 	$can_website = 1 if (&plugin_call($f, "feature_provides_web"));
+
+	if (&can_chained_feature($f, 1)) {
+		# This feature is always on when some other feature is, so
+		# don't show it
+		next;
+		}
 
 	$label = &plugin_call($f, "feature_label", 0);
 	$label = " <b>$label</b>";
@@ -659,10 +669,12 @@ else {
 
 # Show DNS IP address field
 if (&can_dnsip()) {
+	my $def_dns_ip = $config{'external_ip_cache'} || &get_dns_ip($resel);
+	my $defmsg = $def_dns_ip || $text{'spf_default2'};
 	print &ui_table_row(&hlink($text{'edit_dnsip'}, "edit_dnsip"),
 		&ui_opt_textbox("dns_ip",
 				$parentdom ? $parentdom->{'dns_ip'} : undef,
-				20, $text{'spf_default2'}));
+				20, $defmsg));
 	}
 
 print &ui_hidden_table_end();
@@ -683,14 +695,14 @@ if ($can_website && !$aliasdom && $virtualmin_pro) {
 			    3, \@tds);
 
 	print &ui_hidden_table_end();
-	print '<script>var content_def_radios = document.querySelectorAll("input[type=radio][name=\'content_def\']"), content_textarea = document.querySelector("textarea[name=\'content\']"), content_textarea_def_placeholder = content_textarea.getAttribute(\'data-placeholder\'); function content_def_event(event) { if ( this.value == 1 ) { content_textarea.style.display = "none"; } else { content_textarea.style.display = "inline-block"; } content_textarea.placeholder = this.value == 2 ? content_textarea_def_placeholder : content_textarea.placeholder = ""; } Array.prototype.forEach.call(content_def_radios, function(radio) { radio.removeEventListener("change", content_def_event); radio.addEventListener("change", content_def_event); });</script>';
+	print '<script>var content_def_radios = document.querySelectorAll("input[type=radio][name=\'content_def\']"), content_textarea = document.querySelector("textarea[name=\'content\']"), content_textarea_def_placeholder = content_textarea.getAttribute(\'placeholder\'); function content_def_event(event) { if ( this.value == 1 ) { content_textarea.style.display = "none"; } else { content_textarea.style.display = "inline-block"; } content_textarea.placeholder = this.value == 2 ? content_textarea_def_placeholder : content_textarea.placeholder = ""; } Array.prototype.forEach.call(content_def_radios, function(radio) { radio.removeEventListener("change", content_def_event); radio.addEventListener("change", content_def_event); });</script>';
 	}
 print &ui_form_end([ [ "ok", $text{'form_ok'} ] ]);
 if (!$config{'template_auto'}) {
-	print "<script>select_template($deftmpl->{'id'});</script>\n";
+	print "<script data-nocache>select_template($deftmpl->{'id'});</script>\n";
 	}
 if (!$parentdom) {
-	print "<script>select_plan($defplan->{'id'});</script>\n";
+	print "<script data-nocache>select_plan($defplan->{'id'});</script>\n";
 	}
 
 &ui_print_footer("", $text{'index_return'});

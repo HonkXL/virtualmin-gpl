@@ -284,21 +284,22 @@ if (!$data->{'nostatus'} && $info->{'startstop'} &&
 		   "$action_icon</a>";
 
 		# Restart link 
-		my $restart_link = ($status->{'status'}
-		   ? "<a href='@{[&get_webprefix_safe()]}/$module_name/restart_feature.cgi?".
+		my $restart_link_style = $status->{'status'} ? "" : "style='visibility: hidden; pointer-events: none;' ";
+		my $restart_link =
+		     "<a ${restart_link_style}href='@{[&get_webprefix_safe()]}/$module_name/restart_feature.cgi?".
 		     "feature=$status->{'feature'}&id=$status->{'id'}'".
 		     " title='$status->{'restartdesc'}'>".
 		     "<img src='$idir/reload.png'".
-		     "alt='$status->{'restartdesc'}'></a>\n"
-		   : "");
+		     "alt='$status->{'restartdesc'}'></a>\n";
 
 		push(@table, { 'desc' => $label,
 			       'value' =>
 			(!$status->{'status'} ?
 			      "<img src='$idir/down.gif' alt='Stopped'>" :
 			      "<img src='$idir/up.gif' alt='Running'>").
-		        $action_link.
-		        "&nbsp;".$restart_link });
+			    ("&nbsp;" x 10).
+			    $action_link.
+			    "&nbsp;".$restart_link });
 		}
 	push(@rv, { 'type' => 'table',
 		    'id' => 'status',
@@ -669,17 +670,17 @@ return @rv;
 sub get_virtualmin_docs
 {               
 return &master_admin() ?
-		"http://www.virtualmin.com/documentation" :
+		"https://www.virtualmin.com/documentation" :
        &reseller_admin() ?
-		"http://www.virtualmin.com/documentation/users/reseller" :
-       		"http://www.virtualmin.com/documentation/users/server-owner";
+		"https://www.virtualmin.com/documentation/users/reseller" :
+       		"https://www.virtualmin.com/documentation/users/server-owner";
 }      
 
 sub parse_license_date
 {
 my ($str) = @_;
 if ($str =~ /^(\d{4})-(\d+)-(\d+)$/) {
-        return eval { timelocal(0, 0, 0, $3, $2-1, $1-1900) };
+        return eval { timelocal(0, 0, 0, $3, $2-1, $1) };
         }
 return undef;
 }

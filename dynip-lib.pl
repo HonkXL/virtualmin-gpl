@@ -47,9 +47,15 @@ else {
 # Returns the IP address of this system, as seen by other hosts on the Internet.
 sub get_external_ip_address
 {
-local $url = "http://software.virtualmin.com/cgi-bin/ip.cgi";
-local ($host, $port, $page, $ssl) = &parse_http_url($url);
-local ($out, $error);
+my $now = time();
+if ($config{'external_ip_cache'} &&
+    $now - $config{'external_ip_cache_time'} < 24*60*60) {
+	# Can use last cached value
+	return $config{'external_ip_cache'};
+	}
+my $url = "http://software.virtualmin.com/cgi-bin/ip.cgi";
+my ($host, $port, $page, $ssl) = &parse_http_url($url);
+my ($out, $error);
 &http_download($host, $port, $page, \$out, \$error, undef, $ssl,
 	       undef, undef, 5, 0, 1);
 $out =~ s/\r|\n//g;
@@ -57,33 +63,33 @@ if ($error) {
 	# Fall back to last cached value
 	return $config{'external_ip_cache'};
 	}
-if ($config{'external_ip_cache'} ne $out) {
-	# Cache it for future calls
-	$config{'external_ip_cache'} = $out;
-	&save_module_config();
-	}
+# Cache it for future calls
+&lock_file($module_config_file);
+$config{'external_ip_cache'} = $out;
+$config{'external_ip_cache_time'} = $now;
+&save_module_config();
+&unlock_file($module_config_file);
 return $out;
 }
 
-# update_dynip_service()
+# update_dynip_service(new-ip, old-ip)
 # Talk to the configured dynamic DNS service, and return the set IP address
 # and an error message (if any)
 sub update_dynip_service
 {
-local $ip = $config{'dynip_auto'} ? &get_external_ip_address()
-				  : &get_default_ip();
+my ($ip, $oldip) = @_;
 if ($config{'dynip_service'} eq 'dyndns') {
 	# Update DynDNS
-	local $host = "members.dyndns.org";
-	local $port = 80;
-	local $page = "/nic/update?".
+	my $host = "members.dyndns.org";
+	my $port = 443;
+	my $page = "/nic/update?".
 		      "system=dyndns&".
 		      "hostname=".&urlize($config{'dynip_host'})."&".
 		      "myip=$ip&".
 		      "wildcard=NOCHG&".
 		      "mx=NOCHG&".
 		      "backmx=NOCHG";
-	local ($out, $error);
+	my ($out, $error);
 	&http_download($host, $port, $page, \$out, \$error, undef, 0,
 		       $config{'dynip_user'},
 		       $config{'dynip_pass'},
@@ -107,7 +113,8 @@ if ($config{'dynip_service'} eq 'dyndns') {
 elsif ($config{'dynip_service'} eq 'external') {
 	# Just run an external script with the IP and hostname as args
 	my $cmd = $config{'dynip_external'}." ".quotemeta($ip).
-		  " ".quotemeta($config{'dynip_host'});
+		  " ".quotemeta($config{'dynip_host'}).
+		  " ".quotemeta($oldip);
 	my $out = &backquote_logged("$cmd 2>&1 </dev/null");
 	if ($?) {
 		return (undef, "$cmd failed : $out");

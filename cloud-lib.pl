@@ -8,7 +8,7 @@ my @rv = ( { 'name' => 's3',
 	     'prefix' => [ 's3', 's3rrs' ],
 	     'url' => 'https://aws.amazon.com/s3/',
 	     'desc' => $text{'cloud_s3desc'},
-	     'longdesc' => $text{'cloud_s3_longdesc'} },
+	     'longdesc' => \&cloud_s3_longdesc },
 	   { 'name' => 'rs',
 	     'prefix' => [ 'rs' ],
 	     'url' => 'https://www.rackspace.com/openstack/public/files',
@@ -20,7 +20,7 @@ if ($virtualmin_pro) {
 		    'prefix' => [ 'gcs' ],
 		    'url' => 'https://cloud.google.com/storage',
 		    'desc' => $text{'cloud_googledesc'},
-		    'longdesc' => &text('cloud_google_longdesc', $ourl) });
+		    'longdesc' => \&cloud_google_longdesc });
 	push(@rv, { 'name' => 'dropbox',
 		    'prefix' => [ 'dropbox' ],
 		    'url' => 'https://www.dropbox.com/',
@@ -67,8 +67,23 @@ if ($config{'s3_akey'}) {
 				 "<tt>$config{'s3_akey'}</tt>"),
 	       };
 	}
+elsif (&can_use_aws_s3_creds()) {
+	return { 'ok' => 1,
+		 'desc' => $text{'cloud_s3creds'},
+	       };
+	}
 else {
 	return { 'ok' => 0 };
+	}
+}
+
+sub cloud_s3_longdesc
+{
+if (!$config{'s3_akey'} && &can_use_aws_s3_creds()) {
+	return $text{'cloud_s3_creds'};
+	}
+else {
+	return $text{'cloud_s3_longdesc'};
 	}
 }
 
@@ -77,14 +92,17 @@ sub cloud_s3_show_inputs
 my $rv;
 
 # Default login
-$rv .= &ui_table_row($text{'cloud_s3_akey'},
-	&ui_radio("s3_akey_def", $config{'s3_akey'} ? 0 : 1,
-		  [ [ 1, $text{'cloud_noneset'} ],
-		    [ 0, $text{'cloud_below'} ] ])."<br>\n".
-	&ui_grid_table([ "<b>$text{'cloud_s3_access'}</b>",
-		         &ui_textbox("s3_akey", $config{'s3_akey'}, 50),
-		         "<b>$text{'cloud_s3_secret'}</b>",
-                         &ui_textbox("s3_skey", $config{'s3_skey'}, 50) ], 2));
+if ($config{'s3_akey'} || !&can_use_aws_s3_creds()) {
+	# Prompt for login
+	$rv .= &ui_table_row($text{'cloud_s3_akey'},
+		&ui_radio("s3_akey_def", $config{'s3_akey'} ? 0 : 1,
+			  [ [ 1, $text{'cloud_noneset'} ],
+			    [ 0, $text{'cloud_below'} ] ])."<br>\n".
+		&ui_grid_table([ "<b>$text{'cloud_s3_access'}</b>",
+			 &ui_textbox("s3_akey", $config{'s3_akey'}, 50),
+			 "<b>$text{'cloud_s3_secret'}</b>",
+			 &ui_textbox("s3_skey", $config{'s3_skey'}, 50) ], 2));
+	}
 
 # S3 endpoint hostname, for non-amazon implementations
 $rv .= &ui_table_row($text{'cloud_s3_endpoint'},
@@ -97,10 +115,23 @@ $rv .= &ui_table_row($text{'cloud_s3_chunk'},
 			$text{'default'}." (5 MB)"));
 
 # Location for new buckets
-$rv .= &ui_table_row($text{'cloud_s3_location'},
-	&ui_select("s3_location", $config{'s3_location'},
-		   [ [ "", $text{'default'} ],
-		     &s3_list_locations(@$account) ]));
+my $l = $config{'s3_location'};
+if ($config{'s3_endpoint'}) {
+	$rv .= &ui_table_row($text{'cloud_s3_location'},
+		&ui_opt_textbox("s3_location", $l, 30,
+				$text{'default'}));
+	}
+else {
+	my @locs = &s3_list_locations();
+	my $found = !$l || &indexof($l, @locs) >= 0;
+	$rv .= &ui_table_row($text{'cloud_s3_location'},
+		&ui_select("s3_location", $found ? $l : "*",
+			   [ [ "", $text{'default'} ],
+			     @locs,
+			     [ "*", $text{'cloud_s3_lother'} ] ],
+			   1, 0, 1)." ".
+		&ui_textbox("s3_location_other", $found ? "" : $l, 20));
+	}
 
 return $rv;
 }
@@ -110,15 +141,17 @@ sub cloud_s3_parse_inputs
 my ($in) = @_;
 
 # Parse default login
-if ($in->{'s3_akey_def'}) {
-	delete($config{'s3_akey'});
-	delete($config{'s3_skey'});
-	}
-else {
-	$in->{'s3_akey'} =~ /^\S+$/ || &error($text{'backup_eakey'});
-	$in->{'s3_skey'} =~ /^\S+$/ || &error($text{'backup_eskey'});
-	$config{'s3_akey'} = $in->{'s3_akey'};
-	$config{'s3_skey'} = $in->{'s3_skey'};
+if ($config{'s3_akey'} || !&can_use_aws_s3_creds()) {
+	if ($in->{'s3_akey_def'}) {
+		delete($config{'s3_akey'});
+		delete($config{'s3_skey'});
+		}
+	else {
+		$in->{'s3_akey'} =~ /^\S+$/ || &error($text{'backup_eakey'});
+		$in->{'s3_skey'} =~ /^\S+$/ || &error($text{'backup_eskey'});
+		$config{'s3_akey'} = $in->{'s3_akey'};
+		$config{'s3_skey'} = $in->{'s3_skey'};
+		}
 	}
 
 # Parse endpoint hostname
@@ -145,7 +178,15 @@ else {
 	}
 
 # Parse new bucket location
-$config{'s3_location'} = $in->{'s3_location'};
+if ($in->{'s3_location_def'}) {
+	$config{'s3_location'} = '';
+	}
+else {
+	my $l = $in->{'s3_location'};
+	$l = $in->{'s3_location_other'} if ($l eq "*");
+	$l =~ /^[a-z0-9\.\-]*/i || &error($text{'cloud_es3_location'});
+	$config{'s3_location'} = $l;
+	}
 
 &lock_file($module_config_file);
 &save_module_config();
@@ -158,11 +199,39 @@ return undef;
 # Reset the S3 account to the default
 sub cloud_s3_clear
 {
+# Clear Virtualmin's credentials
+my $akey = $config{'s3_akey'};
+&lock_file($module_config_file);
 delete($config{'s3_akey'});
 delete($config{'s3_skey'});
-&lock_file($module_config_file);
+delete($config{'s3_location'});
 &save_module_config();
 &unlock_file($module_config_file);
+
+# Also clear the AWS creds
+my @uinfo = getpwnam("root");
+foreach my $f ("$uinfo[7]/.aws/config", "$uinfo[7]/.aws/credentials") {
+	&lock_file($f);
+	my $lref = &read_file_lines($f);
+	my ($start, $end, $inside) = (-1, -1, 0);
+	for(my $i=0; $i<@$lref; $i++) {
+		if ($lref->[$i] =~ /^\[(profile\s+)?\Q$akey\E\]$/) {
+			$start = $end = $i;
+			$inside = 1;
+			}
+		elsif ($lref->[$i] =~ /^\S+\s*=\s*\S+/ && $inside) {
+			$end = $i;
+			}
+		else {
+			$inside = 0;
+			}
+		}
+	if ($start >= 0) {
+		splice(@$lref, $start, $end-$start+1);
+		}
+	&flush_file_lines($f);
+	&unlock_file($f);
+	}
 }
 
 ######## Functions for Rackspace Cloud Files ########
@@ -281,8 +350,25 @@ if ($config{'google_account'} &&
 				 "<tt>$config{'google_project'}</tt>"),
 	       };
 	}
+elsif ($virtualmin_pro && &can_use_gcloud_storage_creds()) {
+	return { 'ok' => 1,
+		 'desc' => $text{'cloud_gcpcreds'},
+	       };
+	}
 else {
 	return { 'ok' => 0 };
+	}
+}
+
+sub cloud_google_longdesc
+{
+if (!$config{'google_account'} && $virtualmin_pro &&
+    &can_use_gcloud_storage_creds()) {
+	return $text{'cloud_google_creds'};
+	}
+else {
+	my $ourl = &get_miniserv_base_url()."/$module_name/oauth.cgi";
+	return &text('cloud_google_longdesc', $ourl);
 	}
 }
 
@@ -290,21 +376,33 @@ sub cloud_google_show_inputs
 {
 my $rv;
 
-# Google account
-$rv .= &ui_table_row($text{'cloud_google_account'},
-	&ui_textbox("google_account", $config{'google_account'}, 40));
+if ($virtualmin_pro && &can_use_gcloud_storage_creds() &&
+   !$config{'google_account'}) {
+	$rv .= &ui_table_row($text{'cloud_google_account'},
+		&get_gcloud_account());
 
-# Google OAuth2 client ID
-$rv .= &ui_table_row($text{'cloud_google_clientid'},
-	&ui_textbox("google_clientid", $config{'google_clientid'}, 80));
+	# Optional GCE project name
+	$rv .= &ui_table_row($text{'cloud_google_project'},
+		&ui_opt_textbox("google_project", $config{'google_project'}, 40,
+			$text{'default'}." (".&get_gcloud_project().")"));
+	}
+else {
+	# Google account
+	$rv .= &ui_table_row($text{'cloud_google_account'},
+		&ui_textbox("google_account", $config{'google_account'}, 40));
 
-# Google client secret
-$rv .= &ui_table_row($text{'cloud_google_secret'},
-	&ui_textbox("google_secret", $config{'google_secret'}, 60));
+	# Google OAuth2 client ID
+	$rv .= &ui_table_row($text{'cloud_google_clientid'},
+		&ui_textbox("google_clientid", $config{'google_clientid'}, 80));
 
-# GCE project name
-$rv .= &ui_table_row($text{'cloud_google_project'},
-	&ui_textbox("google_project", $config{'google_project'}, 40));
+	# Google client secret
+	$rv .= &ui_table_row($text{'cloud_google_secret'},
+		&ui_textbox("google_secret", $config{'google_secret'}, 60));
+
+	# GCE project name
+	$rv .= &ui_table_row($text{'cloud_google_project'},
+		&ui_textbox("google_project", $config{'google_project'}, 40));
+	}
 
 # Default location for new buckets
 $rv .= &ui_table_row($text{'cloud_google_location'},
@@ -325,44 +423,65 @@ sub cloud_google_parse_inputs
 {
 my ($in) = @_;
 my $reauth = 0;
+my $authed = 0;
 
-# Parse google account
-$in->{'google_account'} =~ /^\S+\@\S+$/ ||
-	&error($text{'cloud_egoogle_account'});
-$reauth++ if ($config{'google_account'} ne $in->{'google_account'});
-$config{'google_account'} = $in->{'google_account'};
+if ($virtualmin_pro && &can_use_gcloud_storage_creds() &&
+   !$config{'google_account'}) {
+	# Just parse project name
+	$authed = 1;
+	if ($in->{'google_project_def'}) {
+		$config{'google_project'} = '';
+		}
+	else {
+		$in->{'google_project'} =~ /^\S+$/ ||
+			&error($text{'cloud_egoogle_project'});
+		$config{'google_project'} = $in->{'google_project'};
+		}
+	}
+else {
+	# Parse google account
+	$in->{'google_account'} =~ /^\S+\@\S+$/ ||
+		&error($text{'cloud_egoogle_account'});
+	$reauth++ if ($config{'google_account'} ne $in->{'google_account'});
+	$config{'google_account'} = $in->{'google_account'};
 
-# Parse client ID
-$in->{'google_clientid'} =~ /^\S+$/ ||
-	&error($text{'cloud_egoogle_clientid'});
-$reauth++ if ($config{'google_clientid'} ne $in->{'google_clientid'});
-$config{'google_clientid'} = $in->{'google_clientid'};
+	# Parse client ID
+	$in->{'google_clientid'} =~ /^\S+$/ ||
+		&error($text{'cloud_egoogle_clientid'});
+	$reauth++ if ($config{'google_clientid'} ne $in->{'google_clientid'});
+	$config{'google_clientid'} = $in->{'google_clientid'};
 
-# Parse client secret
-$in->{'google_secret'} =~ /^\S+$/ ||
-	&error($text{'cloud_egoogle_secret'});
-$reauth++ if ($config{'google_secret'} ne $in->{'google_secret'});
-$config{'google_secret'} = $in->{'google_secret'};
+	# Parse client secret
+	$in->{'google_secret'} =~ /^\S+$/ ||
+		&error($text{'cloud_egoogle_secret'});
+	$reauth++ if ($config{'google_secret'} ne $in->{'google_secret'});
+	$config{'google_secret'} = $in->{'google_secret'};
 
-# Parse project name
-$in->{'google_project'} =~ /^\S+$/ ||
-	&error($text{'cloud_egoogle_project'});
-$reauth++ if ($config{'google_project'} ne $in->{'google_project'});
-$config{'google_project'} = $in->{'google_project'};
+	# Parse project name
+	$in->{'google_project'} =~ /^\S+$/ ||
+		&error($text{'cloud_egoogle_project'});
+	$reauth++ if ($config{'google_project'} ne $in->{'google_project'});
+	$config{'google_project'} = $in->{'google_project'};
+	}
 
 # Parse bucket location
 $config{'google_location'} = $in->{'google_location'};
 
-$reauth++ if (!$config{'google_oauth'});
-
 &lock_file($module_config_file);
-$config{'cloud_oauth_mode'} = $reauth ? 'google' : undef;
+if (!$authed) {
+	$reauth++ if (!$config{'google_oauth'});
+	$config{'cloud_oauth_mode'} = $reauth ? 'google' : undef;
+	}
 &save_module_config();
 &unlock_file($module_config_file);
 
 if (!$reauth) {
 	# Nothing more to do - either the OAuth2 token was just set, or the
 	# settings were saved with no change
+	return undef;
+	}
+if ($authed) {
+	# Nothing to do, because token comes from the gcloud command
 	return undef;
 	}
 

@@ -61,7 +61,8 @@ To have Virtualmin automatically replace strftime-style date formatting
 characters in the backup destination, you can use the C<--strftime> flag.
 When this is enabled, the C<--purge> flag can also be given, followed by a 
 number of days. The command will then delete backups in the same desination
-directory older than the specified number of days.
+directory older than the specified number of days. To see more detail about
+which files were consisered for purging, add the C<--purge-debug> flag.
 
 On a Virtualmin Pro system, you can use the C<--key> flag followed by
 a backup key ID or description to select the key to encrypt this backup with.
@@ -70,7 +71,8 @@ Keys can be found using the C<list-backup-keys> API call.
 By default, only one backup to the same destination can be running at the
 same time - the second backup will immediately fail. You can invert this
 behavior with the C<--kill-running> flag, which terminates the first backup
-and allows this one to continue.
+and allows this one to continue. Or you can use the C<--wait-running> flag
+to delay the backup until the first one completes.
 
 To override the default compression format set on the Virtualmin Configuration
 page, use the C<--compression> flag followed by one of C<gzip>, C<bzip2>, 
@@ -216,6 +218,9 @@ while(@ARGV > 0) {
 		$purge = shift(@ARGV);
 		$purge =~ /^[0-9\.]+$/ || &usage("--purge must be followed by a number");
 		}
+	elsif ($a eq "--purge-debug") {
+		$purge_debug = 1;
+		}
 	elsif ($a eq "--key") {
 		$keyid = shift(@ARGV);
 		}
@@ -232,6 +237,9 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--kill-running") {
 		$kill = 1;
+		}
+	elsif ($a eq "--wait-running") {
+		$kill = 2;
 		}
 	elsif ($a eq "--compression") {
 		my $c = shift(@ARGV);
@@ -373,6 +381,7 @@ elsif (@include) {
 	$opts{'dir'}->{'exclude'} = join("\t", @include);
 	$opts{'dir'}->{'include'} = 1;
 	}
+$opts{'dir'}->{'strftime'} = $strftime;
 
 # Do the backup, printing any output
 if ($sched->{'doms'} || $sched->{'all'} || $sched->{'virtualmin'}) {
@@ -421,7 +430,8 @@ $pok = 1;
 if ($purge && $ok) {
 	$asd = $asowner ? &get_backup_as_domain(\@doms) : undef;
 	foreach $dest (@dests) {
-		$pok = &purge_domain_backups($dest, $purge, $start_time, $asd);
+		$pok = &purge_domain_backups($dest, $purge, $start_time, $asd,
+					     $purge_debug);
 		if (!$pok) {
 			$ex = 3;
 			}
@@ -471,10 +481,11 @@ print "                         [--as-owner]\n";
 print "                         [--exclude file]*\n";
 print "                         [--include file]*\n";
 print "                         [--purge days]\n";
+print "                         [--purge-debug]\n";
 if (defined(&list_backup_keys)) {
 	print "                         [--key id]\n";
 	}
-print "                         [--kill-running]\n";
+print "                         [--kill-running | --wait-running]\n";
 print "                         [--compression gzip|bzip2|tar|zip]\n";
 print "\n";
 print "Multiple domains may be specified with multiple --domain parameters.\n";

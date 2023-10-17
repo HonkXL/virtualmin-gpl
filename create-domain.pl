@@ -59,7 +59,8 @@ be overridden with the C<--skip-warnings> flag.
 
 If you have configured additional remote (or local) MySQL servers, you can
 select which one this domain will use with the C<--mysql-server> flag followed
-by a hostname, hostname:port or socket file.
+by a hostname, hostname:port or socket file. Similarly, a remote PostgreSQL
+server can be selected with the C<--postgres-server> flag.
 
 By default, the Cloud DNS provider chosen in the specified template will be
 used. However, you can override this with the C<--cloud-dns> flag followed by
@@ -363,11 +364,23 @@ while(@ARGV > 0) {
 	elsif ($a eq "--mysql-server") {
 		$myserver = shift(@ARGV);
 		}
+	elsif ($a eq "--postgres-server") {
+		$pgserver = shift(@ARGV);
+		}
 	elsif ($a eq "--cloud-dns") {
 		$clouddns = shift(@ARGV);
 		}
 	elsif ($a eq "--cloud-dns-import") {
 		$clouddns_import = 1;
+		}
+	elsif ($a eq "--remote-dns") {
+		$remotedns = shift(@ARGV);
+		}
+	elsif ($a eq "--separate-dns-subdomain") {
+		$dns_submode = 0;
+		}
+	elsif ($a eq "--any-dns-subdomain") {
+		$dns_subany = 1;
 		}
 	elsif ($a eq "--break-ssl-cert") {
 		$linkcert = 0;
@@ -395,11 +408,22 @@ while(@ARGV > 0) {
 	elsif ($a eq "--ssl-redirect") {
 		$auto_redirect = 1;
 		}
+	elsif ($a eq "--append-style") {
+		$append_style = shift(@ARGV);
+		my ($as) = grep { $_->[0] eq $append_style ||
+				  $_->[1] eq $append_style }
+				&list_append_styles();
+		$as || &usage("Append style $append_style does not exists");
+		$append_style = $as->[0];
+		}
 	elsif ($a eq "--mode") {
 		$phpmode = shift(@ARGV);
 		}
 	elsif ($a eq "--multiline") {
 		$multiline = 1;
+		}
+	elsif ($a eq "--shell") {
+		$defaultshell = shift(@ARGV);
 		}
 	elsif ($a =~ /^\-\-(.*)$/ && $plugin_args{$1}) {
 		# Plugin-specific arg
@@ -443,6 +467,8 @@ if ($sharedip) {
 		    &usage("$sharedip is not in the shared IP addresses list");
 		}
 	}
+$clouddns && $remotedns &&
+	&usage("--cloud-dns and --remote-dns are mutually exclusive");
 
 if ($ip eq "allocate") {
 	# Allocate IP now
@@ -537,10 +563,16 @@ if ($subdomain) {
 
 # Validate args and work out defaults for those unset
 $domain = lc(&parse_domain_name($domain));
-$err = &valid_domain_name($domain);
-&usage($err) if ($err);
+if (!$skipwarnings) {
+	$err = &valid_domain_name($domain);
+	&usage($err) if ($err);
+	}
 &lock_domain_name($domain);
-&domain_name_clash($domain) && &usage($text{'setup_edomain4'});
+my $clashed = &domain_name_clash($domain);
+&usage($clashed->{'defaulthostdomain'} ?
+		&text('setup_edomain5', $clashed->{'dom'}) :
+			$text{'setup_edomain4'})
+				if ($clashed);
 if ($parentdomain) {
 	$parent = &get_domain_by("dom", $parentdomain);
 	$parent || &usage("Parent domain does not exist");
@@ -742,7 +774,7 @@ else {
 	$uid = $ugid = $gid = undef;
 	}
 
-# Get remote MySQL server
+# Get remote MySQL or PostgreSQL server
 if ($myserver) {
 	my $mm = &get_remote_mysql_module($myserver);
 	$mm || &usage("No remote MySQL server named $myserver was found");
@@ -750,6 +782,11 @@ if ($myserver) {
 		&usage("Remote MySQL server $myserver is for use only by ".
 		       "Cloudmin Services provisioned domains");
 	$mysql_module = $mm->{'minfo'}->{'dir'};
+	}
+if ($pgserver) {
+	my $mm = &get_remote_postgres_module($pgserver);
+	$mm || &usage("No remote PostgreSQL server named $pgserver was found");
+	$postgres_module = $mm->{'minfo'}->{'dir'};
 	}
 
 # Validate the Cloud DNS provider
@@ -764,6 +801,15 @@ if ($clouddns) {
 			&usage("Valid Cloud DNS providers are : ".
 			       join(" ", @cnames));
 		}
+	}
+
+# Validate the remote DNS server
+if ($remotedns) {
+	defined(&list_remote_dns) ||
+		&usage("Remote DNS servers are not supported");
+	($r) = grep { $_->{'host'} eq $remotedns } &list_remote_dns();
+	$r || &usage("Remote DNS server $remotedns not found");
+	$r->{'slave'} && &usage("Remote DNS server $remotedns is not a master");
 	}
 
 # Validate PHP mode
@@ -837,13 +883,19 @@ $pclash && &usage(&text('setup_eprefix3', $prefix, $pclash->{'dom'}));
 	 'auto_letsencrypt', $letsencrypt,
 	 'jail', $jail,
 	 'mysql_module', $mysql_module,
+	 'postgres_module', $postgres_module,
 	 'default_php_mode', $phpmode,
 	 'dns_cloud', $clouddns,
 	 'dns_cloud_import', $clouddns_import,
+	 'dns_remote', $remotedns,
         );
+$dom{'dns_submode'} = $dns_submode if (defined($dns_submode));
+$dom{'dns_subany'} = $dns_subany if (defined($dns_subany));
 $dom{'nolink_certs'} = 1 if ($linkcert eq '0');
 $dom{'link_certs'} = $linkcert if ($linkcert == 1 || $linkcert == 2);
 $dom{'always_ssl'} = $always_ssl if (defined($always_ssl));
+$dom{'append_style'} = $append_style if (defined($append_style));
+$dom{'defaultshell'} = $defaultshell if (defined($defaultshell));
 foreach $f (keys %fields) {
 	$dom{$f} = $fields{$f};
 	}
@@ -1061,11 +1113,16 @@ print "                        [--letsencrypt-always]\n";
 print "                        [--field-name value]*\n";
 print "                        [--enable-jail | --disable-jail]\n";
 print "                        [--mysql-server hostname]\n";
+print "                        [--postgres-server hostname]\n";
 print "                        [--cloud-dns provider|\"services\"|\"local\"]\n";
+print "                        [--separate-dns-subdomain |\n";
+print "                         --any-dns-subdomain]\n";
 print "                        [--break-ssl-cert | --link-ssl-cert]\n";
 print "                        [--ssl-redirect]\n";
 print "                        [--generate-ssl-cert]\n";
 print "                        [--generate-ssh-key | --use-ssh-key file|data]\n";
+print "                        [--append-style format]\n";
+print "                        [--shell command]\n";
 exit(1);
 }
 

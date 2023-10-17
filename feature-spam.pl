@@ -1348,32 +1348,25 @@ sub setup_lookup_domain_daemon
 &foreign_require("init");
 local $pidfile = "$ENV{'WEBMIN_VAR'}/lookup-domain-daemon.pid";
 local $helper = &get_api_helper_command();
-local $old_init_mode = $init::init_mode;
 if (!&init::action_status("lookup-domain")) {
-	if ($init::init_mode eq 'upstart' || $init::init_mode eq 'systemd') {
-		# Force use of regular init, to avoid restarting problems
-		$init::init_mode = 'init';
-		}
-	if (!&init::action_status("lookup-domain")) {
-		&init::enable_at_boot(
-		      "lookup-domain",
-		      "Daemon for quickly looking up Virtualmin servers ".
-		        "from procmail",
-		      "$helper lookup-domain-daemon",
-		      "kill `cat $pidfile`",
-		      undef,
-		      { 'fork' => 1 });
-		}
-	$init::init_mode = $old_init_mode;
+	# Need to create and start the action
+	&init::enable_at_boot(
+	      "lookup-domain",
+	      "Daemon for quickly looking up Virtualmin servers from procmail",
+	      "$helper lookup-domain-daemon",
+	      "@{[&has_command('kill')]} `cat $pidfile`",
+	      undef,
+	      { 'fork' => 1, 'pidfie' => $pidfile });
+	&init::start_action("lookup-domain");
 	}
-
-# Stop and re-start the daemon
-my $pid = &check_pid_file($pidfile);
-if ($pid) {
-	kill('KILL', $pid);
-	sleep(5);	# Wait for port to free up
+else {
+	# Stop and re-start the daemon to pick up new version
+	my ($ok) = &init::stop_action("lookup-domain");
+	if ($ok) {
+		sleep(5);	# Wait for port to free up
+		&init::start_action("lookup-domain");
+		}
 	}
-&system_logged("$helper lookup-domain-daemon >/dev/null 2>&1 </dev/null &");
 }
 
 # delete_lookup_domain_daemon()
@@ -1626,6 +1619,9 @@ if ($init::init_mode eq "rc") {
 	# On FreeBSD, the boot script name differs from the rc.conf entry
 	&init::enable_rc_script("spamd_enable");
 	}
+if (&init::action_status("spamassassin-maintenance.timer")) {
+	&init::enable_at_boot("spamassassin-maintenance.timer");
+	}
 &$second_print($text{'setup_done'});
 
 # Start now
@@ -1668,6 +1664,9 @@ if (!$init) {
 if ($init::init_mode eq "rc") {
 	# On FreeBSD, the boot script name differs from the rc.conf entry
 	&init::disable_rc_script("spamd_enable");
+	}
+if (&init::action_status("spamassassin-maintenance.timer")) {
+	&init::disable_at_boot("spamassassin-maintenance.timer");
 	}
 &$second_print($text{'setup_done'});
 

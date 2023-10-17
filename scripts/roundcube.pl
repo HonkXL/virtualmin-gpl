@@ -17,7 +17,7 @@ return "RoundCube Webmail is a browser-based multilingual IMAP client with an ap
 # script_roundcube_versions()
 sub script_roundcube_versions
 {
-return ( "1.6.0", "1.5.3", "1.4.13" );
+return ( "1.6.3", "1.5.4", "1.4.14" );
 }
 
 sub script_roundcube_version_desc
@@ -29,6 +29,11 @@ return &compare_versions($ver, "1.6") >= 0 ? $ver : "$ver (LTS)";
 sub script_roundcube_category
 {
 return "Email";
+}
+
+sub script_roundcube_testable
+{
+return 1;
 }
 
 sub script_roundcube_php_modules
@@ -180,7 +185,8 @@ local $dbuser = $dbtype eq "mysql" ? &mysql_user($d) : &postgres_user($d);
 local $dbpass = $dbtype eq "mysql" ? &mysql_pass($d) : &postgres_pass($d, 1);
 local $dbphptype = $dbtype eq "mysql" ? "mysql" : "psql";
 local $dbhost = &get_database_host($dbtype, $d);
-local $dberr = &check_script_db_connection($dbtype, $dbname, $dbuser, $dbpass);
+local $dberr = &check_script_db_connection(
+	$d, $dbtype, $dbname, $dbuser, $dbpass);
 return (0, "Database connection failed : $dberr") if ($dberr);
 
 # Extract tar file to temp dir and copy to target
@@ -233,8 +239,6 @@ if (!$upgrade) {
 		}
 	&copy_source_dest_as_domain_user($d, $mcfileorig, $mcfile);
 	local $lref = &read_file_lines_as_domain_user($d, $mcfile);
-	local $vuf = &get_mail_virtusertable();
-	local $added_vuf = 0;
 	foreach my $l (@$lref) {
 		if ($l =~ /^\$(rcmail_config|config)\['enable_caching'\]\s+=/) {
 			$l = "\$${1}['enable_caching'] = FALSE;";
@@ -260,16 +264,6 @@ if (!$upgrade) {
 		if ($l =~ /^\$(rcmail_config|config)\['mail_domain'\]\s+=/) {
 			$l = "\$${1}['mail_domain'] = '$d->{'dom'}';";
 			}
-		if ($l =~ /^\$(rcmail_config|config)\['virtuser_file'\]\s+=/ && $vuf) {
-			$added_vuf = 1;
-			$l = "\$${1}['virtuser_file'] = '$vuf';";
-			}
-		if ($l =~ /^\$(rcmail_config|config)\['plugins'\]\s+=\s+array\(\s*$/) {
-			$l = "\$${1}['plugins'] = array(\n    'virtuser_file',";
-			}
-		elsif ($l =~ /^\$(rcmail_config|config)\['plugins'\]\s*=\s*\[/) {
-			$l = "\$${1}['plugins'] = [\n    'virtuser_file',";
-			}
 		if ($l =~ /^\$(rcmail_config|config)\['db_dsnw'\]\s+=/) {
 			$l = "\$${1}['db_dsnw'] = 'mysql://$dbuser:".
 			     &php_quotemeta($dbpass, 1)."\@$dbhost/$dbname';";
@@ -278,11 +272,6 @@ if (!$upgrade) {
 		    $fmap{$2} && $fmap{$2} ne "*") {
                         $l = "\$${1}['${2}_mbox'] = '$fmap{$2}';";
                         }
-		}
-	if (!$added_vuf && $vuf) {
-		# Need to add virtuser_file directive, as no default exists
-		push(@$lref, "\$rcmail_config['virtuser_file'] = '$vuf';");
-		push(@$lref, "\$config['virtuser_file'] = '$vuf';");
 		}
 	&flush_file_lines_as_domain_user($d, $mcfile);
 

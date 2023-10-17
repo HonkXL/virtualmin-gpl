@@ -50,7 +50,7 @@ if ($in{'subdom'}) {
 ($dleft, $dreason, $dmax) = &count_domains(
 	$aliasdom ? "aliasdoms" :
 	$parentdom ? "realdoms" : "topdoms");
-&error(&text('setup_emax', $dmax)) if ($dleft == 0);
+&error(&text('setup_emax', $dmax, $virtualmin_shop_link)) if ($dleft == 0);
 
 # Validate inputs (check domain name to see if in use)
 $dname = lc(&parse_domain_name($in{'dom'}));
@@ -72,7 +72,11 @@ else {
 &lock_domain_name($dname);
 $in{'owner'} =~ s/\r|\n//g;
 $in{'owner'} =~ /:/ && &error($text{'setup_eowner'});
-&domain_name_clash($dname) && &error($text{'setup_edomain4'});
+my $clashed = &domain_name_clash($dname);
+&error($clashed->{'defaulthostdomain'} ?
+		&text('setup_edomain5', $clashed->{'dom'}) :
+			$text{'setup_edomain4'})
+				if ($clashed);
 $tmpl = &get_template($in{'template'});
 &can_use_template($tmpl) || &error($text{'setup_etmpl'});
 if (!$parentdom) {
@@ -88,9 +92,7 @@ if (!$parentuser) {
 		$tmpl->{'mail_on'} eq "none" || !$in{'email_def'} ||
 			&error($text{'setup_eemail2'});
 		}
-	if ($in{'unix'} || $in{'webmin'}) {
-		$pass = &parse_new_password("vpass", 0);
-		}
+	$pass = &parse_new_password("vpass", 0);
 
 	# Parse admin/unix username
 	if ($in{'vuser_def'}) {
@@ -507,7 +509,10 @@ if (!$dom{'alias'} && &domain_has_website(\%dom) &&
 		&open_tempfile_as_domain_user(
 			\%dom, DATA, ">$home/index.html");
 		$content =~ s/\n/<br>\n/g if ($content);
-		$content = &substitute_virtualmin_template($content, \%dom);
+		my %hashtmp = %dom;
+		%hashtmp = &populate_default_index_page(\%dom, %hashtmp);
+		$content = &replace_default_index_page(\%dom, $content);
+		$content = &substitute_virtualmin_template($content, \%hashtmp);
 		&print_tempfile(DATA, $content);
 		&close_tempfile_as_domain_user(\%dom, DATA);
 		};

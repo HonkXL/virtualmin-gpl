@@ -50,6 +50,7 @@ sub list_clouds_pro_tip
 return if (!should_show_pro_tip('list_clouds'));
 my @pro_list_clouds_list = (
 	"<em>Google Cloud Storage</em>",
+	"<em>Azure Blob Storage</em>",
 	"<em>Dropbox</em>",
 	"<em>Backblaze</em>",
 	);
@@ -205,7 +206,7 @@ foreach my $pro_demo_feature
 	# Add demo Secondary Mail Servers link for GPL users 
 	{ 'name' => 'newmxs',
 	  'title' => $text{'newmxs_title'},
-	  'cat' => 'ip',
+	  'cat' => 'email',
 	  'url' => "https://virtualmin.com/professional/#newmxs",
 	},
 

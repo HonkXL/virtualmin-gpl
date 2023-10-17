@@ -25,7 +25,7 @@ if (!$d->{'alias'} && $d->{'public_html_dir'} !~ /\.\./ &&
 	}
 
 # Validate SSI suffix
-if ($in{'ssi'} == 1) {
+if (defined($in{'ssi'}) && $in{'ssi'} == 1) {
 	$in{'suffix'} =~ /^\.([a-z0-9\.\_\-]+)$/i ||
 		&error($text{'phpmode_essisuffix'});
 	}
@@ -70,7 +70,10 @@ if (defined($in{'http2'})) {
 		# Turn on
 		&$first_print($text{'phpmode_http2on'});
 		my @h2 = grep { /^h2/ } @$canprots;
-		$prots = [ &unique(@$prots, @h2) ];
+		# Always remove http/1.1 before adding HTTP2,
+		# to have a correct directives order
+		$prots = grep { !/^http\/1\.1/ } @$prots;
+		$prots = [ &unique(@$prots, @h2, 'http/1.1') ];
 		$changed = 1;
 		}
 	elsif ($in{'http2'} == 2 && @$prots) {
@@ -80,9 +83,15 @@ if (defined($in{'http2'})) {
 		$changed = 1;
 		}
 	elsif ($in{'http2'} == 0 && $hashttp2) {
-		# Turn off
+		# Turn off, when protocols are set in the domain
 		&$first_print($text{'phpmode_http2off'});
 		$prots = [ grep { !/^h2/ } @$prots ];
+		$changed = 1;
+		}
+	elsif ($in{'http2'} == 0 && !$hashttp2) {
+		# Turn off, when set globally
+		&$first_print($text{'phpmode_http2off'});
+		$prots = [ grep { !/^h2/ } @$canprots ];
 		$changed = 1;
 		}
 	if ($changed) {
@@ -229,6 +238,7 @@ if (defined(&theme_post_save_domain)) {
 
 # All done
 &webmin_log("website", "domain", $d->{'dom'});
-&ui_print_footer(&domain_footer_link($d),
-		 "", $text{'index_return'});
+&ui_print_footer(
+    "edit_website.cgi?dom=$d->{'id'}", $text{'phpmode_return'},
+    &domain_footer_link($d), "", $text{'index_return'});
 

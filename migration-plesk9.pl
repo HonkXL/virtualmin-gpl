@@ -529,7 +529,7 @@ foreach my $name (keys %$mailusers) {
 		# Add delivery to user's mailbox
 		local $escuser = $uinfo->{'user'};
 		if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
-			$escuser = &replace_atsign($escuser);
+			$escuser = &escape_replace_atsign_if_exists($escuser);
 			}
 		else {
 			$escuser = &escape_user($escuser);
@@ -1048,7 +1048,7 @@ sub extract_plesk9_cid
 {
 local ($basedir, $cids, $type) = @_;
 local ($cid) = grep { $_->{'type'} eq $type } @$cids;
-return undef if (!$cid);
+return undef if (ref($cid) ne 'HASH' || !defined($cid->{'content-file'}->{'content'}));
 local $file = $basedir."/".$cid->{'path'}."/".$cid->{'content-file'}->{'content'};
 if (!-r $file) {
 	# Try path as seen on Plesk 11

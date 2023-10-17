@@ -18,7 +18,20 @@ if (&can_import_servers()) {
 $msg = &text('databases_indom', scalar(@dbs),
 	     "<tt>".&show_domain_name($d)."</tt>");
 &ui_print_header($msg, $text{'databases_title'}, "", "databases");
-
+if (!$d->{'ui_dbwarn'} && $d->{'parent'} && !$d->{'alias'} &&
+    &can_edit_domain(&get_domain($d->{'parent'}))) {
+	my $form = &ui_form_start("save_database.cgi");
+	$form .= &ui_hidden("dom", $d->{'id'});
+	$form .= &ui_hidden("ui_dbwarn", 1);
+	my $databases_subwarn_text =
+		&can_edit_databases(&get_domain($d->{'parent'})) ?
+			&text('databases_subwarn2', "list_databases.cgi?dom=$d->{'parent'}&databasemode=usernames") :
+			$text{'databases_subwarn'};
+	$form .= "$databases_subwarn_text<p>\n";
+	$form .= &ui_form_end(
+		[ [ "submitter", $text{'global_dismiss'} ] ]);
+	print &ui_alert_box($form, 'info');
+	}
 # Work out if allowed hosts can be edited
 $can_allowed_hosts = 0;
 foreach $f (@database_features) {

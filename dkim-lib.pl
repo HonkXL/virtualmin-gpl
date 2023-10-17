@@ -290,20 +290,20 @@ elsif (&get_dkim_type() eq 'centos') {
 &require_mail();
 if ($config{'mail_system'} == 0) {
 	# Postfix config
-	my $wantmilter = $rv{'port'} ? "inet:localhost:$rv{'port'}" :
+	my $wantmilter = $rv{'port'} ? "inet:(localhost|127\.0\.0\.1):$rv{'port'}" :
 			 $rv{'socket'} ? "local:$rv{'socket'}" : "";
 	my $milters = &postfix::get_real_value("smtpd_milters");
-	if ($wantmilter && $milters !~ /\Q$wantmilter\E/) {
+	if ($wantmilter && $milters !~ /$wantmilter/) {
 		$rv{'enabled'} = 0;
 		}
 	}
 elsif ($config{'mail_system'} == 1) {
 	# Sendmail config
-	my $wantmilter = $rv{'port'} ? "inet:$rv{'port'}\@localhost" :
+	my $wantmilter = $rv{'port'} ? "inet:$rv{'port'}\@(localhost|127\.0\.0\.1)" :
 			 $rv{'socket'} ? "local:$rv{'socket'}" : "";
 	my @feats = &sendmail::list_features();
 	my ($milter) = grep { $_->{'text'} =~ /INPUT_MAIL_FILTER/ &&
-			      $_->{'text'} =~ /\Q$wantmilter\E/ } @feats;
+			      $_->{'text'} =~ /$wantmilter/ } @feats;
 	if (!$milter) {
 		$rv{'enabled'} = 0;
                 }
@@ -446,14 +446,18 @@ my $dkim_config = &get_dkim_config_file();
 if ($dkim_config) {
 	# Save domains and key file in config
 	&lock_file($dkim_config);
+	my $conf = &get_open_dkim_config($dkim_config);
 	&save_open_dkim_config($dkim_config, 
 		"Selector", $dkim->{'selector'});
 	&save_open_dkim_config($dkim_config, 
 		"KeyFile", $dkim->{'keyfile'});
 	&save_open_dkim_config($dkim_config,
                 "Syslog", "yes");
+	if ($conf->{'Canonicalization'} eq 'simple') {
+		&save_open_dkim_config($dkim_config,
+			"Canonicalization", "relaxed/relaxed");
+		}
 
-	my $conf = &get_open_dkim_config($dkim_config);
 	if (&get_dkim_type() eq 'ubuntu' || &get_dkim_type() eq 'freebsd' ||
 	    &get_dkim_type() eq 'centos' || &get_dkim_type() eq 'gentoo') {
 		# OpenDKIM version supplied with Ubuntu and Debian 6 supports
@@ -480,7 +484,7 @@ if ($dkim_config) {
 		if (!$conf->{'Socket'} ||
 		    $conf->{'Socket'} =~ /^local:/) {
 		        &save_open_dkim_config($dkim_config,
-			    "Socket", "inet:8891\@localhost");
+			    "Socket", "inet:8891\@127.0.0.1");
 			}
 		}
 	else {
@@ -521,7 +525,7 @@ if ($dkim_config) {
 		        # Set socket if not set, or if a local file
 		        # and Postfix is in use
 		        &save_open_dkim_config($dkim_config,
-			    "Socket", "inet:8891\@localhost");
+			    "Socket", "inet:8891\@127.0.0.1");
 		        $dkim->{'port'} = 8891;
 			}
 		elsif ($dkim->{'port'}) {
@@ -530,7 +534,7 @@ if ($dkim_config) {
 			    $conf->{'Socket'} =~ /^inet:(\d+)/ &&
 			    $1 != $dkim->{'port'}) {
 				&save_open_dkim_config($dkim_config,
-				  "Socket", "inet:$dkim->{'port'}\@localhost");
+				  "Socket", "inet:$dkim->{'port'}\@127.0.0.1");
 				}
 			}
 		elsif ($dkim->{'socket'}) {
@@ -567,7 +571,7 @@ if (&get_dkim_type() eq 'debian' || &get_dkim_type() eq 'ubuntu') {
 	    $def{'SOCKET'} =~ /^local:/ && $config{'mail_system'} == 0) {
 		# Set socket in defaults file if missing, or if a local file
 		# and Postfix is in use
-		$def{'SOCKET'} = "inet:8891\@localhost";
+		$def{'SOCKET'} = "inet:8891\@127.0.0.1";
 		$dkim->{'port'} = 8891;
 		}
 
@@ -581,6 +585,25 @@ if (&get_dkim_type() eq 'debian' || &get_dkim_type() eq 'ubuntu') {
 
 	&write_env_file($dkim_defaults, \%def);
 	&unlock_file($dkim_defaults);
+
+	# Add the postfix user to the opendkim Unix group
+	&foreign_require("useradmin");
+	&obtain_lock_unix();
+	my @groups = &useradmin::list_groups();
+	my ($g) = grep { $_->{'group'} eq 'opendkim' } @groups;
+	if ($g) {
+		my $oldg = { %$g };
+		my @mems = split(/,/, $g->{'members'});
+		if (&indexof("postfix", @mems) < 0) {
+			push(@mems, "postfix");
+			$g->{'members'} = join(",", @mems);
+			&useradmin::set_group_envs($g, 'MODIFY_GROUP', $oldg);
+			&useradmin::making_changes();
+			&useradmin::modify_group($oldg, $g);
+			&useradmin::made_changes();
+			}
+		}
+	&release_lock_unix();
 	}
 elsif (&get_dkim_type() eq 'centos') {
 	# Save sign/verify mode flags
@@ -603,7 +626,7 @@ elsif (&get_dkim_type() eq 'redhat') {
 	&read_env_file($dkim_defaults, \%def);
 	if ($config{'mail_system'} == 0 && $dkim->{'socket'}) {
 		# Force use of tcp socket in defaults file for postfix
-		$def{'SOCKET'} = "inet:8891\@localhost";
+		$def{'SOCKET'} = "inet:8891\@127.0.0.1";
 		$dkim->{'port'} = 8891;
 		delete($dkim->{'socket'});
 		}
@@ -655,7 +678,9 @@ if (!$ok) {
 &require_mail();
 if ($config{'mail_system'} == 0) {
 	# Configure Postfix to use filter
-	my $newmilter = $dkim->{'port'} ? "inet:localhost:$dkim->{'port'}"
+	my $wantmilter = $dkim->{'port'} ? "inet:(localhost|127\.0\.0\.1):$dkim->{'port'}"
+					 : "local:$dkim->{'socket'}";
+	my $newmilter = $dkim->{'port'} ? "inet:127.0.0.1:$dkim->{'port'}"
 					: "local:$dkim->{'socket'}";
 	&lock_file($postfix::config{'postfix_config_file'});
 	&postfix::set_current_value("milter_default_action", "accept");
@@ -663,7 +688,7 @@ if ($config{'mail_system'} == 0) {
 		&postfix::set_current_value("milter_protocol", 2);
 		}
 	my $milters = &postfix::get_current_value("smtpd_milters");
-	if ($milters !~ /\Q$newmilter\E/) {
+	if ($milters !~ /$wantmilter/) {
 		$milters = $milters ? $milters.",".$newmilter : $newmilter;
 		&postfix::set_current_value("smtpd_milters", $milters);
 		&postfix::set_current_value("non_smtpd_milters", $milters);
@@ -675,7 +700,9 @@ if ($config{'mail_system'} == 0) {
 	}
 elsif ($config{'mail_system'} == 1) {
 	# Configure Sendmail to use filter
-	my $newmilter = $dkim->{'port'} ? "inet:$dkim->{'port'}\@localhost"
+	my $wantmilter = $dkim->{'port'} ? "inet:$dkim->{'port'}\@(localhost|127\.0\.0\.1)"
+					 : "local:$dkim->{'socket'}";
+	my $newmilter = $dkim->{'port'} ? "inet:$dkim->{'port'}\@127.0.0.1"
 					: "local:$dkim->{'socket'}";
 	&lock_file($sendmail::config{'sendmail_mc'});
 	my $changed = 0;
@@ -683,7 +710,7 @@ elsif ($config{'mail_system'} == 1) {
 
 	# Check for filter definition
 	my ($milter) = grep { $_->{'text'} =~ /INPUT_MAIL_FILTER/ &&
-			      $_->{'text'} =~ /\Q$newmilter\E/ } @feats;
+			      $_->{'text'} =~ /$wantmilter/ } @feats;
 	if (!$milter) {
 		# Add to .mc file
 		&sendmail::create_feature({
@@ -747,8 +774,9 @@ sub get_dkim_pubkey
 my ($dkim, $d) = @_;
 my $keyfile = &get_domain_dkim_key($d) ||
 	      $dkim->{'keyfile'};
+my $type = &get_ssl_key_type($keyfile, $d->{'ssl_pass'});
 my $pubkey = &backquote_command(
-        "openssl rsa -in ".quotemeta($keyfile).
+        "openssl $type -in ".quotemeta($keyfile).
         " -pubout -outform PEM 2>/dev/null");
 if ($? || $pubkey !~ /BEGIN\s+PUBLIC\s+KEY/) {
 	return undef;
@@ -781,12 +809,12 @@ my @doms = grep { $_->{'dns'} && $_->{'mail'} } &list_domains();
 &require_mail();
 if ($config{'mail_system'} == 0) {
 	# Configure Postfix to not use filter
-	my $oldmilter = $dkim->{'port'} ? "inet:localhost:$dkim->{'port'}"
+	my $oldmilter = $dkim->{'port'} ? "inet:(localhost|127\.0\.0\.1):$dkim->{'port'}"
 					: "local:$dkim->{'socket'}";
 	&lock_file($postfix::config{'postfix_config_file'});
 	my $milters = &postfix::get_current_value("smtpd_milters");
-	if ($milters =~ /\Q$oldmilter\E/) {
-		$milters = join(",", grep { $_ ne $oldmilter }
+	if ($milters =~ /$oldmilter/) {
+		$milters = join(",", grep { !/$oldmilter/ }
 				split(/\s*,\s*/, $milters));
 		&postfix::set_current_value("smtpd_milters", $milters);
 		&postfix::set_current_value("non_smtpd_milters", $milters);
@@ -798,7 +826,7 @@ if ($config{'mail_system'} == 0) {
 	}
 elsif ($config{'mail_system'} == 1) {
 	# Configure Sendmail to not use filter
-	my $oldmilter = $dkim->{'port'} ? "inet:$dkim->{'port'}\@localhost"
+	my $oldmilter = $dkim->{'port'} ? "inet:$dkim->{'port'}\@(localhost|127\.0\.0\.1)"
 					: "local:$dkim->{'socket'}";
 	&lock_file($sendmail::config{'sendmail_mc'});
 	my @feats = &sendmail::list_features();
@@ -824,7 +852,7 @@ elsif ($config{'mail_system'} == 1) {
 
 	# Remove milter definition
 	my ($milter) = grep { $_->{'text'} =~ /INPUT_MAIL_FILTER/ &&
-			      $_->{'text'} =~ /\Q$oldmilter\E/ } @feats;
+			      $_->{'text'} =~ /$oldmilter/ } @feats;
 	if ($milter) {
 		&sendmail::delete_feature($milter);
 		$changed++;
@@ -1064,6 +1092,7 @@ elsif ($selrec && join("", @{$selrec->{'values'}}) !~ /p=\Q$pubkey\E/) {
 		$val = 'k=rsa; t=s; p='.$pubkey;
 		}
 	$selrec->{'values'} = [ $val ];
+	&modify_dns_record($recs, $file, $selrec);
 	$changed++;
 	}
 return $changed;

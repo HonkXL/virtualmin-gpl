@@ -77,8 +77,11 @@ foreach $line (@lines) {
 		&line_error($text{'setup_eowner'});
 		next;
 		}
-	if (&domain_name_clash($dname)) {
-		&line_error($text{'setup_edomain4'});
+	my $clashed = &domain_name_clash($dname);
+	if ($clashed) {
+		&line_error($clashed->{'defaulthostdomain'} ?
+				&text('setup_edomain5', $clashed->{'dom'}) :
+					$text{'setup_edomain4'});
 		next;
 		}
 	local $parentdom;
@@ -267,7 +270,7 @@ foreach $line (@lines) {
 		&count_domains($aliasdom ? "aliasdoms" :
 			       $parentdom ? "realdoms" : "topdoms");
 	if ($dleft == 0) {
-		&line_error(&text('setup_emax', $dmax));
+		&line_error(&text('setup_emax', $dmax, $virtualmin_shop_link));
 		next;
 		}
 

@@ -268,7 +268,7 @@ my $chroot = &get_mailserver_chroot();
 if ($chroot) {
 	$socketfile =~ s/^\Q$chroot\E//;
 	}
-my $wantmilter = "local:$chroot$socketfile";
+my $wantmilter = "local:$socketfile";
 &require_mail();
 if ($config{'mail_system'} == 0) {
 	# Check Postfix config
@@ -371,6 +371,7 @@ if ($chroot) {
 					}
 				}
 			&flush_file_lines($ifile);
+			&init::restart_systemd();
 			}
 		}
 
@@ -413,7 +414,7 @@ else {
 # Configure mail server
 &$first_print($text{'ratelimit_mailserver'});
 &require_mail();
-my $newmilter = "local:$chroot$socketfile";
+my $newmilter = "local:$socketfile";
 if ($config{'mail_system'} == 0) {
 	# Configure Postfix to use filter
 	&lock_file($postfix::config{'postfix_config_file'});
@@ -514,6 +515,9 @@ if (!$socket) {
 	}
 my $socketfile = $socket->{'value'};
 my $chroot = &get_mailserver_chroot();
+if ($chroot) {
+	$socketfile =~ s/^\Q$chroot\E//;
+	}
 my $oldmilter = "local:".$socketfile;
 &require_mail();
 if ($config{'mail_system'} == 0) {

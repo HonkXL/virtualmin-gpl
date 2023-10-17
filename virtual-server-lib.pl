@@ -66,7 +66,8 @@ if (!defined($first_print)) {
 	}
 
 # For the GPL version, force some features off.
-$virtualmin_pro = $module_info{'version'} =~ /gpl/ ? 0 : 1;
+$virtualmin_pro = $module_info{'version'} =~ /pro/i ||
+		  -d "$module_root_directory/pro" ? 1 : 0;
 if (!$virtualmin_pro) {
 	$config{'status'} = 0;
 	}
@@ -92,7 +93,7 @@ $config{'virt6'} = 1;
 @database_features = ( 'mysql', 'postgres' );
 @template_features = ( 'basic', 'resources', @features, 'virt', 'virtualmin',
 		       'plugins', 'scripts', 'autoconfig', 'php', 'avail',
-		       'newuser', );
+		       'newuser', 'updateuser', );
 @template_features_effecting_webmin = ( 'web', 'webmin', 'avail' );
 @can_always_features = ( 'dir', 'unix', 'logrotate' );
 @validate_features = ( @features, "virt", "virt6" );

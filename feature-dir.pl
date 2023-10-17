@@ -539,6 +539,16 @@ else {
 	if ($compression != 3) {
 		@xlist = map { "./".$_ } @xlist;
 		}
+	else {
+		@xlist = map {
+			if (-d "$d->{'home'}/$_" && $_ !~ /\/[*]+$/) {
+				"$_/\*\*";
+				}
+			else {
+				"$_";
+				}
+			} @xlist;
+		}
 	}
 &open_tempfile(XTEMP, ">$xtemp");
 foreach my $x (@xlist) {
@@ -1139,11 +1149,9 @@ while(@srcs) {
 					$d, DATA, ">".$destfile);
 				if ($f =~ /\.(html|htm|txt|php|php4|php5)$/i) {
 					local %hash = %$d;
-					if ($content) {
-						$hash{'TMPLTCONTENT'} = $content;
-						$hash{'TMPLTCONTENT'} =~ s/\n/<br>\n/g;
-						}
-					%hash = populate_default_index_page(%hash);
+					$hash{uc('tmpltpageheadtitle')} = $content if ($content);
+					%hash = &populate_default_index_page($d, %hash);
+					$data = &replace_default_index_page($d, $data);
 					$data = &substitute_virtualmin_template($data, \%hash);
 					}
 				&print_tempfile(DATA, $data);

@@ -354,6 +354,23 @@ if (&indexof("php", @{$script->{'uses'}}) >= 0) {
 	$opts->{'phpver'} = $phpver;
 	}
 
+# Check Python version
+if (&indexof("python", @{$script->{'uses'}}) >= 0) {
+	&$first_print("Checking Python version ..");
+	($pyver, $pyerr) = &setup_python_version($d, $script, $ver, $opts->{'path'});
+	if ($pyerr) {
+		&$second_print(".. $pyerr");
+		exit(1);
+		}
+	elsif ($pyver) {
+		&$second_print(".. using Python version $pyver");
+		$opts->{'pyver'} = $pyver;
+		}
+	else {
+		&$second_print(".. done");
+		}
+	}
+
 # Check dependencies
 &$first_print("Checking dependencies ..");
 $derr = &check_script_depends($script, $d, $ver, $sinfo, $phpver);
@@ -411,7 +428,9 @@ else {
 		$msg =~ s/^\s+//;
 		$msg =~ s/\s+$//;
 		}
-	print "$msg\n";
+	&$indent_print();
+	&$first_print($msg);
+	&$outdent_print();
 	}
 
 # Re-enable script PHP timeout
@@ -420,6 +439,11 @@ if (&indexof("php", @{$script->{'uses'}}) >= 0) {
 	}
 
 if ($ok) {
+	if ($ok < 0) {
+		&$indent_print();
+		&$first_print($text{'scripts_epartialmanual'}." ".&get_script_link($d, $opts, 1));
+		&$outdent_print();
+		}
 	&$second_print($ok < 0 ? $text{'scripts_epartial'}
 			       : $text{'setup_done'});
 

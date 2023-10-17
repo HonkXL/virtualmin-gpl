@@ -28,19 +28,19 @@ if ($image) {
 	}
 
 # Login and level
-push(@rv, { 'type' => 'text',
-	    'desc' => &text('left_login', $remote_user) });
 my $level = &master_admin() ? $text{'left_master'} :
             &reseller_admin() ? $text{'left_reseller'} :
             &extra_admin() ? $text{'left_extra'} :
             $single_domain_mode ? $text{'left_single'} :
                                   $text{'left_user'};
 push(@rv, { 'type' => 'text',
-	    'desc' => $level });
+            'json' => { level => $level,
+                        label => &text('left_login', $remote_user),
+                        status => 1 },
+            'desc' => &text('left_login', $remote_user).' ('.$level.')' });
 push(@rv, { 'type' => 'hr' });
 
 # Get domains and find the default
-my @alldoms = &list_domains();
 my @doms = &list_visible_domains();
 my ($d, $did);
 if (defined($in->{'dom'})) {
@@ -111,7 +111,7 @@ elsif (@doms) {
 else {
 	# No domains!
 	push(@rv, { 'type' => 'text',
-		    'desc' => @alldoms ? $text{'left_noaccess'}
+		    'desc' => @doms ? $text{'left_noaccess'}
 				       : $text{'left_nodoms'} });
 	}
 

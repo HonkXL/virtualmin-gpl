@@ -40,6 +40,12 @@ if ($config{'ftp'}) {
 		   'virt' => 0,
 		   'short' => 'f' });
 	}
+if ($config{'mysql'}) {
+	push(@rv, {'id' => 'mysql',
+		   'dom' => 0,
+		   'virt' => 0,
+		   'short' => 'm' });
+	}
 foreach my $rv (@rv) {
 	$rv->{'desc'} ||= $text{'cert_service_'.$rv->{'id'}};
 	}
@@ -61,11 +67,12 @@ if ($miniserv{'ssl'}) {
 	if ($perip) {
 		# Check for per-IP or per-domain cert first
 		my @ipkeys = &webmin::get_ipkeys(\%miniserv);
-		my ($cfile, $chain, $ip, $dom) =
+		my ($cfile, $chain, $ip, $dom, $kfile) =
 			&ipkeys_to_domain_cert($d, \@ipkeys);
 		if ($cfile) {
 			push(@svcs, { 'id' => 'webmin',
 				      'cert' => $cfile,
+				      'key' => $kfile,
 				      'ca' => $chain,
 				      'ip' => $ip,
 				      'dom' => $dom,
@@ -75,10 +82,12 @@ if ($miniserv{'ssl'}) {
 			}
 		}
 	# Also add global config
+	my $kfile = $miniserv{'keyfile'};
 	my $cfile = $miniserv{'certfile'};
 	my $chain = $miniserv{'extracas'};
 	push(@svcs, { 'id' => 'webmin',
 		      'cert' => $cfile,
+		      'key' => $kfile,
 		      'ca' => $chain,
 		      'prefix' => 'admin',
 		      'port' => $miniserv{'port'} });
@@ -94,11 +103,12 @@ if (&foreign_installed("usermin")) {
 		if ($perip) {
 			# Check for per-IP or per-domain cert first
 			my @ipkeys = &webmin::get_ipkeys(\%uminiserv);
-			my ($cfile, $chain, $ip, $dom) =
+			my ($cfile, $chain, $ip, $dom, $kfile) =
 				&ipkeys_to_domain_cert($d, \@ipkeys);
 			if ($cfile) {
 				push(@svcs, { 'id' => 'usermin',
 					      'cert' => $cfile,
+					      'key' => $kfile,
 					      'ca' => $chain,
 					      'ip' => $ip,
 					      'dom' => $dom,
@@ -109,9 +119,11 @@ if (&foreign_installed("usermin")) {
 			}
 		# Also add global config
 		my $cfile = $uminiserv{'certfile'};
+		my $kfile = $uminiserv{'keyfile'};
 		my $chain = $uminiserv{'extracas'};
 		push(@svcs, { 'id' => 'usermin',
 			      'cert' => $cfile,
+			      'key' => $kfile,
 			      'ca' => $chain,
 			      'prefix' => 'webmail',
 			      'port' => $uminiserv{'port'} });
@@ -131,6 +143,7 @@ if (&foreign_installed("dovecot")) {
 				}
 			push(@svcs, { 'id' => 'dovecot',
 				      'cert' => $cfile,
+				      'key' => $kfile,
 				      'ca' => $cafile,
 				      'prefix' => 'mail',
 				      'port' => 993,
@@ -146,6 +159,9 @@ if (&foreign_installed("dovecot")) {
 	my $cfile = &dovecot::find_value("ssl_cert_file", $conf, 0, "") ||
 		    &dovecot::find_value("ssl_cert", $conf, 0, "");
 	$cfile =~ s/^<//;
+	my $kfile = &dovecot::find_value("ssl_key_file", $conf, 0, "") ||
+		    &dovecot::find_value("ssl_key", $conf, 0, "");
+	$kfile =~ s/^<//;
 	$cafile = &dovecot::find_value("ssl_ca", $conf, 0, "");
 	$cafile =~ s/^<//;
 	if ($cfile) {
@@ -155,6 +171,7 @@ if (&foreign_installed("dovecot")) {
 			}
 		push(@svcs, { 'id' => 'dovecot',
 			      'cert' => $cfile,
+			      'key' => $kfile,
 			      'ca' => $cafile,
 			      'prefix' => 'mail',
 			      'port' => 993,
@@ -171,6 +188,7 @@ if ($config{'mail_system'} == 0) {
 		if ($cfile) {
 			push(@svcs, { 'id' => 'postfix',
 				      'cert' => $cfile,
+				      'key' => $kfile,
 				      'ca' => $cafile,
 				      'prefix' => 'mail',
 				      'port' => 587,
@@ -183,10 +201,12 @@ if ($config{'mail_system'} == 0) {
 	# Also add global Postfix cert
 	&foreign_require("postfix");
 	my $cfile = &postfix::get_real_value("smtpd_tls_cert_file");
+	my $kfile = &postfix::get_real_value("smtpd_tls_key_file");
 	my $cafile = &postfix::get_real_value("smtpd_tls_CAfile");
 	if ($cfile) {
 		push(@svcs, { 'id' => 'postfix',
 			      'cert' => $cfile,
+			      'key' => $kfile,
 			      'ca' => $cafile,
 			      'prefix' => 'mail',
 			      'port' => 587,
@@ -201,16 +221,42 @@ if ($config{'ftp'}) {
 	my $conf = &proftpd::get_config();
 	my $cfile = &proftpd::find_directive(
 			"TLSRSACertificateFile", $conf);
+	my $kfile = &proftpd::find_directive(
+			"TLSRSACertificateKeyFile", $conf);
 	my $cafile = &proftpd::find_directive(
 			"TLSCACertificateFile", $conf);
 	if ($cfile) {
 		push(@svcs, { 'id' => 'proftpd',
 			      'cert' => $cfile,
+			      'key' => $kfile,
 			      'ca' => $cafile,
 			      'prefix' => 'ftp',
 			      'port' => 990, });
 		}
 	}
+
+if ($config{'mysql'}) {
+	# Check MySQL certificate
+	&foreign_require("mysql");
+	my $conf = &mysql::get_mysql_config();
+	my ($mysqld) = grep { $_->{'name'} eq 'mysqld' } @$conf;
+	my ($cert, $key, $ca);
+	if ($mysqld) {
+		my $mems = $mysqld->{'members'};
+		$cert = &mysql::find_value("ssl_cert", $mems);
+		$key = &mysql::find_value("ssl_key", $mems);
+		$ca = &mysql::find_value("ssl_ca", $mems);
+		}
+	if ($cert) {
+		push(@svcs, { 'id' => 'mysql',
+			      'cert' => $cert,
+			      'key' => $key,
+			      'ca' => $ca,
+			      'prefix' => 'mysql',
+			      'port' => 3306, });
+		}
+	}
+
 return @svcs;
 }
 
@@ -297,17 +343,20 @@ foreach my $svc (&get_all_service_ssl_certs($d, 1)) {
 }
 
 # ipkeys_to_domain_cert(&domain, &ipkeys)
-# Returns the cert, chain file, IP and domain for a matching ipkeys entry
+# Returns the cert, chain file, IP, domain and key file for a matching
+# ipkeys entry
 sub ipkeys_to_domain_cert
 {
 my ($d, $ipkeys) = @_;
 foreach my $k (@$ipkeys) {
 	if (&indexof($d->{'dom'}, @{$k->{'ips'}}) >= 0) {
-		return ($k->{'cert'}, $k->{'extracas'}, undef, $d->{'dom'});
+		return ($k->{'cert'}, $k->{'extracas'}, undef, $d->{'dom'},
+			$k->{'key'});
 		}
 	if ($d->{'virt'} &&
 	    &indexof($d->{'ip'}, @{$k->{'ips'}}) >= 0) {
-		return ($k->{'cert'}, $k->{'extracas'}, $d->{'ip'}, undef);
+		return ($k->{'cert'}, $k->{'extracas'}, $d->{'ip'}, undef,
+			$k->{'key'});
 		}
 	}
 return ( );
@@ -343,6 +392,15 @@ if ($cfile =~ /snakeoil/) {
 	}
 $cfile ||= "$dovedir/dovecot.cert.pem";
 $kfile ||= "$dovedir/dovecot.key.pem";
+
+# Break possible linkage to snakeoil cert and key
+foreach my $file ($cfile, $kfile) {
+    my $file_link = &resolve_links($file);
+    if ($file ne $file_link) {
+        &unlink_file($file);
+        &copy_source_dest($file_link, $file);
+        }
+    }
 
 # Copy cert into those files
 &$first_print($text{'copycert_dsaving'});
@@ -421,7 +479,10 @@ if (!&dovecot::find_value("ssl_cipher_list", $conf, 0, "")) {
 &$second_print($text{'setup_done'});
 
 # Apply Dovecot config
-&dovecot::apply_configuration();
+if (&dovecot::is_dovecot_running()) {
+	&dovecot::stop_dovecot();
+	&dovecot::start_dovecot();
+	}
 }
 
 # copy_postfix_ssl_service(&domain)
@@ -443,6 +504,15 @@ if ($cfile =~ /snakeoil/) {
 $cfile ||= "$cdir/postfix.cert.pem";
 $kfile ||= "$cdir/postfix.key.pem";
 $cafile ||= "$cdir/postfix.ca.pem";
+
+# Break possible linkage to snakeoil cert and key
+foreach my $file ($cfile, $kfile, $cafile) {
+    my $file_link = &resolve_links($file);
+    if ($file ne $file_link) {
+        &unlink_file($file);
+        &copy_source_dest($file_link, $file);
+        }
+    }
 
 # Copy cert into those files
 my $casrcfile = &get_website_ssl_file($d, "ca");
@@ -527,7 +597,10 @@ elsif (!$smtps_enabled_prior && !$smtps && $smtp) {
 &$second_print($text{'setup_done'});
 
 # Apply Postfix config
-&postfix::reload_postfix();
+if (&postfix::is_postfix_running()) {
+	&postfix::stop_postfix();
+	&postfix::start_postfix();
+	}
 }
 
 # copy_proftpd_ssl_service(&domain)
@@ -692,6 +765,80 @@ if (!$miniserv{'ssl'}) {
 	&$second_print(&text('copycert_userminnot',
 			     "../usermin/edit_ssl.cgi"));
 	}
+}
+
+# copy_mysql_ssl_service(&domain)
+# Copy a domain's SSL cert to MySQL
+sub copy_mysql_ssl_service
+{
+my ($d) = @_;
+
+&foreign_require("mysql");
+&$first_print($text{'copycert_mysql'});
+my $conf = &mysql::get_mysql_config();
+my ($mysqld) = grep { $_->{'name'} eq 'mysqld' } @$conf;
+if (!$mysqld) {
+	&$second_print($text{'copycert_emysqld'});
+	return;
+	}
+
+# Lock all configs
+my @cfiles = &mysql::get_all_mysqld_files();
+foreach my $f (@cfiles) {
+	&lock_file($f);
+	}
+
+# Figure out where to put files
+my $dir = $mysql::config{'my_cnf'};
+$dir =~ s/\/([^\/]+)$//;
+my $cert = &mysql::find_value("ssl_cert", $mysqld->{'members'});
+$cert ||= $dir."/mysql-ssl.cert";
+my $key = &mysql::find_value("ssl_key", $mysqld->{'members'});
+$key ||= $dir."/mysql-ssl.key";
+my $ca = &mysql::find_value("ssl_ca", $mysqld->{'members'});
+$ca ||= $dir."/mysql-ssl.ca";
+my $myuser = &mysql::find_value("user", $mysqld->{'members'});
+$myuser ||= 'mysql';
+
+# Copy them over
+&lock_file($cert);
+&copy_source_dest($d->{'ssl_cert'}, $cert);
+&unlock_file($cert);
+&set_ownership_permissions($myuser, undef, 0600, $cert);
+&mysql::save_directive($conf, $mysqld, "ssl_cert", [ $cert ]);
+if ($d->{'ssl_key'}) {
+	&lock_file($key);
+	&copy_source_dest($d->{'ssl_key'}, $key);
+	&convert_ssl_key_format(undef, $key, "pkcs1");
+	&unlock_file($key);
+	&set_ownership_permissions($myuser, undef, 0600, $key);
+	&mysql::save_directive($conf, $mysqld, "ssl_key", [ $key ]);
+	}
+if ($d->{'ssl_chain'}) {
+	&lock_file($ca);
+	&copy_source_dest($d->{'ssl_chain'}, $ca);
+	&unlock_file($ca);
+	&set_ownership_permissions($myuser, undef, 0600, $ca);
+	&mysql::save_directive($conf, $mysqld, "ssl_ca", [ $ca ]);
+	}
+else {
+	&mysql::save_directive($conf, $mysqld, "ssl_ca", [ ]);
+	}
+
+# Save all MySQL configs
+foreach my $f (@cfiles) {
+	&flush_file_lines($f, undef, 1);
+	&unlock_file($f);
+	}
+if (&mysql::is_mysql_running() > 0) {
+	&mysql::stop_mysql();
+	my $err = &mysql::start_mysql();
+	if ($err) {
+		&$second_print(&text('copycert_emysqlstart', $err));
+		return;
+		}
+	}
+&$second_print($text{'setup_done'});
 }
 
 1;

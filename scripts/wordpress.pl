@@ -20,7 +20,7 @@ return "A semantic personal publishing platform with a focus on aesthetics, web 
 # script_wordpress_versions()
 sub script_wordpress_versions
 {
-return ( "6.1.1" );
+return ( "6.3.2" );
 }
 
 sub script_wordpress_category
@@ -31,6 +31,11 @@ return ("Blog", "CMS");
 sub script_wordpress_php_vers
 {
 return ( 5 );
+}
+
+sub script_wordpress_testable
+{
+return 1;
 }
 
 sub script_wordpress_php_modules
@@ -68,7 +73,12 @@ return 5;	# Fix format of wp-config.php
 sub script_wordpress_php_fullver
 {
 my ($d, $ver, $sinfo) = @_;
-return "5.6.20";
+if (&compare_versions($ver, "6.3") >= 0) {
+	return "7.0.0";
+	}
+else {
+	return "5.6.20";
+	}
 }
 
 sub script_wordpress_cli_virtualmin_support
@@ -211,7 +221,8 @@ my $dbuser = $dbtype eq "mysql" ? mysql_user($d) : postgres_user($d);
 my $dbpass = $dbtype eq "mysql" ? mysql_pass($d) : postgres_pass($d, 1);
 my $dbphptype = $dbtype eq "mysql" ? "mysql" : "psql";
 my $dbhost = get_database_host($dbtype, $d);
-my $dberr = check_script_db_connection($dbtype, $dbname, $dbuser, $dbpass);
+my $dberr = check_script_db_connection(
+	$d, $dbtype, $dbname, $dbuser, $dbpass);
 my $d_proto = domain_has_ssl($d) ? "https://" : "http://";
 my $url = script_path_url($d, $opts);
 return (0, "Database connection failed : $dberr") if ($dberr);

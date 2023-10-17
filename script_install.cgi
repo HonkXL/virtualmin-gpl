@@ -144,6 +144,16 @@ if (&indexof("php", @{$script->{'uses'}}) >= 0) {
 	$opts->{'phpver'} = $phpver;
 	}
 
+# Setup Python version
+if (&indexof("python", @{$script->{'uses'}}) >= 0) {
+	($pyver, $pyerr) = &setup_python_version(
+		$d, $script, $ver, $opts->{'path'});
+	if ($pyerr) {
+		&error($pyerr);
+		}
+	$opts->{'pyver'} = $pyver;
+	}
+
 # Check depends again
 $derr = &check_script_depends($script, $d, $ver, $sinfo, $phpver);
 &error(&text('scripts_edep', $derr)) if ($derr);
@@ -199,6 +209,12 @@ if (&indexof("php", @{$script->{'uses'}}) >= 0) {
 	}
 
 if ($ok) {
+	# Suggest to go on installation manually
+	if ($ok < 0) {
+		&$indent_print();
+		&$first_print($text{'scripts_epartialmanual'}." ".&get_script_link($d, $opts, 1));
+		&$outdent_print();
+		}
 	&$second_print($ok < 0 ? $text{'scripts_epartial'}
 			       : $text{'setup_done'});
 

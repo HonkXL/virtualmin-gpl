@@ -50,14 +50,25 @@ print &ui_tabs_start_tab("mode", "current");
 if (&domain_has_ssl_cert($d)) {
 	print "<p>$text{'cert_desc2'}</p>\n";
 	if (!&domain_has_ssl($d)) {
-		print "<p>$text{'cert_hasnossl'}</p>\n";
+		print &ui_alert_box($text{'cert_hasnossl'}, 'warn');
 		}
 
 	print &ui_table_start($text{'cert_header2'}, undef, 4);
+
+	# Cert files
 	print &ui_table_row($text{'cert_incert'},
 			    "<tt>$d->{'ssl_cert'}</tt>", 3);
 	print &ui_table_row($text{'cert_inkey'},
 			    "<tt>$d->{'ssl_key'}</tt>", 3);
+
+	# Cert hash type
+	$type = &get_ssl_key_type($d->{'ssl_key'}, $d->{'ssl_pass'});
+	if ($type) {
+		print &ui_table_row($text{'cert_hash'},
+			$text{'cert_type_'.$type} || uc($type));
+		}
+
+
 
 	$info = &cert_info($d);
 	$chain = &get_website_ssl_file($d, 'ca');
@@ -142,6 +153,13 @@ if (&domain_has_ssl_cert($d)) {
 	print &ui_table_row($text{'cert_kdownload'},
 			    &ui_links_row(\@dlinks), 3);
 
+	# Can copy as global
+	my @gmissing;
+	foreach my $st (&list_service_ssl_cert_types()) {
+		($a) = grep { !$_->{'d'} && $_->{'id'} eq $st->{'id'}} @already;
+		push(@gmissing, $st) if (!$a);
+		}
+
 	# Expiry status, if we have it
 	my $expiry = &parse_notafter_date($info->{'notafter'});
 	if ($expiry) {
@@ -161,6 +179,8 @@ if (&domain_has_ssl_cert($d)) {
 		print &ui_table_row($text{'cert_etime'}, $emsg);
 		}
 
+	print &ui_table_row($text{'cert_def'},
+		(@gmissing && &can_webmin_cert()) ? $text{'no'} : $text{'yes'}, 3);
 	print &ui_table_end();
 
 	my $ui_hr;
@@ -177,10 +197,12 @@ if (&domain_has_ssl_cert($d)) {
 
 	# Show button to copy to per-service, if any are missing
 	my @smissing;
+	my @sall;
 	foreach my $st (&list_service_ssl_cert_types()) {
 		next if (!$st->{'dom'} && !$st->{'virt'});
 		next if (!$st->{'dom'} && !$d->{'virt'});
 		($a) = grep { $_->{'d'} && $_->{'id'} eq $st->{'id'} } @already;
+		push(@sall, $st);
 		push(@smissing, $st) if (!$a);
 		}
 	if (@smissing && &can_webmin_cert()) {
@@ -193,13 +215,18 @@ if (&domain_has_ssl_cert($d)) {
 			&ui_hidden("dom", $in{'dom'}).
 			&ui_hidden("enable", 1));
 		}
+	# Show button to uninstall all per-service
+	else {
+		print &ui_hr() if (!$ui_hr++);
+		print &ui_buttons_row(
+			"peripcerts.cgi",
+			$text{'cert_removeall'},
+			&text('cert_removealldesc',
+			    &vui_make_and(map { $_->{'desc'} } @sall)),
+			&ui_hidden("dom", $in{'dom'}));
+		}
 
 	# Show button to copy to global
-	my @gmissing;
-	foreach my $st (&list_service_ssl_cert_types()) {
-		($a) = grep { !$_->{'d'} && $_->{'id'} eq $st->{'id'}} @already;
-		push(@gmissing, $st) if (!$a);
-		}
 	if (@gmissing && &can_webmin_cert()) {
 		print &ui_hr() if (!$ui_hr++);
 		print &ui_buttons_row(
@@ -227,10 +254,9 @@ print "$text{'cert_desc4'}<p>\n";
 
 # Show warning if there is a CSR outstanding
 if ($d->{'ssl_csr'} && -r $d->{'ssl_csr'}) {
-	print "<b>",&text('cert_csrwarn',
+	print &ui_alert_box(&text('cert_csrwarn',
 		"<tt>".&home_relative_path($d, $d->{'ssl_csr'})."</tt>",
-		"<tt>".&home_relative_path($d, $d->{'ssl_newkey'})."</tt>"),
-	      "</b><p>\n";
+		"<tt>".&home_relative_path($d, $d->{'ssl_newkey'})."</tt>"), 'warn');
 	}
 
 print &ui_form_start("csr.cgi");
@@ -249,10 +275,9 @@ print "$text{'cert_desc6'}<p>\n";
 
 # Show warning if there is an existing key
 if ($d->{'ssl_key'} && -r $d->{'ssl_key'}) {
-	print "<b>",&text('cert_keywarn',
+	print &ui_alert_box(&text('cert_keywarn',
 		"<tt>".&home_relative_path($d, $d->{'ssl_cert'})."</tt>",
-		"<tt>".&home_relative_path($d, $d->{'ssl_key'})."</tt>"),
-	      "</b><p>\n";
+		"<tt>".&home_relative_path($d, $d->{'ssl_key'})."</tt>"), 'warn');
 	}
 
 print &ui_form_start("csr.cgi");
@@ -406,7 +431,7 @@ if (&can_edit_letsencrypt() && &domain_has_website($d)) {
 		$dis0 = &js_disable_inputs([ ], [ "dname" ], "onClick");
 		$wildcb = "";
 		&foreign_require("webmin");
-		if ($webmin::letsencrypt_cmd) {
+		if ($webmin::letsencrypt_cmd && $d->{'dns'}) {
 			$wildcb = "<br>".&ui_checkbox(
 				"dwild", 1, $text{'cert_dwild'},
 				$d->{'letsencrypt_dwild'});
@@ -432,6 +457,14 @@ if (&can_edit_letsencrypt() && &domain_has_website($d)) {
 				  [ [ 2, $text{'cert_connectivity2'} ],
 				    [ 1, $text{'cert_connectivity1'} ],
 				    [ 0, $text{'cert_connectivity0'} ] ]));
+			}
+
+		# Certificate type, if supported
+		if (&letsencrypt_supports_ec()) {
+			print &ui_table_row($text{'cert_hash'},
+				&ui_select("ctype", $d->{'letsencrypt_ctype'},
+					[ [ "rsa", $text{'cert_type_rsa'} ],
+					  [ "ecdsa", $text{'cert_type_ec'} ] ]));
 			}
 
 		# Recent renewal details
@@ -523,5 +556,7 @@ if ($showdays) {
 
 print &ui_table_row($text{'cert_hash'},
 		    &ui_select("hash", $config{'cert_type'},
-			       [ [ "sha1", "SHA1" ], [ "sha2", "SHA2" ] ]));
+			       [ [ "sha1", "SHA1" ],
+				 [ "sha2", "SHA2" ],
+				 [ "ecdsa", $text{'cert_type_ec'} ] ]));
 }

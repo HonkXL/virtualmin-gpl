@@ -45,7 +45,7 @@ if (&domain_has_ssl($d)) {
 	&$second_print($text{'setup_done'});
 	}
 
-if (&domain_has_ssl_cert($d) && $tmpl->{'statussslcert'}) {
+if (&domain_has_ssl($d) && $tmpl->{'statussslcert'}) {
 	# Add SSL cert monitor
 	&$first_print($text{'setup_statussslcert'});
 	local $certserv = &make_sslcert_monitor($d);
@@ -61,14 +61,12 @@ sub make_monitor
 {
 local ($d, $ssl) = @_;
 local $tmpl = &get_template($d->{'template'});
-local $host = $d->{'dns'} ? "www.".$d->{'dom'}
-			  : &get_domain_http_hostname($d);
+local $host = &get_domain_http_hostname($d);
 local $serv = { 'id' => $d->{'id'}.($ssl ? "_ssl" : "_web"),
 		'type' => 'http',
 		'desc' => $ssl ? "Website $host (SSL)" 
 			       : "Website $host",
 		'fails' => 2,
-		'alarm' => 5,
 		'email' => &monitor_email($d),
 		'host' => $host,
 		'port' => $ssl ? $d->{'web_sslport'} : $d->{'web_port'},
@@ -88,12 +86,11 @@ sub make_sslcert_monitor
 {
 local ($d) = @_;
 local $tmpl = &get_template($d->{'template'});
-local $host = $d->{'dns'} ? "www.".$d->{'dom'}
-			  : &get_domain_http_hostname($d);
+local $host = &get_domain_http_hostname($d);
 local $serv = { 'id' => $d->{'id'}."_sslcert",
 		'type' => 'sslcert',
 		'desc' => "SSL cert $host",
-		'fails' => 1,
+		'fails' => 2,
 		'email' => &monitor_email($d),
 		'url' => 'https://'.$host.':'.$d->{'web_sslport'}.'/',
 	        'days' => 7,
@@ -134,8 +131,7 @@ if ($d->{'dom'} ne $oldd->{'dom'} ||
 	# Update HTTP monitor
 	&$first_print($text{'save_status'});
 	local $serv = &status::get_service($d->{'id'}."_web");
-	local $host = $d->{'dns'} ? "www.".$d->{'dom'}
-				     : &get_domain_http_hostname($d);
+	local $host = &get_domain_http_hostname($d);
 	if ($serv) {
 		$serv->{'host'} = $host;
 		$serv->{'desc'} = "Website $host";
