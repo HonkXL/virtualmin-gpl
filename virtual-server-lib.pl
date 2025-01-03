@@ -82,6 +82,7 @@ $config{'virt6'} = 1;
 		  $virtualmin_pro ? ( 'status' ) : ( ),
 		  'webmin' );
 @vital_features = ( 'dir', 'unix' );
+@deprecated_features = ( 'webalizer', 'ftp' );
 @features = ( @opt_features );
 @backup_features = ( 'virtualmin', @features );
 @safe_backup_features = ( 'dir', 'mysql', 'postgres' );
@@ -162,7 +163,7 @@ $default_content_dir = "$module_root_directory/default";
 @plan_restrictions = ('nodbname', 'norename', 'forceunder', 'safeunder',
 		      'migrate');
 
-@reseller_modules = ("webminlog", "mailboxes", "bind8", "syslog", "filemin");
+@reseller_modules = ("webminlog", "mailboxes", "bind8", "logviewer", "filemin");
 
 $reseller_group_name = "resellers";
 
@@ -212,10 +213,12 @@ $domainnames_dir = "$module_config_directory/names";
 $spamclear_file = "$module_config_directory/spamclear";
 $plans_dir = "$module_config_directory/plans";
 
+$extra_users_dir = "$module_config_directory/users";
+
 $extra_admins_dir = "$module_config_directory/admins";
 @all_possible_php_versions = ( 5, 5.2, 5.3, 5.4, 5.5, 5.6,
                               "7.0", 7.1, 7.2, 7.3, 7.4,
-                              "8.0", 8.1, 8.2, 8.3, 8.4);
+                              "8.0", 8.1, 8.2, 8.3, 8.4 );
 @all_possible_short_php_versions =
 	&unique(map { int($_) } @all_possible_php_versions);
 @s3_perl_modules = ( "S3::AWSAuthConnection", "S3::QueryStringAuthGenerator" );
@@ -227,6 +230,7 @@ $ftp_upload_tries = $config{'upload_tries'} || 3;
 $gcs_upload_tries = $config{'upload_tries'} || 3;
 $dropbox_upload_tries = $config{'upload_tries'} || 3;
 $rr_upload_tries = $config{'upload_tries'} || 1;
+$s3_accounts_dir = "$module_config_directory/s3accounts";
 
 %get_domain_by_maps = ( 'user' => "$module_config_directory/map.user",
 			'gid' => "$module_config_directory/map.gid",
@@ -240,8 +244,10 @@ $rr_upload_tries = $config{'upload_tries'} || 1;
 $denied_ssh_group = "deniedssh";
 
 $virtualmin_link = "https://www.virtualmin.com";
+$virtualmin_account_subscriptions = "$virtualmin_link/account/subscriptions/";
 $virtualmin_shop_link = "$virtualmin_link/shop/";
 $virtualmin_shop_link_cat = "$virtualmin_link/product-category/virtualmin/";
+$virtualmin_docs_pro = "$virtualmin_link/docs/professional-features";
 
 $script_download_host = "scripts.virtualmin.com";
 $script_download_port = 80;
@@ -363,6 +369,10 @@ $lookup_domain_port = 11000;
 
 $quota_cache_dir = "$module_var_directory/quota-cache";
 
+$acme_providers_dir = "$module_config_directory/acme";
+
+$mail_system = $config{'mail_system'};
+
 # generate_plugins_list([list])
 # Creates the confplugins, plugins and other arrays based on the module config
 # or given space-separated string.
@@ -396,7 +406,8 @@ return "$module_var_directory/$name";
 sub config_post_save
 {
 my ($newconf, $oldconf) = @_;
-if ($newconf->{'hide_pro_tips'} ne $oldconf->{'hide_pro_tips'}) {
+if ($newconf->{'hide_pro_tips'} ne $oldconf->{'hide_pro_tips'} ||
+    $newconf->{'default_domain_ssl'} ne $oldconf->{'default_domain_ssl'}) {
 	&clear_links_cache();
 	}
 }

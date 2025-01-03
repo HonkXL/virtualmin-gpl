@@ -7,7 +7,7 @@ Outputs a list of scheduled backups
 By default, this program displays a table of all scheduled backups on
 the system. You can limit it to those owned by some virtual server with
 the C<--domain> or C<--user> flag, or to a reseller with the C<--reseller>
-flag. These must be folllowed by a domain name, administration username
+flag. These must be followed by a domain name, administration username
 or reseller login respectively.
 
 To switch to a more detailed and parseable output format, add the 
@@ -33,6 +33,7 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -43,15 +44,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--user") {
 		$user = shift(@ARGV);
-		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--id-only") {
-		$idonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -78,7 +70,7 @@ elsif ($reseller) {
 	@scheds = grep { $_->{'owner'} eq $reseller } @scheds;
 	}
 
-if ($multi) {
+if ($multiline) {
 	# Show all details
 	%running = map { $_->{'id'}, $_ } &list_running_backups();
 	foreach my $s (@scheds) {
@@ -105,7 +97,8 @@ if ($multi) {
 			}
 		if ($s->{'owner'}) {
 			my $o = &get_domain($s->{'owner'});
-			print "    Owner: $o->{'dom'}\n";
+			print "    Owner: ",
+			      ($o ? $o->{'dom'} : $s->{'owner'}),"\n";
 			}
 		print "    Features: ",
 			$s->{'feature_all'} ? "All" : $s->{'features'},"\n";
@@ -113,7 +106,7 @@ if ($multi) {
 			($s->{'fmt'} == 0 ? "Single archive file" :
 			 $s->{'fmt'} == 1 ? "One file per server (old format)" :
 					    "One file per server"),"\n";
-		print "    Incremental: ",$s->{'increment'} ? "Yes" : "No","\n";
+		print "    Differential: ",$s->{'increment'} ? "Yes" : "No","\n";
 		print "    Enabled: ",$s->{'enabled'} ? "Yes" : "No","\n";
 		if ($s->{'special'}) {
 			print "    Cron schedule: $s->{'special'}\n";
@@ -173,7 +166,7 @@ print "\n";
 print "virtualmin list-scheduled-backups [--domain domain.name |\n";
 print "                                   --user name |\n";
 print "                                   --reseller name]\n";
-print "                                  [--multiline | --id-only]\n";
+print "                                  [--multiline | --json | --xml | --id-only]\n";
 exit(1);
 }
 

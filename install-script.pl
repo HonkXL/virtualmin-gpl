@@ -2,7 +2,7 @@
 
 =head1 install-script.pl
 
-Install one third-party script
+Install one third-party script (web app)
 
 This program performs the actual upgrade or install of a script into a virtual
 server. The required parameters are C<--domain> (followed by the domain name),
@@ -174,6 +174,8 @@ $d || usage("Virtual server $domain does not exist");
 @scripts = &list_domain_scripts($d);
 $script = &get_script($sname);
 $script || &usage("Script type $sname is not known");
+($script->{'migrated'} && !$virtualmin_pro) &&
+	&usage("Script type $sname is not known");
 @vers = defined($id) ? @{$script->{'versions'}}
 		     : @{$script->{'install_versions'}};
 $ver || &usage("Missing version number. Available versions are : ".
@@ -182,8 +184,12 @@ if ($opts->{'mongrels'} > 1 && &has_proxy_balancer($d) != 2) {
 	&usage("This virtual server does not support more than one Mongrel");
 	}
 if ($ver eq "latest") {
-	# First (highest) version
+	# Preferred or first (highest) version
+	my $pfunc = $script->{'preferred_version_func'};
 	$ver = $vers[0];
+	if (defined(&$pfunc)) {
+		$ver = &$pfunc($d);
+		}
 	}
 elsif ($atleast) {
 	# Lowest version that is at least the one asked for

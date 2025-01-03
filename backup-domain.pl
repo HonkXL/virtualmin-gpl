@@ -15,7 +15,9 @@ per domain, it specifies a directory instead.
 
 The C<--domain> and C<--all-domains> options can be used to control which virtual
 servers are included in the backup. The C<--domain> parameter followed by a
-domain name can be given multiple times, to select more than one server.
+domain name can be given multiple times, to select more than one server. You can
+also add the C<--parent> flag to include all sub-servers and aliases of the
+selected domains.
 
 Alternately, virtual servers can be selected with the C<--user> flag followed
 by an administrator's username, C<--plan> followed by a plan name, or
@@ -42,14 +44,14 @@ settings to include with the C<--virtualmin> parameter. For example,
 C<--virtualmin config> would only backup the module configuration.
 
 By default, backups include all files in each domain's home directory. However,
-if you use the C<--incremental> parameter, only those changed since the last
-non-incremental backup will be included. This allows you to reduce the size of
+if you use the C<--differential> parameter, only those changed since the last
+non-differential backup will be included. This allows you to reduce the size of
 backups for large websites that rarely change, but means that when restoring
-both the full and incremental backups are needed.
+both the full and differential backups are needed.
 
-The alternative parameter C<--no-incremental> can be used by prevent Virtualmin
+The alternative parameter C<--no-differential> can be used by prevent Virtualmin
 from clearing the list of files that were included in the last full backup.
-This is used if you have a scheduled incremental backup setup, and don't want
+This is used if you have a scheduled differential backup setup, and don't want
 to change its behavior by doing an ad-hoc full backup.
 
 To exclude some files from each virtual server's home directory from the
@@ -76,7 +78,7 @@ to delay the backup until the first one completes.
 
 To override the default compression format set on the Virtualmin Configuration
 page, use the C<--compression> flag followed by one of C<gzip>, C<bzip2>, 
-C<tar> or C<zip>.
+C<tar>, C<zstd> or C<zip>.
 
 =cut
 
@@ -122,6 +124,9 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--user") {
 		push(@users, shift(@ARGV));
+		}
+	elsif ($a eq "--parent") {
+		$includesubs = 1;
 		}
 	elsif ($a eq "--reseller") {
 		defined(&list_resellers) ||
@@ -207,11 +212,11 @@ while(@ARGV > 0) {
 		$v = shift(@ARGV);
 		@vbs = grep { $_ ne $v } @vbs;
 		}
-	elsif ($a eq "--incremental") {
-		&has_incremental_tar() || &usage("The tar command on this system does not support incremental backups");
+	elsif ($a eq "--incremental" || $a eq "--differential") {
+		&has_incremental_tar() || &usage("The tar command on this system does not support differential backups");
 		$increment = 1;
 		}
-	elsif ($a eq "--no-incremental") {
+	elsif ($a eq "--no-incremental" || $a eq "--no-differential") {
 		$increment = 2;
 		}
 	elsif ($a eq "--purge") {
@@ -246,7 +251,8 @@ while(@ARGV > 0) {
 		$compression = $c eq "gzip" ? 0 :
 			       $c eq "bzip2" ? 1 :
 			       $c eq "tar" ? 2 :
-			       $c eq "zip" ? 3 : -1;
+			       $c eq "zip" ? 3 :
+			       $c eq "zstd" ? 4 : -1;
 		&usage("Invalid compression format $c") if ($compression < 0);
 		}
 	elsif ($a eq "--help") {
@@ -308,7 +314,7 @@ if ($onebyone && !$newformat) {
 	       "with --newformat");
 	}
 if ($increment) {
-	&has_incremental_format($compression) || &usage("The configured backup format does not support incremental backups");
+	&has_incremental_format($compression) || &usage("The configured backup format does not support differential backups");
 	}
 
 # Work out what will be backed up
@@ -318,7 +324,8 @@ if ($all_doms) {
 	}
 else {
 	# Get domains by name and user
-	@doms = &get_domains_by_names_users(\@bdoms, \@users, \&usage, \@plans);
+	@doms = &get_domains_by_names_users(\@bdoms, \@users, \&usage, \@plans,
+					    $includesubs);
 	}
 
 if ($test) {
@@ -462,6 +469,7 @@ print "\n";
 print "virtualmin backup-domain [--dest file]+\n";
 print "                         [--test]\n";
 print "                         [--domain name] | [--all-domains]\n";
+print "                         [--parent]\n";
 print "                         [--user name]\n";
 print "                         [--reseller name]\n";
 print "                         [--plan name]\n";
@@ -472,7 +480,7 @@ print "                         [--newformat]\n";
 print "                         [--onebyone]\n";
 print "                         [--strftime] [--purge days]\n";
 if (&has_incremental_tar()) {
-	print "                         [--incremental] | [--no-incremental]\n";
+	print "                         [--differential] | [--no-differential]\n";
 	}
 print "                         [--all-virtualmin] | [--virtualmin config] |\n";
 print "                                              [--except-virtualmin config]\n";
@@ -486,7 +494,7 @@ if (defined(&list_backup_keys)) {
 	print "                         [--key id]\n";
 	}
 print "                         [--kill-running | --wait-running]\n";
-print "                         [--compression gzip|bzip2|tar|zip]\n";
+print "                         [--compression gzip|bzip2|tar|zip|zstd]\n";
 print "\n";
 print "Multiple domains may be specified with multiple --domain parameters.\n";
 print "Features must be specified using their short names, like web and dns.\n";
@@ -500,7 +508,7 @@ print " - An S3 bucket, like s3://accesskey:secretkey\@bucket\n";
 print " - A Rackspace container, like rs://user:apikey\@container\n";
 print " - A Google Cloud Storage bucket, like gcs://bucket\n";
 print " - A Dropbox folder, like dropbox://folder\n";
-print "Multiple destinations can be given, if they are all remote.\n";
+print "Multiple destinations can be given by repeating this flag.\n";
 exit(1);
 }
 

@@ -2,11 +2,11 @@
 
 =head1 list-available-scripts.pl
 
-List known scripts
+List known scripts (web apps)
 
 This command simply outputs a list of scripts that can potentially installed
 into Virtualmin servers. By default it displays a nicely formatted table, but
-if the C<--multiline> option is given it will use a more machine-readable format
+if the C<--multiline> option is given it will use a more parsable format
 which shows more information. Or you can use C<--name-only> to show just script
 names.
 
@@ -35,15 +35,10 @@ if (!$module_name) {
 
 # Parse command-line args
 @types = ( );
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--source") {
+	if ($a eq "--source") {
 		$source = shift(@ARGV);
 		}
 	elsif ($a eq "--type") {
@@ -54,9 +49,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--available-only") {
 		$availonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -76,7 +68,7 @@ if ($availonly) {
 @scripts = grep { $_->{'enabled'} } @scripts;
 @scripts = sort { lc($a->{'desc'}) cmp lc($b->{'desc'}) } @scripts;
 
-if ($multi) {
+if ($multiline) {
 	# Show each script on a separate line
 	foreach $script (@scripts) {
 		next if (&script_migrated_disallowed($script->{'migrated'}));
@@ -91,7 +83,7 @@ if ($multi) {
 		print "    Available: ",$script->{'avail'} ? "Yes" : "No","\n";
 		print "    Versions: ",join(" ", @{$script->{'versions'}}),"\n";
 		if ($script->{'release'}) {
-			print "    Release: ",$script->{'release'},"\n";
+			print "    Installer version: $script->{'release'}\n";
 			}
 		print "    Available versions: ",
 			join(" ", grep { &can_script_version($script, $_) }
@@ -132,7 +124,8 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the third-party scripts available for installation.\n";
 print "\n";
-print "virtualmin list-available-scripts [--multiline | --name-only]\n";
+print "virtualmin list-available-scripts [--multiline | --json | --xml |\n";
+print "                                   --name-only]\n";
 print "                                  [--source core|custom|plugin|latest]\n";
 print "                                  [--type name]*\n";
 print "                                  [--available-only]\n";

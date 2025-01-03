@@ -26,6 +26,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "create-s3-bucket.pl must be run as root";
 	}
+&licence_status();
 &require_mail();
 
 # Parse command-line args
@@ -51,12 +52,9 @@ while(@ARGV > 0) {
 		&usage("Unknown parameter $a");
 		}
 	}
-$akey ||= $config{'s3_akey'};
-$skey ||= $config{'s3_skey'};
-if (!&can_use_aws_s3_creds()) {
-	$akey || &usage("Missing --access-key parameter");
-	$skey || &usage("Missing --secret-key parameter");
-	}
+($akey, $skey, $iam) = &lookup_s3_credentials($akey, $skey);
+$iam || $akey || &usage("Missing --access-key parameter");
+$iam || $skey || &usage("Missing --secret-key parameter");
 $bucket || &usage("Missing --bucket parameter");
 
 # Try the upload

@@ -5,6 +5,7 @@ require './virtual-server-lib.pl';
 &error_setup($text{'features_err'});
 &can_edit_templates() || &error($text{'features_ecannot'});
 &ReadParse();
+&licence_status();
 %lastconfig = %config;
 
 # Work out which features and plugins are now active
@@ -13,6 +14,7 @@ require './virtual-server-lib.pl';
 		   split(/\0/, $in{'fmods'}) );
 
 # Validate plugins
+&set_all_null_print();
 foreach $p (@newplugins) {
 	&foreign_require($p, "virtual_feature.pl");
 	$err = &plugin_call($p, "feature_check", \@neweverything);
@@ -36,6 +38,11 @@ foreach $f (@features) {
 		# Features that are never disabled can only be switched
 		# to be not selected by default
 		$config{$f} = $factive{$f} ? 3 : 1;
+		}
+	elsif (&indexof($f, @deprecated_features) >= 0 && !$config{$f} &&
+	       &check_feature_depends($f)) {
+		# Some features are now hidden unless already enabled
+		next;
 		}
 	else {
 		# Other features may be active, active but not selected by
@@ -67,7 +74,6 @@ $config{'plugins_inactive'} = join(" ", @inactive);
 
 # Validate new settings with a config check
 @plugins = @newplugins;
-&set_all_null_print();
 $cerr = &check_virtual_server_config(\%lastconfig);
 &error($cerr) if ($cerr);
 

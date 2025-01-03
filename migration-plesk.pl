@@ -76,13 +76,13 @@ return (undef, $dom, $user, $pass);
 }
 
 # migration_plesk_migrate(file, domain, username, create-webmin, template-id,
-#			  &ipinfo, pass, [&parent], [prefix], [email])
+#			  &ipinfo, pass, [&parent], [prefix], [email], [&plan])
 # Actually extract the given Plesk backup, and return the list of domains
 # created.
 sub migration_plesk_migrate
 {
 local ($file, $dom, $user, $webmin, $template, $ipinfo, $pass, $parent,
-       $prefix, $email) = @_;
+       $prefix, $email, $plan) = @_;
 
 # Check for prefix clash
 $prefix ||= &compute_prefix($dom, undef, $parent, 1);
@@ -252,7 +252,8 @@ if (!$parent && !$pass) {
 # Create the virtual server object
 local %dom;
 $prefix ||= &compute_prefix($dom, $group, $parent, 1);
-local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
+$plan = $parent ? &get_plan($parent->{'plan'}) :
+        $plan ? $plan : &get_default_plan();
 %dom = ( 'id', &domain_id(),
 	 'dom', $dom,
          'user', $duser,
@@ -263,7 +264,7 @@ local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
          'ugid', $ugid,
          'owner', "Migrated Plesk server $dom",
          'email', $email ? $email : $parent ? $parent->{'email'} : undef,
-	 'dns_ip', $ipinfo->{'virt'} || $config{'all_namevirtual'} ? undef :
+	 'dns_ip', $ipinfo->{'virt'} ? undef :
 		   &get_dns_ip($parent ? $parent->{'id'} : undef),
 	 $parent ? ( 'pass', $parent->{'pass'} )
 		 : ( 'pass', $pass ),
@@ -502,7 +503,7 @@ foreach my $name (keys %$mailusers) {
 	if ($mailuser->{'mailbox'}->{'enabled'} eq 'true') {
 		# Add delivery to user's mailbox
 		local $escuser = $uinfo->{'user'};
-		if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
+		if ($mail_system == 0 && $escuser =~ /\@/) {
 			$escuser = &escape_replace_atsign_if_exists($escuser);
 			}
 		else {
@@ -513,7 +514,6 @@ foreach my $name (keys %$mailusers) {
 	if (&has_home_quotas()) {
 		local $q = $mailuser->{'mailbox-quota'} < 0 ? undef :
 				$mailuser->{'mailbox-quota'}*1024;
-		$uinfo->{'qquota'} = $q;
 		$uinfo->{'quota'} = $q / &quota_bsize("home");
 		$uinfo->{'mquota'} = $q / &quota_bsize("home");
 		}
@@ -607,7 +607,6 @@ foreach my $mid (keys %$mailusers) {
 	if (&has_home_quotas()) {
 		local $q = $mailuser->{'mbox_quota'} < 0 ? undef :
 				$mailuser->{'mbox_quota'}*1024;
-		$uinfo->{'qquota'} = $q;
 		$uinfo->{'quota'} = $q / &quota_bsize("home");
 		$uinfo->{'mquota'} = $q / &quota_bsize("home");
 		}
@@ -845,6 +844,7 @@ foreach my $adom (keys %$aliasdoms) {
 			 'email', $dom{'email'},
 			 'name', 1,
 			 'ip', $dom{'ip'},
+			 'dns_ip', $dom{'dns_ip'},
 			 'virt', 0,
 			 'source', $dom{'source'},
 			 'parent', $dom{'id'},
@@ -852,6 +852,7 @@ foreach my $adom (keys %$aliasdoms) {
 			 'reseller', $dom{'reseller'},
 			 'nocreationmail', 1,
 			 'nocopyskel', 1,
+			 'nocreationscripts', 1,
 			);
 	$alias{'dom'} =~ s/^www\.//;
 	foreach my $f (@alias_features) {
@@ -904,6 +905,7 @@ foreach my $sdom (keys %$subdoms) {
 			'email', $dom{'email'},
 			'name', 1,
 			'ip', $dom{'ip'},
+			'dns_ip', $dom{'dns_ip'},
 			'virt', 0,
 			'source', $dom{'source'},
 			'parent', $dom{'id'},
@@ -911,6 +913,7 @@ foreach my $sdom (keys %$subdoms) {
 			'reseller', $dom{'reseller'},
 			'nocreationmail', 1,
 			'nocopyskel', 1,
+			'nocreationscripts', 1,
 			);
 	foreach my $f (@subdom_features) {
 		local $want = $f eq 'ssl' ? 0 : 1;

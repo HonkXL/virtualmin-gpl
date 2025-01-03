@@ -72,12 +72,22 @@ foreach my $s ($coreonly ? "$module_root_directory/scripts"
 		}
 	}
 if (!$coreonly) {
+	# Get script from plugins
 	foreach my $p (&list_script_plugins()) {
 		local $spath = &module_root_directory($p)."/$name.pl";
 		local @st = stat($spath);
 		if (@st) {
 			push(@sfiles, [ $spath, $st[9],
 				&guess_script_version($spath), 'plugin' ]);
+			}
+		}
+	# Load script extension from plugins
+	if (@sfiles) {
+		foreach my $p (&check_script_plugins_extensions()) {
+			my @efiles =
+				&plugin_call($p, "get_scripts_extension_files",
+					     $name);
+			$sfiles[0]->[4] = \@efiles if (@efiles);
 			}
 		}
 	}
@@ -102,7 +112,14 @@ $sdir =~ s/\/[^\/]+$//;
 
 # Read in the .pl file
 (do $spath) || return undef;
+# Read in any extension files from plugins
+if ($sfiles[0]->[4]) {
+	foreach my $efile (@{$sfiles[0]->[4]}) {
+		(do $efile) if (-r $efile);
+		}
+	}
 local $dfunc = "script_${name}_desc";
+local $tmdfunc = "script_${name}_tmdesc";
 local $lfunc = "script_${name}_longdesc";
 local $vfunc = "script_${name}_versions";
 local $nvfunc = "script_${name}_numeric_version";
@@ -144,9 +161,11 @@ if ($access{'allowedscripts'}) {
 # Create script structure
 local $rv = { 'name' => $name,
 	      'desc' => &$dfunc(),
+	      'tmdesc' => defined(&$tmdfunc) ? &$tmdfunc() : undef,
 	      'longdesc' => defined(&$lfunc) ? &$lfunc() : undef,
 	      'versions' => [ &$vfunc(0) ],
 	      'install_versions' => [ &$vfunc(1) ],
+	      'preferred_version_func' => "script_${name}_preferred_version",
 	      'numeric_version' => defined(&$nvfunc) ? &$nvfunc() : 0,
 	      'release_version' => defined(&$rvfunc) ? &$rvfunc() : 0,
 	      'release' => defined(&$rfunc) ? &$rfunc() : 0,
@@ -155,6 +174,7 @@ local $rv = { 'name' => $name,
 	      'author' => defined(&$authorfunc) ? &$authorfunc() : undef,
 	      'overlap' => defined(&$overlapfunc) ? &$overlapfunc() : undef,
 	      'dir' => $sdir,
+	      'filename' => $spath,
 	      'source' => $sfiles[0]->[3],
 	      'depends_func' => "script_${name}_depends",
 	      'dbs_func' => "script_${name}_dbs",
@@ -167,6 +187,7 @@ local $rv = { 'name' => $name,
 	      'realversion_func' => "script_${name}_realversion",
 	      'can_upgrade_func' => "script_${name}_can_upgrade",
 	      'stop_func' => "script_${name}_stop",
+	      'bootup_func' => "script_${name}_bootup",
 	      'stop_server_func' => "script_${name}_stop_server",
 	      'start_server_func' => "script_${name}_start_server",
 	      'status_server_func' => "script_${name}_status_server",
@@ -176,6 +197,7 @@ local $rv = { 'name' => $name,
 	      'php_opt_mods_func' => "script_${name}_php_optional_modules",
 	      'php_fullver_func' => "script_${name}_php_fullver",
 	      'php_maxver_func' => "script_${name}_php_maxver",
+	      'mysql_fullver_func' => "script_${name}_mysql_fullver",
 	      'pear_mods_func' => "script_${name}_pear_modules",
 	      'perl_mods_func' => "script_${name}_perl_modules",
 	      'perl_opt_mods_func' => "script_${name}_opt_perl_modules",
@@ -200,7 +222,13 @@ local $rv = { 'name' => $name,
 	      'migrated_func' => "script_${name}_migrated",
 	      'testable_func' => "script_${name}_testable",
 	      'testpath_func' => "script_${name}_testpath",
+	      'testinstallpath_func' => "script_${name}_testinstallpath",
 	      'testargs_func' => "script_${name}_testargs",
+	      'kit_func' => "script_${name}_kit",
+	      'kit_login_func' => "script_${name}_kit_login",
+	      'kit_apply_func' => "script_${name}_kit_apply",
+	      'detect_func' => "script_${name}_detect",
+	      'detect_file_func' => "script_${name}_detect_file",
 	    };
 if (defined(&$catfunc)) {
 	my @cats = &$catfunc();
@@ -267,6 +295,7 @@ sub add_domain_script
 {
 local ($d, $name, $version, $opts, $desc, $url, $user, $pass, $partial) = @_;
 $main::add_domain_script_count++;
+$partial =~ s/\n/ /g if ($partial);
 local %info = ( 'id' => time().$$.$main::add_domain_script_count,
 		'name' => $name,
 		'version' => $version,
@@ -305,6 +334,7 @@ foreach my $k (keys %$sinfo) {
 		$info{$k} = $sinfo->{$k};
 		}
 	}
+delete($sinfo->{'opts'});
 &write_file("$script_log_directory/$d->{'id'}/$sinfo->{'id'}.script", \%info);
 }
 
@@ -375,6 +405,7 @@ local %serial;
 local $cb = $nocallback ? undef : \&progress_callback;
 local @files = &{$script->{'files_func'}}($d, $ver, $opts, $sinfo);
 foreach my $f (@files) {
+	next if ($f->{'nodownload'});
 	if (-r "$script->{'dir'}/$f->{'file'}") {
 		# Included in script's directory
 		$gotfiles->{$f->{'name'}} = "$script->{'dir'}/$f->{'file'}";
@@ -488,7 +519,14 @@ foreach my $f (@files) {
 			$firsterror = undef;
 			last;
 			}
-		return $firsterror if ($firsterror);
+		if ($firsterror) {
+			if (defined(&clear_http_cache)) {
+				foreach my $url (@urls) {
+					&clear_http_cache($url);
+					}
+				}
+			return $firsterror;
+			}
 
 		$gotfiles->{$f->{'name'}} = $temp;
 		}
@@ -573,7 +611,7 @@ if (!&can_edit_databases()) {
 	}
 
 $cfunc = "check_".$dbtype."_database_clash";
-&$cfunc($d, $dbname) && return "The database $dbname already exists";
+&$cfunc($d, $dbname) && return "The database <tt>$dbname</tt> already exists";
 
 # Work out default creation options
 $ofunc = "default_".$dbtype."_creation_opts";
@@ -681,340 +719,215 @@ my $sdbpass = $sdbtype eq "mysql" ? &mysql_pass($d) : &postgres_pass($d, 1);
 return ($sdbhost, $sdbtype, $sdbname, $sdbuser, $sdbpass);
 }
 
-# update_all_installed_scripts_database_credentials(&domain, &olddomain, option-record-type, option-record-value, database-type)
-# Updates script's given database related setting option (db-username, db-password, db-name)
-# with a new value for all installed scripts under the given virtual server, considering database type,
-# in case installed script supports it (uses database).
+# update_all_installed_scripts_database_credentials(&@_)
+# Shall be removed after Virtualmin 7.40.0 release
 sub update_all_installed_scripts_database_credentials
 {
-my ($d, $oldd, $type, $value, $dbtype) = @_;
-my @domain_scripts = &list_domain_scripts($d);
+&update_scripts_creds(@_);
+}
+
+# update_scripts_creds(&domain, &olddomain, option-record-type,
+#                      option-record-value, database-type, $script-info)
+# Updates script's given database credentials like (db-username,
+# db-password, db-name) with a new value for all installed scripts under the 
+# given virtual server, considering database type, in case installed script
+# supports it (uses database).
+sub update_scripts_creds
+{
+my ($d, $oldd, $type, $value, $dbtype, $sinfo) = @_;
+my @domain_scripts = $sinfo ? ($sinfo) : &list_domain_scripts($d);
+my $do_wapp_conf_file = sub
+{
+my ($wapp_conf_file, $wapp_conf_types, $sdata,
+    $sproject, $d, $sdir, $type, $value, $wapp_conf_files_cnt,
+    $wapp_conf_file_cnt_ref) = @_;
+# Check if described type in a script file equals the one from the caller
+my ($wapp_conf_type_curr) = grep {$_ eq $type} keys %{$wapp_conf_types};
+if ($wapp_conf_type_curr) {
+	&$indent_print() if(!${$wapp_conf_file_cnt_ref}++);
+	unless (grep { $_ eq $sdata->{'desc'} } @printed_name) {
+		&$first_print("$sdata->{'desc'} ..");
+		push(@printed_name, $sdata->{'desc'});
+		}
+	my $wapp_opts_to_upd = $wapp_conf_types->{$wapp_conf_type_curr};
+	my ($replace_target, $replace_with, $value_func, @value_func_params,
+	    $script_opt_multi, $script_opt_after, %opts_mult);
+	foreach my $script_opt (keys %{$wapp_opts_to_upd}) {
+		# Parse replace
+		if ($script_opt eq 'replace') {
+			$replace_target = $wapp_opts_to_upd->{$script_opt}->[0];
+			$replace_with = $wapp_opts_to_upd->{$script_opt}->[1];
+			}
+		# Parse optional function to run on the replacement
+		$value_func = $wapp_opts_to_upd->{$script_opt}
+			if ($script_opt eq 'func');
+		# Parse optional function params
+		@value_func_params = split(',', $wapp_opts_to_upd->{$script_opt})
+			if ($script_opt eq 'func_params');
+		# Check if multi params must be replaced (complex replacement)
+		$script_opt_multi++ if ($script_opt eq 'multi');
+		# Include after regexp type (e.g. Drupal multi 
+		# array (multi and single line))
+		$script_opt_after++ if ($script_opt eq 'after');
+		}
+
+	# If value is not set, use existing data to just update
+	if (!$value) {
+		my ($sdbhost, $sdbtype, $sdbname, $sdbuser, $sdbpass) =
+			&get_script_database_credentials($d, $script->{'opts'});
+		if ($type =~ /host$/) {
+			$value = $sdbhost;
+			}
+		elsif ($type =~ /name$/) {
+			$value = $sdbname;
+			}
+		elsif ($type =~ /user$/) {
+			$value = $sdbuser;
+			}
+		elsif ($type =~ /pass$/) {
+			$value = $sdbpass;
+			}
+		}
+
+	# Pass new value through optional function if defined
+	$value = &$value_func($value, @value_func_params)
+		if (defined(&$value_func));
+
+	# Prepare substitution for complex replacement for multiple
+	# options by getting other credentials from current config
+	if ($script_opt_multi) {
+		my ($sdbhost, $sdbtype, $sdbname, $sdbuser, $sdbpass) =
+		&get_script_database_credentials($d, $script->{'opts'});
+		%opts_mult = ( 'sdbhost' => $sdbhost,
+			       'sdbtype' => $sdbtype,
+			       'sdbname' => $sdbname,
+			       'sdbuser' => $sdbuser,
+			       'sdbpass' => $sdbpass );
+		}
+	else {
+		# Construct simple replacement based on type
+		$replace_with =~ s/\$\$s$type/$value/;
+		}
+
+	# Run substitution if target and replacement are fine
+	my ($error, $success);
+
+	# Config file to run replacements on
+	my $wapp_conf_file_path = "$sdir/$wapp_conf_file";
+
+	# If script project is set, change config file path accordingly
+	if ($sproject) {
+		if (-r "$sdir/$sproject/$sproject/$wapp_conf_file") {
+			$wapp_conf_file_path = "$sdir/$sproject/$sproject/".
+					       $wapp_conf_file;
+			}
+		elsif (-r "$sdir/$sproject/$wapp_conf_file") {
+			$wapp_conf_file_path = "$sdir/$sproject/".
+					       $wapp_conf_file;
+			}
+		}
+	if (-w $wapp_conf_file_path) {
+		my $wapp_conf_file_lns =
+		      &read_file_lines_as_domain_user($d, $wapp_conf_file_path);
+		if ($replace_target && $replace_with) {
+			foreach my $wapp_conf_file_ln (@{$wapp_conf_file_lns}) {
+				if ($wapp_conf_file_ln =~ /
+				    (?<before>.*)
+				    (?<replace_target>
+					$replace_target
+				    )(?<after>.*) /x) {
+					my $include_after = $script_opt_after ?
+							    $+{after} : "";
+					if ($script_opt_multi) {
+						# Construct replacement first
+						foreach my $o (keys %opts_mult) {
+							# Substitute with new
+							# value
+							my $v = $opts_mult{$o};
+							$v = $value
+							    if ($o eq "s$type");
+							$replace_with =~
+							    s/\$\$$o/$v/;
+							}
+						# Perform complex
+						# replacement (multi)
+						$wapp_conf_file_ln = $+{before}.
+						      $+{replace_target}.
+						      $replace_with.
+						      $include_after;
+						}
+					else {
+						# Perform simple replacement
+						$wapp_conf_file_ln = $+{before}.
+						      $replace_with.
+						      $include_after;
+						}
+					$success++;
+					}
+				}
+			}
+		&make_file_writable_as_domain_user($d, $wapp_conf_file_path);
+		&flush_file_lines_as_domain_user($d, $wapp_conf_file_path);
+		if ($success) {
+			$success = $text{'setup_done'};
+			$success = 
+			  &text('save_installed_scripts_done', $wapp_conf_file)
+			  	if ($wapp_conf_files_cnt > 1);
+			}
+		else {
+			$error = &text('save_installed_scripts_err_file_lines',
+			               $wapp_conf_file);
+			}
+		}
+	else {
+		$error = &text('save_installed_scripts_err_file',
+		               $wapp_conf_file);
+		}
+	&$first_print($error || $success);
+	&$outdent_print() if(${$wapp_conf_file_cnt_ref} == $wapp_conf_files_cnt);
+	}
+};
+
 my ($printed_type, @printed_name);
 foreach my $script (@domain_scripts) {
 	my $sname = $script->{'name'};
 	my $sdata = &get_script($sname);
 	my $sproject = $script->{'opts'}->{'project'};
-	my $db_conn_desc = $sdata->{'db_conn_desc_func'};
+	my $db_conn_func = $sdata->{'db_conn_desc_func'};
 	my ($sdbtype) = split(/_/, $script->{'opts'}->{'db'}, 2);
 	my $sdir = $script->{'opts'}->{'dir'};
 	my ($dhome, $olddhome) = ($d->{'home'}, $oldd->{'home'});
 	if ($dhome ne $olddhome) {
 		$sdir =~ s/^\Q$olddhome\E/$dhome/;
 		}
-	if (defined(&$db_conn_desc) && $dbtype eq $sdbtype) {
+	if (defined(&$db_conn_func) && $dbtype eq $sdbtype) {
 		# Check if a script has a description sub
-		$db_conn_desc = &{$db_conn_desc};
+		my $db_conn_desc = &$db_conn_func($d, $script->{'opts'});
 		if (ref($db_conn_desc)) {
-			&$first_print($text{"save_installed_scripts_${type}_${dbtype}"}) if (!$printed_type++);
+			&$first_print($text{"save_installed_scripts_${type}_".
+				      "${dbtype}"}) if (!$printed_type++);
 			# Extract script config file(s) to operate on
-			my @script_config_files = keys %{$db_conn_desc};
-			my $script_config_files_count = scalar(@script_config_files);
-			my $script_config_file_count;
-			foreach my $script_config_file (@script_config_files) {
-				my $script_config_types = $db_conn_desc->{$script_config_file};
-				if (ref($script_config_types)) {
-					# Check if described type in a script file equals the one from the caller
-					my ($config_type_current) = grep {$_ eq $type} keys %{$script_config_types};
-					if ($config_type_current) {
-						&$indent_print() if(!$script_config_file_count++);
-						&$first_print("$sdata->{'desc'} ..") if (!$printed_name[$sdata->{'desc'}]), push(@printed_name, $sdata->{'desc'});
-						my $script_options_to_update = $script_config_types->{$config_type_current};
-						my ($replace_target, $replace_with, $value_func, @value_func_params, $script_option_multi, $script_option_after, %options_multi);
-						foreach my $script_option (keys %{$script_options_to_update}) {
-							# Parse repalce
-							if ($script_option eq 'replace') {
-								$replace_target = $script_options_to_update->{$script_option}->[0];
-								$replace_with = $script_options_to_update->{$script_option}->[1];
-								}
-							# Parse optional function to run on the replacement
-							if ($script_option eq 'func') {
-								$value_func = $script_options_to_update->{$script_option};
-								}
-							# Parse optional function params
-							if ($script_option eq 'func_params') {
-								@value_func_params = split(',', $script_options_to_update->{$script_option});
-								}
-							# Check if multi params must be replaced (complex replacement)
-							if ($script_option eq 'multi') {
-								$script_option_multi++;
-								}
-							# Include after regexp type (e.g. Drupal multiformat array (multi and single line))
-							if ($script_option eq 'after') {
-								$script_option_after++;
-								}
-							}
-
-						# If value is not set, use existing data to just update
-						if (!$value) {
-							my ($sdbhost, $sdbtype, $sdbname, $sdbuser, $sdbpass) =
-							    &get_script_database_credentials($d, $script->{'opts'});
-							if ($type =~ /host$/) {
-								$value = $sdbhost;
-								}
-							elsif ($type =~ /name$/) {
-								$value = $sdbname;
-								}
-							elsif ($type =~ /user$/) {
-								$value = $sdbuser;
-								}
-							elsif ($type =~ /pass$/) {
-								$value = $sdbpass;
-								}
-							}
-
-						# Pass new value through optional function if defined
-						if (defined(&$value_func)) {
-							$value = &$value_func($value, @value_func_params);
-						}
-						
-						# Prepare substitution for complex replacement for multiple
-						# options by getting other credentials from current config
-						if ($script_option_multi) {
-							my ($sdbhost, $sdbtype, $sdbname, $sdbuser, $sdbpass) =
-							    &get_script_database_credentials($d, $script->{'opts'});
-							%options_multi = ('sdbhost' => $sdbhost,
-							                  'sdbtype' => $sdbtype,
-							                  'sdbname' => $sdbname,
-							                  'sdbuser' => $sdbuser,
-							                  'sdbpass' => $sdbpass
-							                 );
-							}
-
-						# Construct simple replacement based on type
-						else {
-							$replace_with =~ s/\$\$s$type/$value/;
-							}
-
-						# Run substitution if target and replacement are fine
-						my ($error, $success);
-
-						# Config file to run replacements on
-						my $script_config_file_path = "$sdir/$script_config_file";
-
-						# If script project is set, change config file path accordingly
-						if ($sproject) {
-							if (-r "$sdir/$sproject/$sproject/$script_config_file") {
-								$script_config_file_path = "$sdir/$sproject/$sproject/$script_config_file";
-								}
-							elsif (-r "$sdir/$sproject/$script_config_file") {
-								$script_config_file_path = "$sdir/$sproject/$script_config_file";
-								}
-							}
-						if (-w $script_config_file_path) {
-							&set_filepath_permissions_as_domain_user($d, $script_config_file_path, 0755, $sdir);
-							my $script_config_file_lines = &read_file_lines_as_domain_user($d, $script_config_file_path);
-							if ($replace_target && $replace_with) {
-								foreach my $config_file_line (@{$script_config_file_lines}) {
-									if ($config_file_line =~ /(?<before>.*)(?<replace_target>$replace_target)(?<after>.*)/) {
-										my $include_after = $script_option_after ? "$+{after}" : "";
-										if ($script_option_multi) {
-											# Construct replacement first
-											foreach my $option_multi (keys %options_multi) {
-												# Substitute with new value
-												my $option_multi_value = $options_multi{$option_multi};
-												if ($option_multi eq "s$type") {
-													$option_multi_value = $value;
-													}
-												$replace_with =~ s/\$\$$option_multi/$option_multi_value/;
-												}
-											# Perform complex replacement (multi)
-											$config_file_line = "$+{before}$+{replace_target}$replace_with$include_after";
-											}
-										else {
-											# Perform simple replacement
-											$config_file_line = "$+{before}$replace_with$include_after";
-											}
-										$success++;
-										}
-									}
-								}
-							&flush_file_lines_as_domain_user($d, $script_config_file_path);
-							&restore_filepath_permissions_as_domain_user($d, $script_config_file_path, $sdir);
-							if ($success) {
-								$success = 
-									$script_config_files_count > 1 ?
-									   &text('save_installed_scripts_done', $script_config_file) :
-									   $text{'setup_done'};
-								}
-							else {
-								$error = &text('save_installed_scripts_err_file_lines', $script_config_file);
-								}
-						}
-						else {
-							$error = &text('save_installed_scripts_err_file', $script_config_file);
-							}
-						&$first_print($error || $success);
-						&$outdent_print() if($script_config_file_count == $script_config_files_count);
-						}
+			my @wapp_conf_files = keys %{$db_conn_desc};
+			my $wapp_conf_files_cnt =
+				scalar(@wapp_conf_files);
+			my $wapp_conf_file_count;
+			foreach my $wapp_conf_file (@wapp_conf_files) {
+				my $wapp_conf_types =
+					$db_conn_desc->{$wapp_conf_file};
+				if (ref($wapp_conf_types)) {
+					$do_wapp_conf_file->(
+						$wapp_conf_file,
+						$wapp_conf_types,
+						$sdata, $sproject, $d, $sdir,
+						$type, $value,
+						$wapp_conf_files_cnt,
+						\$wapp_conf_file_count);
 					}
 				}
 			}
 		}
 	}
 &$second_print($text{"setup_done"}) if ($printed_type);
-}
-
-# setup_web_for_php(&domain, &script, php-version)
-# Update a virtual server's web config to add any PHP settings from the template
-sub setup_web_for_php
-{
-local ($d, $script, $phpver) = @_;
-local $tmpl = &get_template($d->{'template'});
-local $any = 0;
-local $varstr = &substitute_domain_template($tmpl->{'php_vars'}, $d);
-local @tmplphpvars = $varstr eq 'none' ? ( ) : split(/\t+/, $varstr);
-local $p = &domain_has_website($d);
-
-if ($p eq "web" && &get_apache_mod_php_version()) {
-	# Add the PHP variables to the domain's <Virtualhost> in Apache config
-	&require_apache();
-	local $conf = &apache::get_config();
-	local @ports;
-	push(@ports, $d->{'web_port'}) if ($d->{'web'});
-	push(@ports, $d->{'web_sslport'}) if ($d->{'ssl'});
-	foreach my $port (@ports) {
-		local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $port);
-		next if (!$virt);
-
-		# Find currently set PHP variables
-		local @phpv = &apache::find_directive("php_value", $vconf);
-		local %got;
-		foreach my $p (@phpv) {
-			if ($p =~ /^(\S+)/) {
-				$got{$1}++;
-				}
-			}
-
-		# Get PHP variables from template
-		local @oldphpv = @phpv;
-		local $changed;
-		foreach my $pv (@tmplphpvars) {
-			local ($n, $v) = split(/=/, $pv, 2);
-			local $diff = $n =~ s/^(\+|\-)// ? $1 : undef;
-			if (!$got{$n}) {
-				push(@phpv, "$n $v");
-				$changed++;
-				}
-			}
-		if ($script && defined(&{$script->{'php_vars_func'}})) {
-			# Get from script too
-			foreach my $v (&{$script->{'php_vars_func'}}($d)) {
-				if (!$got{$v->[0]}) {
-					if ($v->[1] =~ /\s/) {
-						push(@phpv,
-						     "$v->[0] \"$v->[1]\"");
-						}
-					else {
-						push(@phpv, "$v->[0] $v->[1]");
-						}
-					$changed++;
-					}
-				}
-			}
-
-		# Update if needed
-		if ($changed) {
-			&apache::save_directive("php_value",
-						\@phpv, $vconf, $conf);
-			$any++;
-			}
-		&flush_file_lines();
-		}
-	}
-
-# Find PHP variables from template and from script
-local @todo;
-foreach my $pv (@tmplphpvars) {
-	local ($n, $v) = split(/=/, $pv, 2);
-	local $diff = $n =~ s/^(\+|\-)// ? $1 : undef;
-	push(@todo, [ $n, $v, $diff ]);
-	}
-if ($script && defined(&{$script->{'php_vars_func'}})) {
-	push(@todo, &{$script->{'php_vars_func'}}($d));
-	}
-
-# Always set the session.save_path to ~/tmp, as on some systems
-# it is set by default to a directory only writable by Apache
-push(@todo, [ 'session.save_path', &create_server_tmp($d) ]);
-
-# Magic quotes directive not supported in PHP 5.4
-local $realver = &get_php_version($phpver, $d);
-if ($realver >= 5.4) {
-	@todo = grep { $_->[0] ne "magic_quotes_gpc" } @todo;
-	}
-
-local $phpini = &get_domain_php_ini($d, $phpver);
-if (-r $phpini && &foreign_check("phpini")) {
-	# Add the variables to the domain's php.ini file. Start by finding
-	# the variables already set, including those that are commented out.
-	&foreign_require("phpini");
-	local $conf = &phpini::get_config($phpini);
-	local $anyini;
-
-	# Make any needed changes. Variables can be either forced to a
-	# particular value, or have maximums or minumums
-	foreach my $t (@todo) {
-		local ($n, $v, $diff) = @$t;
-		local $ov = &phpini::find_value($n, $conf);
-		local $change = $diff eq '' && $ov ne $v ||
-				$diff eq '+' && &php_value_diff($ov, $v) < 0 ||
-				$diff eq '-' && &php_value_diff($ov, $v) > 0;
-		if ($change) {
-			&phpini::save_directive($conf, $n, $v);
-			if ($n eq "max_execution_time" &&
-			    $config{'fcgid_max'} eq "") {
-				&set_fcgid_max_execution_time($d, $v);
-				}
-			$any++;
-			$anyini++;
-			}
-		}
-
-	if ($anyini) {
-		&write_as_domain_user($d, sub { &flush_file_lines($phpini) });
-		local $p = &domain_has_website($d);
-		if ($p ne "web") {
-			&plugin_call($p, "feature_restart_web_php", $d);
-			}
-		}
-	}
-
-my $mode = &get_domain_php_mode($d);
-if ($mode eq "fpm") {
-	# Update PHP ini values in FPM config file as well
-	foreach my $t (@todo) {
-		local ($n, $v, $diff) = @$t;
-		local $ov = &get_php_fpm_ini_value($d, $n);
-		local $change = $diff eq '' && $ov ne $v ||
-				$diff eq '+' && &php_value_diff($ov, $v) < 0 ||
-				$diff eq '-' && &php_value_diff($ov, $v) > 0;
-		if ($change) {
-			&save_php_fpm_ini_value($d, $n, $v, 1);
-			}
-		}
-	}
-
-# Call web plugin specific variable function
-if ($p && $p ne "web") {
-	&plugin_call($p, "feature_setup_web_for_php", $d, $script, $phpver);
-	}
-
-return $any;
-}
-
-# php_value_diff(value1, value2)
-# Compares two values like 32 and 64 or 8M and 32M. Returns -1 if v1 is < v2,
-# +1 if v1 > v2, or 0 if same
-sub php_value_diff
-{
-local ($v1, $v2) = @_;
-$v1 = $v1 =~ /^(\d+)k/i ? $1*1024 :
-      $v1 =~ /^(\d+)M/i ? $1*1024*1024 :
-      $v1 =~ /^(\d+)G/i ? $1*1024*1024*1024 : $v1;
-$v2 = $v2 =~ /^(\d+)k/i ? $1*1024 :
-      $v2 =~ /^(\d+)M/i ? $1*1024*1024 :
-      $v2 =~ /^(\d+)G/i ? $1*1024*1024*1024 : $v2;
-return $v1 <=> $v2;
 }
 
 # check_pear_module(mod, [php-version], [&domain])
@@ -1197,6 +1110,8 @@ if (!$bestdir) {
 	}
 
 my $bestver = &get_php_version($bestdir->{'version'});
+$bestver || return (undef, &text('scripts_enophpbestver',
+				 $bestdir->{'version'}));
 if (&indexof($bestdir->{'version'}, @vers) >= 0 ||
     &indexof($bestver, @vers) >= 0) {
 	# The best match dir supports one of the PHP versions .. so we are OK!
@@ -1212,12 +1127,13 @@ if (!$candirs) {
 # is supported.
 my ($setver) = sort { &compare_versions($a, $b) } @vers;
 $setver = $vmap{$setver} || $setver;
+$setver || return (undef, "No versions found!");
 local $err = &save_domain_php_directory($d, $dirpath, $setver);
 if ($err) {
 	return (undef, &text('scripts_ephpverchange', $dirpath, $vers[0]));
 	}
 else {
-	return ($vers[0], undef);
+	return ($setver, undef);
 	}
 }
 
@@ -1252,10 +1168,10 @@ if (defined(&$optmodfunc)) {
 
 my $installing;
 foreach my $m (@mods) {
+	local $opt = &indexof($m, @optmods) >= 0 ? 1 : 0;
 	if ($phpver >= 7 && $m eq "mysql") {
-		# PHP 7 only supports mysqli, but that's OK because most scripts
-		# can use it
-		$m = "mysqli";
+		# PHP actual package name is mysqlnd on all systems
+		$m = "mysqlnd";
 		}
 	# Module name can never contain `pecl-`, unlike package name!
 	my $mphp = $m;
@@ -1265,7 +1181,6 @@ foreach my $m (@mods) {
 		&$first_print($text{'scripts_install_phpmods_check'});
 		&$indent_print();
 		}
-	local $opt = &indexof($m, @optmods) >= 0 ? 1 : 0;
 	&$first_print(&text($opt ? 'scripts_optmod' : 'scripts_needmod',
 			    "<tt>$m</tt>"));
 
@@ -1307,7 +1222,6 @@ foreach my $m (@mods) {
 		my $fullphpver = &get_php_version($phpverall, $d);
 		my $nodotphpver = $phpverall;
 		$nodotphpver =~ s/\.//;
-		my $phpverdistrobased = $software::update_system eq "apt" ? $phpverall : $nodotphpver;
 		if ($software::update_system eq "csw") {
 			# On Solaris, packages are named like php52_mysql
 			push(@poss, "php".$nodotphpver."_".$m);
@@ -1317,11 +1231,17 @@ foreach my $m (@mods) {
 			push(@poss, "php".$nodotphpver."-".$m);
 			}
 		else {
-			push(@poss, "php".$phpverdistrobased."-".$m, "php-".$m);
+			if ($software::update_system eq "apt") {
+				push(@poss, "php".$phpverall."-".$m);
+				}
+			else {
+				push(@poss, "php".$nodotphpver."-".$m);
+				}
+			push(@poss, "php-".$m);
 			if ($software::update_system eq "apt" &&
 				$m eq "pdo_mysql") {
 				# On Debian, the pdo_mysql module is in the mysql module
-				push(@poss, "php".$phpverdistrobased."-mysql", "php-mysql");
+				push(@poss, "php".$phpverall."-mysql", "php-mysql");
 				}
 			elsif ($software::update_system eq "yum" &&
 				   ($m eq "domxml" || $m eq "dom") && $phpverall >= 5) {
@@ -1874,7 +1794,8 @@ foreach $script (@list) {
 		&ui_opt_textbox("version_$i", $ver eq "latest" ? undef : $ver,
 				10, $text{'tscripts_latest'}."<br>",
 				$text{'tscripts_exact'}),
-		&ui_textbox("path_$i", $script->{'path'}, 25),
+		&ui_textbox("path_$i", $script->{'path'}, 15),
+		&ui_textbox("sopts_$i", $script->{'sopts'}, 25),
 		&ui_radio("db_def_$i",
 			$db_def,
 			[ [ 0, $text{'tscripts_none'} ],
@@ -1888,8 +1809,11 @@ foreach $script (@list) {
 	}
 $stable .= &ui_columns_table(
 	[ $text{'tscripts_name'}, $text{'tscripts_version'},
-	  $text{'tscripts_path'}, $text{'tscripts_db'},
-	  $text{'tscripts_dbtype'} ],
+	  $text{'tscripts_path'} .
+	  	"&nbsp;" . &ui_help($text{'tscripts_path_help'}),
+	  $text{'tscripts_opts'} .
+	  	"&nbsp;" . &ui_help($text{'tscripts_opts_help'}),
+	  $text{'tscripts_db'}, $text{'tscripts_dbtype'} ],
 	undef,
 	\@table,
 	undef,
@@ -1930,6 +1854,7 @@ else {
 		$path =~ /^\/\S*$/ || &error(&text('tscripts_epath', $i+1));
 		$script->{'path'} = $path;
 		$script->{'dbtype'} = $in{"dbtype_$i"};
+		$script->{'sopts'} = $in{"sopts_$i"};
 		if ($in{"db_def_$i"} == 1) {
 			$script->{'db'} = '${DB}';
 			}
@@ -2126,7 +2051,7 @@ sub get_http_connection
 {
 local ($d, $page, $dest, $error, $cbfunc, $ssl, $user, $pass,
        $timeout, $osdn, $nocache, $headers) = @_;
-local $ip = $d->{'ip'};
+local $ip = $d->{'ip'} || $d->{'ip6'};
 local $host = &get_domain_http_hostname($d);
 my $usessl = &domain_has_ssl($d);
 my $port = $usessl ? $d->{'web_sslport'} : $d->{'web_port'}  || 80;
@@ -2665,7 +2590,7 @@ foreach my $d (@$doms) {
 			     @{$script->{'versions'}};
 		local $canupfunc = $script->{'can_upgrade_func'};
 		if (defined(&$canupfunc)) {
-			@vers = grep { &$canupfunc($sinfo, $_) } @vers;
+			@vers = grep { &$canupfunc($sinfo, $_) > 0 } @vers;
 			}
 		@vers = sort { &compare_versions($b, $a, $script) } @vers;
 		local @better = grep { &compare_versions($_,
@@ -2989,8 +2914,9 @@ local ($d, $script, $ver, $phpver, $opts) = @_;
 &setup_python_modules($d, $script, $ver, $opts) || return 0;
 &setup_noproxy_path($d, $script, $ver, $opts) || return 0;
 
-# Setup PHP variables
-if (&indexof("php", @{$script->{'uses'}}) >= 0) {
+# Setup PHP variables, if the script has any
+if (&indexof("php", @{$script->{'uses'}}) >= 0 &&
+    defined(&{$script->{'php_vars_func'}})) {
 	&$first_print($text{'scripts_apache'});
 	if (&setup_web_for_php($d, $script, $phpver)) {
 		&$second_print($text{'setup_done'});
@@ -3124,6 +3050,30 @@ if (defined(&{$script->{'dbs_func'}})) {
 			 &text_html('scripts_idbneed_link',
 				        "edit_domain.cgi?dom=$d->{'id'}", $text{'edit_title'}) : ""));
 		}
+
+	# Check for MySQL version
+	my $myvfunc = $script->{'mysql_fullver_func'};
+	if (&indexof('mysql', @dbs) >= 0 && defined(&$myvfunc)) {
+		my @vers = &$myvfunc($ver);
+		if (@vers) {
+			my ($ver, $variant) = &get_dom_remote_mysql_version($d);
+			my $found = 0;
+			my ($wantver, $wantvariant);
+			for(my $i=0; $i<@vers; $i+=2) {
+				$wantver = $vers[$i];
+				$wantvariant = $vers[$i+1];
+				next if ($wantvariant &&
+					 $variant ne $wantvariant);
+				next if (&compare_versions($ver, $wantver) < 0);
+				$found = 1;
+				}
+			if (!$found) {
+				# Don't have it
+				return &text('scripts_idbversion',
+					     $wantver, $ver);
+				}
+			}
+		}
 	}
 
 # Check for required commands
@@ -3132,8 +3082,7 @@ push(@rv, map { &text('scripts_icommand', "<tt>$_</tt>") }
 
 # Check for webserver CGI or PHP support
 local $p = &domain_has_website($d);
-local $cancgi = &has_cgi_support($d);
-if (&indexof("cgi", @{$script->{'uses'}}) >= 0 && !$cancgi) {
+if (&indexof("cgi", @{$script->{'uses'}}) >= 0 && !&get_domain_cgi_mode($d)) {
 	return $text{'scripts_inocgi'};
 	}
 if ($p ne "web" && &indexof("apache", @{$script->{'uses'}}) >= 0) {
@@ -3320,12 +3269,14 @@ else {
 sub describe_script_status
 {
 my ($sinfo, $script) = @_;
-my @vers = grep { &can_script_version($script, $_) }
-		@{$script->{'versions'}};
-my @allvers = @vers;
+my @everyvers = grep { &can_script_version($script, $_) }
+		     @{$script->{'versions'}};
+my @vers = @everyvers;
+my @allvers = @everyvers;
 my $canupfunc = $script->{'can_upgrade_func'};
 if (defined(&$canupfunc)) {
-	@vers = grep { &$canupfunc($sinfo, $_) } @vers;
+	@allvers = grep { &$canupfunc($sinfo, $_) >= 0 } @allvers;
+	@vers = grep { &$canupfunc($sinfo, $_) > 0 } @vers;
 	}
 my ($status, $canup);
 if ($sinfo->{'deleted'}) {
@@ -3333,13 +3284,13 @@ if ($sinfo->{'deleted'}) {
 		  $text{'scripts_deleted'}."</font>";
 	}
 elsif (&indexof($sinfo->{'version'}, @vers) < 0) {
-	# Not on list of possible versions
+	# Not on list of possible versions that can be installed
 	my @better = grep { &compare_versions($_, $sinfo->{'version'},
 					      $script) > 0 } @vers;
 	my @allbetter = grep { &compare_versions($_, $sinfo->{'version'},
 					         $script) > 0 } @allvers;
 	if (@better) {
-		# Some newer version exists
+		# Some newer version exists and we can upgrade to it
 		$status = "<font color=#ffaa00>".
 		  &text('scripts_newer', $better[$#better]).
 		  "</font>";
@@ -3350,6 +3301,11 @@ elsif (&indexof($sinfo->{'version'}, @vers) < 0) {
 		$status = "<font color=#ffaa00>".
 		  &text('scripts_newer2', $allbetter[$#allbetter]).
 		  "</font>";
+		}
+	elsif (&indexof($sinfo->{'version'}, @everyvers) >= 0) {
+		# On the newest version that can be installed
+		$status = "<font color=#00aa00>".
+			  $text{'scripts_newest'}."</font>";
 		}
 	else {
 		$status = $text{'scripts_nonewer'};
@@ -3465,15 +3421,23 @@ my ($ver) = @_;
 my $basever = substr($ver, 0, 1);
 my @opts = ( $config{'python_cmd'} );
 if (!$basever || $basever == 3) {
-	push(@opts, "python3", "python30",
+	push(@opts, "/etc/alternatives/python3",
+		    "python3.14", "python314",
+		    "python3.13", "python313",
+		    "python3.12", "python312",
+		    "python3.11", "python311",
+		    "python3.10", "python310",
 		    "python3.9", "python39",
 		    "python3.8", "python38",
 		    "python3.7", "python37",
-		    "python3.6", "python36");
+		    "python3.6", "python36",
+		    "python3", "python30");
 	}
 if (!$basever || $basever == 2) {
-	push(@opts, "python2.7", "python27",
-		    "python2.6", "python26");
+	push(@opts, "/etc/alternatives/python2",
+		    "python2.7", "python27",
+		    "python2.6", "python26",
+		    "python2", "python20");
 	}
 push(@opts, "python");
 foreach my $o (@opts) {
@@ -3492,7 +3456,7 @@ sub list_used_tcp_ports
 my @rv;
 my $out = &backquote_command("lsof -i tcp -n -l -P");
 foreach my $l (split(/\r?\n/, $out)) {
-	if ($l =~ /\s+([^:]+):(\d+)\s+\(LISTEN\)/) {
+	if ($l =~ /\s+([^:]+|\[[0-9a-f:]+\]):(\d+)\s+\(LISTEN\)/) {
 		push(@rv, $2);
 		}
 	}
@@ -3524,15 +3488,26 @@ while($rport < 65536) {
 return $rport >= 65536 ? undef : $rport;
 }
 
-# get_php_cli_command(script-php-version) 
+# get_php_cli_command(script-php-version|cmd, [&domain]) 
 # Returns the path to the non-CGI version of the PHP command
 sub get_php_cli_command
 {
-local ($v) = @_;
-local ($p5) = grep { $_->[0] == $v } &list_available_php_versions($d);
-local $cmd = $p5->[1];
-$cmd ||= &has_command("php5") || &has_command("php");
-$cmd =~ s/-cgi//;
+my ($v, $d) = @_;
+my $cmd;
+if ($v =~ /^\//) {
+	# Command was given
+	$cmd = $v;
+	}
+else {
+	my ($p5) = grep { $_->[0] == $v } &list_available_php_versions($d);
+	$cmd = $p5->[1];
+	$cmd ||= &has_command("php5") || &has_command("php");
+	}
+$cmd =~ s/-(cgi|fpm)//;
+if (!-x $cmd && $cmd =~ /^(.*)\/sbin\/(.*)$/) {
+	my $bincmd = $1."/bin/".$2;
+	$cmd = $bincmd if (-x $bincmd);
+	}
 return $cmd;
 }
 
@@ -3551,7 +3526,7 @@ sub script_migrated_status
 {
 my ($status, $migrated, $can_upgrade) = @_;
 return script_migrated_disallowed($script->{'migrated'}) ?
-         &ui_link("https://virtualmin.com/shop/",
+         &ui_link($virtualmin_shop_link,
            $text{'scripts_gpl_to_pro'.($can_upgrade ? "_upgrade" : "").''}, 
              ($can_upgrade ? " text-warning" : ""), " target=_blank") :
            $status;
@@ -3621,6 +3596,161 @@ my $surl = $sinfo->{'url'} ? $sinfo->{'url'} :
 my $slabel = $fullurl ? $surl : $path;
 my $slink = "<a href='$surl' target=_blank>$slabel</a>";
 return $sinfo->{'url'} ? $slink : "<i>$slink</i>";
+}
+
+# filetimestamp_to_version(filename-path)
+# Given file name, returns versions number like 53.310.48
+sub filetimestamp_to_version {
+    my $filetimestamp = (stat(shift))[9];
+    my $seconds_in_a_day = 86400;
+    my $major = int($filetimestamp / ($seconds_in_a_day * 365));
+    my $minor = int(($filetimestamp % ($seconds_in_a_day * 365)) / $seconds_in_a_day);
+    my $patch = int(100 * (($filetimestamp % $seconds_in_a_day) / $seconds_in_a_day));
+    return "$major.$minor.$patch";
+}
+
+# filetimestamp_to_date(filename-path)
+# Given file name, returns its date like 10/25/2023 12:39 pm
+sub filetimestamp_to_date {
+    return &make_date((stat(shift))[9]);
+}
+
+# get_script_minor_version(ver)
+# Returns minor version number from full version number
+sub get_script_minor_version
+{
+my ($ver) = @_;
+$ver =~ s/(?<=\.\d)\.\d$//; # remove minor version
+return $ver;
+}
+
+# setup_service(&domain, &service-options)
+# Sets up a service for some script
+sub script_setup_service
+{
+my ($d, $o) = @_;
+my $d_ = $d->{'parent'} ? &get_domain($d->{'parent'}) : $d;
+$o->{'name'} || $o->{'name'} =~ /^[a-zA-Z\d+]+$/ || &error($text{'scripts_service_ename'}); 
+$o->{'descname'} ||= ucfirst($o->{'name'});
+$o->{'port'} || $o->{'port'} =~ /^\d+$/ || &error($text{'scripts_service_eport'});
+$o->{'service'}->{'startcmd'} || &error($text{'scripts_service_estartcmd'});
+&foreign_require("init");
+&init::enable_at_boot(
+	"$o->{'name'}-$d->{'dom'}-$o->{'port'}",
+	"$o->{'descname'} service for $d->{'dom'} created by Virtualmin",
+	$o->{'service'}->{'startcmd'},
+	$o->{'service'}->{'stopcmd'},
+	undef,
+	{ 'opts' => {
+		'user'    => $d_->{'uid'},
+		'group'   => $d_->{'gid'},
+		'env'     => $o->{'service'}->{'env'} ? "PATH=$o->{'service'}->{'env'}" : undef,
+		'type'    => $o->{'service'}->{'type'} || 'simple',
+		'reload'  => $o->{'service'}->{'reloadcmd'},
+		'workdir' => $o->{'service'}->{'workdir'},
+		'logstd'  => $o->{'service'}->{'logstd'},
+		'logerr'  => $o->{'service'}->{'logerr'},
+		}},
+	);
+}
+
+# script_delete_service(&domain, script-name, script-port)
+# Deletes a service
+sub script_delete_service
+{
+my ($d, $script_name, $script_port) = @_;
+&script_stop_service($d, $script_name, $script_port);
+&foreign_require("init");
+&init::delete_at_boot("$script_name-$d->{'dom'}-$script_port");
+}
+
+# script_stop_service(&domain, script-name, script-port)
+# Stops and disables a service
+sub script_stop_service
+{
+my ($d, $script_name, $script_port) = @_;
+&foreign_require("init");
+my $action_name = "$script_name-$d->{'dom'}-$script_port";
+&init::stop_action($action_name) if (&init::action_status($action_name));
+&init::disable_at_boot($action_name);
+}
+
+# script_start_service(&domain, script-name, script-port)
+# Starts and enables a service
+sub script_start_service
+{
+my ($d, $script_name, $script_port) = @_;
+&foreign_require("init");
+my $action_name = "$script_name-$d->{'dom'}-$script_port";
+if (&init::action_status($action_name)) {
+	&init::start_action($action_name);
+	&init::enable_at_boot($action_name);
+	}
+}
+
+# script_status_service(&domain, script-name, script-port)
+# Returns status of service
+sub script_status_service
+{
+my ($d, $script_name, $script_port) = @_;
+&foreign_require("init");
+my $action_name = "$script_name-$d->{'dom'}-$script_port";
+if (&init::action_status($action_name)) {
+	my $status = &init::status_action($action_name);
+	return $status ? ( $status ) : ( );
+	}
+}
+
+# detect_installed_scripts(&domain, [dir])
+# Find all scripts under some domain's home HTML directory, and returns a list
+# of sinfo objects
+sub detect_installed_scripts
+{
+my ($d, $dir) = @_;
+$dir ||= &public_html_dir($d);
+my @rv;
+my %already = map { $_->{'opts'}->{'dir'}, $_ } &list_domain_scripts($d);
+foreach my $sname (&list_scripts()) {
+	my $script = &get_script($sname);
+	next if (!$script);
+	my $dffunc = $script->{'detect_file_func'};
+	my $dfunc = $script->{'detect_func'};
+	next if (!defined(&$dffunc) || !defined(&$dfunc));
+	my $wantfile = &$dffunc($d);
+	my @dfiles = map { $dir."/".$_ } &find_recursive_files($dir, $wantfile);
+	next if (!@dfiles);
+	my @sinfos = &$dfunc($d, \@dfiles);
+	foreach my $sinfo (@sinfos) {
+		$sinfo->{'name'} = $sname;
+		$sinfo->{'desc'} ||= "Detected under $sinfo->{'path'}";
+
+		# Populate the PHP version field
+		if (&indexof('php', @{$script->{'uses'}}) >= 0) {
+			$sinfo->{'opts'}->{'phpver'} =
+				&get_domain_php_version_for_directory(
+					$d, $sinfo->{'opts'}->{'dir'});
+			}
+
+		# Populate the URL field based on the path
+		if ($sinfo->{'opts'}->{'path'}) {
+			$sinfo->{'url'} = 'http://'.$d->{'dom'}.
+					  $sinfo->{'opts'}->{'path'};
+			}
+
+		# Fetch real version from the script-specific function
+		my $rfunc = $script->{'realversion_func'};
+		if (defined(&$rfunc) && !$sinfo->{'version'}) {
+			my $realver = &$rfunc($d, $sinfo->{'opts'}, $sinfo);
+			if ($realver) {
+				$sinfo->{'version'} = $realver;
+				}
+			}
+
+		$sinfo->{'already'} = $already{$sinfo->{'opts'}->{'dir'}};
+		push(@rv, $sinfo);
+		}
+	}
+return @rv;
 }
 
 1;

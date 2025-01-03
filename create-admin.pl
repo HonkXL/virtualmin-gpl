@@ -46,6 +46,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "create-admin.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 
 # Parse command-line args
@@ -161,13 +162,13 @@ print "Creates a new extra administrator associated with some virtual server.\n"
 print "\n";
 print "virtualmin create-admin --domain domain.name\n";
 print "                        --name login\n";
-print "                        [--pass password | --passfile password-file]\n";
-print "                        [--desc description]\n";
-print "                        [--email user\@domain]\n";
-print "                        [--create] [--rename]\n";
-print "                        [--features] [--modules]\n";
-print "                        [--edit capability]*\n";
-print "                        [--allowed-domain domain]*\n";
+print "                       [--pass password | --passfile password-file]\n";
+print "                       [--desc description]\n";
+print "                       [--email user\@domain]\n";
+print "                       [--create] [--rename]\n";
+print "                       [--features] [--modules]\n";
+print "                       [--edit capability]*\n";
+print "                       [--allowed-domain domain]*\n";
 exit(1);
 }
 

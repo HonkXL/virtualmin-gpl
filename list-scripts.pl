@@ -2,7 +2,7 @@
 
 =head1 list-scripts.pl
 
-Display script installed into some virtual server
+Display script (web app) installed into some virtual server
 
 The virtual servers to display scripts for can be specified with the 
 C<--domain> parameter, which must be followed by a domain name and can appear
@@ -12,7 +12,7 @@ Virtualmin administrator.
 
 The program displays a table of all scripts
 currently installed, including their install IDs and version numbers. To get
-more details in a program-friendly format, use the C<--multiline> parameter.
+more details in a parsable format, use the C<--multiline> parameter.
 To just get a list of script names, use C<--name-only>.
 
 To limit the output to just scripts of some type, use the C<--type> flag
@@ -37,6 +37,7 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -46,22 +47,10 @@ while(@ARGV > 0) {
 		push(@users, shift(@ARGV));
 		}
 	elsif ($a eq "--type") {
-		$scripttype = shift(@ARGV);
+		$scripttype = lc(shift(@ARGV));
 		}
 	elsif ($a eq "--all-domains") {
 		$all = 1;
-		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--id-only") {
-		$idonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -86,7 +75,7 @@ foreach my $d (@doms) {
 		@scripts = grep { $_->{'name'} eq $scripttype } @scripts;
 		}
 
-	if ($multi) {
+	if ($multiline) {
 		# Show each script on a separate line
 		foreach $sinfo (@scripts) {
 			$script = &get_script($sinfo->{'name'});
@@ -97,6 +86,10 @@ foreach my $d (@doms) {
 			print "    Description: ".($script->{'desc'} ||
 			                          "$sinfo->{'name'} ($text{'scripts_discontinued'})")."\n";
 			print "    Version: $sinfo->{'version'}\n";
+			if ($script->{'release'}) {
+				print "    Installer version: ".
+				      "$script->{'release'}\n";
+				}
 			print "    Installed: ",&make_date($sinfo->{'time'}),"\n";
 			print "    Manually deleted: ",
 			      ($script->{'deleted'} ? "Yes" : "No"),"\n";
@@ -141,25 +134,27 @@ foreach my $d (@doms) {
 		}
 	else {
 		# Show all on one line
-		if (@doms > 1) {
-			print "Scripts in domain $d->{'dom'} :\n"; 
-			}
-		$fmt = "%-16.16s %-25.25s %-10.10s %-25.25s\n";
-		printf $fmt, "ID", "Description", "Version", "URL path";
-		printf $fmt, ("-" x 16), ("-" x 25), ("-" x 10), ("-" x 25);
-		foreach $sinfo (@scripts) {
-			$script = &get_script($sinfo->{'name'});
-			$path = $sinfo->{'url'};
-			$path =~ s/^(http|https):\/\/([^\/]+)//;
-			$path ||= $sinfo->{'path'};
-			printf $fmt, $sinfo->{'id'},
-				     ($script->{'desc'} ||
-				     "$sinfo->{'name'} ($text{'scripts_discontinued'})"),
-				     $sinfo->{'version'},
-				     $path;
-			}
-		if (@doms > 1) {
-			print "\n";
+		if (@scripts) {
+			if (@doms > 1) {
+				print "Scripts in domain $d->{'dom'} :\n"; 
+				}
+			$fmt = "%-18.18s %-24.24s %-10.10s %-25.25s\n";
+			printf $fmt, "ID", "Description", "Version", "URL path";
+			printf $fmt, ("-" x 18), ("-" x 24), ("-" x 10), ("-" x 25);
+			foreach $sinfo (@scripts) {
+				$script = &get_script($sinfo->{'name'});
+				$path = $sinfo->{'url'};
+				$path =~ s/^(http|https):\/\/([^\/]+)//;
+				$path ||= $sinfo->{'path'};
+				printf $fmt, $sinfo->{'id'},
+					($script->{'desc'} ||
+					"$sinfo->{'name'} ($text{'scripts_discontinued'})"),
+					$sinfo->{'version'},
+					$path;
+				}
+			if (@doms > 1) {
+				print "\n";
+				}
 			}
 		}
 	}
@@ -170,7 +165,7 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists the scripts installed on one or more virtual servers.\n";
 print "\n";
 print "virtualmin list-scripts --all-domains | --domain name | --user username\n";
-print "                       [--multiline | --name-only]\n";
+print "                       [--multiline | --json | --xml | --name-only]\n";
 print "                       [--type script]\n";
 exit(1);
 }

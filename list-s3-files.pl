@@ -34,15 +34,10 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--bucket") {
+	if ($a eq "--bucket") {
 		$bucket = shift(@ARGV);
 		}
 	elsif ($a eq "--access-key") {
@@ -51,19 +46,13 @@ while(@ARGV > 0) {
 	elsif ($a eq "--secret-key") {
 		$skey = shift(@ARGV);
 		}
-	elsif ($a eq "--help") {
-		&usage();
-		}
 	else {
 		&usage("Unknown parameter $a");
 		}
 	}
-$akey ||= $config{'s3_akey'};
-$skey ||= $config{'s3_skey'};
-if (!&can_use_aws_s3_creds()) {
-	$akey || &usage("Missing --access-key parameter");
-	$skey || &usage("Missing --secret-key parameter");
-	}
+($akey, $skey, $iam) = &lookup_s3_credentials($akey, $skey);
+$iam || $akey || &usage("Missing --access-key parameter");
+$iam || $skey || &usage("Missing --secret-key parameter");
 $bucket || &usage("Missing --bucket parameter");
 
 # List the directory
@@ -73,7 +62,7 @@ if (!ref($files)) {
 	exit(1);
 	}
 
-if ($multi) {
+if ($multiline) {
 	# Full details
 	foreach $f (@$files) {
 		print $f->{'Key'},"\n";
@@ -111,7 +100,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists files in one S3 bucket.\n";
 print "\n";
-print "virtualmin list-s3-files [--multiline | --name-only]\n";
+print "virtualmin list-s3-files [--multiline | --json | --xml | --name-only]\n";
 print "                         [--access-key key]\n";
 print "                         [--secret-key key]\n";
 print "                         --bucket name\n";

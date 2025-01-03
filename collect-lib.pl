@@ -172,6 +172,12 @@ foreach my $f ("virtualmin", @features) {
 			}
 		}
 	}
+foreach my $f (@plugins) {
+	if (&plugin_defined($f, "feature_sysinfo")) {
+		my @rs = &plugin_call($f, "feature_sysinfo");
+		push(@progs, @rs) if (@rs);
+		}
+	}
 $info->{'progs'} = \@progs;
 
 # Classify Virtualmin-specific packages
@@ -377,18 +383,20 @@ if (-r $procmail_log_file && $hasprocmail) {
 	}
 
 # Read mail server log to count messages since the last run
+local $lastinfo = &read_file_contents("$historic_info_dir/maillogpos");
+local ($lastpos, $lastinode, $lasttime);
+if (defined($lastinfo)) {
+	($lastpos, $lastinode, $lasttime) = split(/\s+/, $lastinfo);
+	}
 local $mail_log_file = $config{'bw_maillog'};
-$mail_log_file = &get_mail_log() if ($mail_log_file eq "auto");
-if ($mail_log_file) {
+$mail_log_file = &get_mail_log($lasttime)
+	if ($mail_log_file eq "auto");
+
+if ($mail_log_file && $config{'mail'}) {
 	# Get last seek position
 	local ($spamcount, $mailcount) = (0, 0);
-	local $lastinfo = &read_file_contents("$historic_info_dir/maillogpos");
 	local @st = stat($mail_log_file);
-	local ($lastpos, $lastinode, $lasttime);
-	if (defined($lastinfo)) {
-		($lastpos, $lastinode, $lasttime) = split(/\s+/, $lastinfo);
-		}
-	else {
+	if (!defined($lastinfo)) {
 		# For the first run, start at the end of the file
 		$lastpos = $st[7];
 		$lastinode = $st[1];
@@ -398,14 +406,28 @@ if ($mail_log_file) {
 	# Read the log, finding number of messages recived, bounced and
 	# greylisted
 	local ($recvcount, $bouncecount, $greycount, $ratecount) = (0, 0, 0);
-	open(MAILLOG, "<".$mail_log_file);
-	if ($st[1] == $lastinode && $lastpos) {
-		seek(MAILLOG, $lastpos, 0);
+	open(MAILLOG, $mail_log_file);
+	if ($mail_log_file !~ /\|$/) {
+		# Seek forwards in the file, unless rotated
+		if ($st[1] == $lastinode && $lastpos && $lastpos <= $st[7]) {
+			seek(MAILLOG, $lastpos, 0);
+			}
+		else {
+			# Rotated, assume starting at the beginning
+			$lastpos = 0;
+			}
 		}
-	else {
-		$lastpos = 0;
-		}
+	my $now = time();
+	my @tm = localtime($now);
+	my $finaltime = $lasttime;
 	while(<MAILLOG>) {
+		# Extract log entry time
+		/^(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+/ || next;
+		my $ltime = &log_time_to_unix_time($now, $tm[5], $1, $2, $3, $4, $5);
+		next if (!$ltime);
+		next if ($lasttime && $ltime <= $lasttime);
+		$finaltime = $ltime;
+
 		if (/^(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\S+)\s+(\S+):\s+(\S+):\s+from=(\S+),\s+size=(\d+)/) {
 			# Sendmail or postfix from= line for a new message
 			$recvcount++;
@@ -462,7 +484,8 @@ if ($mail_log_file) {
 
 	# Save last seek
 	&open_tempfile(MAILPOS, ">$historic_info_dir/maillogpos");
-	&print_tempfile(MAILPOS, $lastpos," ",$st[1]," ",$now."\n");
+	&print_tempfile(MAILPOS, $lastpos," ",($st[1] || 0)," ",
+				 ($finaltime || $now)."\n");
 	&close_tempfile(MAILPOS);
 	}
 

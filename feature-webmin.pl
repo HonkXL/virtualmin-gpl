@@ -255,20 +255,16 @@ return 1;
 # Send a signal to Webmin to re-read its config
 sub restart_webmin
 {
-my $restarted = &getvar('webmin-restarted', undef, 1);
-&$first_print($text{'setup_webminpid2'})
-	if (!$restarted);
+&$first_print($text{'setup_webminpid2'});
 eval {
 	local $main::error_must_die = 1;
 	&reload_miniserv();
 	};
 if ($@) {
-	&$second_print(&text('setup_webmindown2', "$@"))
-		if (!$restarted);
+	&$second_print(&text('setup_webmindown2', "$@"));
 	}
 else {
-	&$second_print($text{'setup_done'})
-		if (!$restarted);
+	&$second_print($text{'setup_done'});
 	}
 }
 
@@ -276,7 +272,6 @@ else {
 # Send a signal to Webmin to make it fully restart and re-read its config
 sub restart_webmin_fully
 {
-&setvar('webmin-restarted',	1);
 &$first_print($text{'setup_webminpid'});
 eval {
 	local $main::error_must_die = 1;
@@ -782,18 +777,10 @@ if ($extramods{'mailboxes'} && @maildoms) {
 		       'from' => join(" ", map { $_->{'dom'} } @maildoms),
 		       'canattach' => 0,
 		       'candetach' => 0,
-		       'dir' => &mail_domain_base($d) );
-	if (!&mail_system_needs_group()) {
-		# For vpopmail, mailboxes are identified by domain
-		$acl{'mmode'} = 6;
-		$acl{'musers'} = ".*\@(".
-				 join("|", map { $_->{'dom'} } @maildoms).")";
-		}
-	else {
-		# By server GID
-		$acl{'mmode'} = 5;
-		$acl{'musers'} = $d->{'gid'};
-		}
+		       'dir' => &mail_domain_base($d),
+		       'mmode' => 5,
+		       'musers' => $d->{'gid'},
+		     );
 	&save_module_acl_logged(\%acl, $wuser->{'name'}, "mailboxes")
 		if (!$hasmods{'mailboxes'});
 	push(@mods, "mailboxes");
@@ -802,7 +789,7 @@ else {
 	@mods = grep { $_ ne "mailboxes" } @mods;
 	}
 
-if ($extramods{'syslog'} && $d->{'webmin'}) {
+if ($extramods{'logviewer'} && $d->{'webmin'}) {
 	# Can view log files for Apache and ProFTPd
 	local @extras;
 	local %done;
@@ -820,7 +807,7 @@ if ($extramods{'syslog'} && $d->{'webmin'}) {
 			}
 		# Add FTP logs
 		if ($sd->{'ftp'}) {
-			local $flog = &get_proftpd_log($sd->{'ip'});
+			local $flog = &get_proftpd_log($sd);
 			if ($flog && !$done{$flog}++) {
 				push(@extras, $flog." ".&text('webmin_flog',
 							     $sd->{'dom'}))
@@ -840,17 +827,18 @@ if ($extramods{'syslog'} && $d->{'webmin'}) {
 			       'noedit' => 1,
 			       'syslog' => 0,
 			       'others' => 0 );
-		&save_module_acl_logged(\%acl, $wuser->{'name'}, "syslog")
-			if (!$hasmods{'syslog'});
-		push(@mods, "syslog");
+		&save_module_acl_logged(\%acl, $wuser->{'name'}, "logviewer")
+			if (!$hasmods{'logviewer'});
+		push(@mods, "logviewer");
+		@mods = grep { $_ ne "syslog" } @mods;
 		}
 	else {
 		# No logs found!
-		@mods = grep { $_ ne "syslog" } @mods;
+		@mods = grep { $_ ne "syslog" && $_ ne "logviewer" } @mods;
 		}
 	}
 else {
-	@mods = grep { $_ ne "syslog" } @mods;
+	@mods = grep { $_ ne "syslog" && $_ ne "logviewer" } @mods;
 	}
 
 local @pconfs;
@@ -1148,7 +1136,7 @@ sub backup_webmin
 {
 local ($d, $file, $opts, $homefmt, $increment, $asd, $allopts, $key) = @_;
 local $compression = $allopts->{'dir'}->{'compression'};
-local $destfile = $file.".".&compression_to_suffix($compression);
+local $destfile = $file.".".&compression_to_suffix_inner($compression);
 &$first_print($text{'backup_webmin'});
 &require_acl();
 
@@ -1270,9 +1258,9 @@ else {
 return $rv;
 }
 
-# links_webmin(&domain)
+# links_always_webmin(&domain)
 # Returns a link to the Webmin Actions Log module
-sub links_webmin
+sub links_always_webmin
 {
 my ($d) = @_;
 my %miniserv;

@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'records_derr'});
 $d = &get_domain($in{'dom'});
 $d || &error($text{'edit_egone'});
@@ -37,6 +38,10 @@ if ($in{'delete'}) {
 elsif ($in{'manual'}) {
 	# Redirect to manual DNS form
 	&redirect("manual_records.cgi?dom=$in{'dom'}&type=$in{'type'}&show=$in{'show'}");
+	}
+elsif ($in{'reset'}) {
+	# Redirect to reset form
+	&redirect("reset_features.cgi?server=$in{'dom'}&features=dns");
 	}
 else {
 	# Redirect to add form for selected type

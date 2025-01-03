@@ -95,6 +95,9 @@ return &get_dkim_type() eq 'ubuntu' ? 'opendkim' :
 sub check_dkim
 {
 &foreign_require("init");
+if (!$config{'mail'}) {
+	return $text{'dkim_email'};
+	}
 if (!&get_dkim_type()) {
 	# Not supported on this OS
 	return $text{'dkim_eos'};
@@ -108,12 +111,12 @@ return &text('dkim_einit', "<tt>$init</tt>")
 
 # Check mail server
 &require_mail();
-if ($config{'mail_system'} > 1) {
-	return $text{'dkim_emailsystem'};
-	}
-elsif ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	-r $sendmail::config{'sendmail_mc'} ||
 		return $text{'dkim_esendmailmc'};
+	}
+elsif ($mail_system != 0) {
+	return $text{'dkim_emailsystem'};
 	}
 return undef;
 }
@@ -152,7 +155,6 @@ return scalar(@inst) || !&check_dkim();
 # enabled - Set to 1 if postfix is setup to use DKIM
 # selector - Record within the domain for the key
 # extra - Additional domains to enable for
-# exclude - Domains for forcibly disable for
 # keyfile - Private key file
 sub get_dkim_config
 {
@@ -288,7 +290,7 @@ elsif (&get_dkim_type() eq 'centos') {
 
 # Check mail server
 &require_mail();
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Postfix config
 	my $wantmilter = $rv{'port'} ? "inet:(localhost|127\.0\.0\.1):$rv{'port'}" :
 			 $rv{'socket'} ? "local:$rv{'socket'}" : "";
@@ -297,7 +299,7 @@ if ($config{'mail_system'} == 0) {
 		$rv{'enabled'} = 0;
 		}
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Sendmail config
 	my $wantmilter = $rv{'port'} ? "inet:$rv{'port'}\@(localhost|127\.0\.0\.1)" :
 			 $rv{'socket'} ? "local:$rv{'socket'}" : "";
@@ -311,6 +313,7 @@ elsif ($config{'mail_system'} == 1) {
 
 # Add extra domains
 $rv{'extra'} = [ split(/\s+/, $config{'dkim_extra'}) ];
+$rv{'alldns'} = $config{'dkim_alldns'} || 0;
 $rv{'exclude'} = [ split(/\s+/, $config{'dkim_exclude'}) ];
 
 # Work out key size
@@ -393,8 +396,8 @@ my ($dkim, $newkey, $size) = @_;
 
 # Find domains that we can enable DKIM for (those with mail and DNS)
 &$first_print($text{'dkim_domains'});
-my @alldoms = grep { &indexof($_->{'dom'}, @{$dkim->{'exclude'}}) < 0 } &list_domains();
-my @doms = grep { $_->{'dns'} && $_->{'mail'} } @alldoms;
+my @alldoms = &list_domains();
+my @doms = grep { &has_dkim_domain($_, $dkim) } @alldoms;
 if (@doms && @{$dkim->{'extra'}}) {
 	&$second_print(&text('dkim_founddomains3', scalar(@doms),
 			     scalar(@{$dkim->{'extra'}})));
@@ -521,7 +524,7 @@ if ($dkim_config) {
 		if (!$conf->{'Socket'} ||
 		    $conf->{'Socket'} =~ /^inet:port/ ||
 		    $conf->{'Socket'} =~ /^local:/ &&
-		      $config{'mail_system'} == 0) {
+		      $mail_system == 0) {
 		        # Set socket if not set, or if a local file
 		        # and Postfix is in use
 		        &save_open_dkim_config($dkim_config,
@@ -558,6 +561,7 @@ if ($dkim_config) {
 	# Save list of extra domains
 	$config{'dkim_extra'} = join(" ", @{$dkim->{'extra'}});
 	$config{'dkim_exclude'} = join(" ", @{$dkim->{'exclude'}});
+	$config{'dkim_alldns'} = $dkim->{'alldns'};
 	&save_module_config();
 	}
 
@@ -568,7 +572,7 @@ if (&get_dkim_type() eq 'debian' || &get_dkim_type() eq 'ubuntu') {
 	my %def;
 	&read_env_file($dkim_defaults, \%def);
 	if (!$def{'SOCKET'} ||
-	    $def{'SOCKET'} =~ /^local:/ && $config{'mail_system'} == 0) {
+	    $def{'SOCKET'} =~ /^local:/ && $mail_system == 0) {
 		# Set socket in defaults file if missing, or if a local file
 		# and Postfix is in use
 		$def{'SOCKET'} = "inet:8891\@127.0.0.1";
@@ -624,7 +628,7 @@ elsif (&get_dkim_type() eq 'redhat') {
 	&lock_file($dkim_defaults);
 	my %def;
 	&read_env_file($dkim_defaults, \%def);
-	if ($config{'mail_system'} == 0 && $dkim->{'socket'}) {
+	if ($mail_system == 0 && $dkim->{'socket'}) {
 		# Force use of tcp socket in defaults file for postfix
 		$def{'SOCKET'} = "inet:8891\@127.0.0.1";
 		$dkim->{'port'} = 8891;
@@ -644,15 +648,13 @@ elsif (&get_dkim_type() eq 'redhat') {
 &$second_print($text{'setup_done'});
 
 # Add public key to DNS zones for all domains that have DNS and email enabled,
-# or are on the extra domains list
-my %extra = map { $_, 1 } @{$dkim->{'extra'}};
-my @dnsdoms = grep { $_->{'dns'} &&
-		     ($_->{'mail'} || $extra{$_->{'dom'}}) } @alldoms;
+my @dnsdoms = grep { &has_dkim_domain($_, $dkim) } @alldoms;
 &add_dkim_dns_records(\@dnsdoms, $dkim);
 
-# Remove from excluded domains
-my @exdoms = grep { &indexof($_->{'dom'}, @{$dkim->{'exclude'}}) >= 0 }
-		  grep { $_->{'dns'} } &list_domains();
+# Remove from domains that didn't get the DNS records added
+my %dnsdoms = map { $_->{'id'}, $_ } @dnsdoms;
+my @exdoms = grep { !$dnsdoms{$_->{'id'}} && $_->{'dns'} &&
+		    !&copy_alias_records($_) } &list_domains();
 if (@exdoms) {
 	&remove_dkim_dns_records(\@exdoms, $dkim);
 	}
@@ -676,7 +678,7 @@ if (!$ok) {
 
 &$first_print($text{'dkim_mailserver'});
 &require_mail();
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Configure Postfix to use filter
 	my $wantmilter = $dkim->{'port'} ? "inet:(localhost|127\.0\.0\.1):$dkim->{'port'}"
 					 : "local:$dkim->{'socket'}";
@@ -698,7 +700,7 @@ if ($config{'mail_system'} == 0) {
 	# Apply Postfix config
 	&postfix::reload_postfix();
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Configure Sendmail to use filter
 	my $wantmilter = $dkim->{'port'} ? "inet:$dkim->{'port'}\@(localhost|127\.0\.0\.1)"
 					 : "local:$dkim->{'socket'}";
@@ -802,12 +804,12 @@ my ($dkim) = @_;
 &foreign_require("init");
 
 # Remove from DNS
-my @doms = grep { $_->{'dns'} && $_->{'mail'} } &list_domains();
+my @doms = grep { $_->{'dns'} && !&copy_alias_records($_) } &list_domains();
 &remove_dkim_dns_records(\@doms, $dkim);
 
 &$first_print($text{'dkim_unmailserver'});
 &require_mail();
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Configure Postfix to not use filter
 	my $oldmilter = $dkim->{'port'} ? "inet:(localhost|127\.0\.0\.1):$dkim->{'port'}"
 					: "local:$dkim->{'socket'}";
@@ -824,7 +826,7 @@ if ($config{'mail_system'} == 0) {
 	# Apply Postfix config
 	&postfix::reload_postfix();
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Configure Sendmail to not use filter
 	my $oldmilter = $dkim->{'port'} ? "inet:$dkim->{'port'}\@(localhost|127\.0\.0\.1)"
 					: "local:$dkim->{'socket'}";
@@ -882,6 +884,43 @@ my $init = &get_dkim_init_name();
 return 1;
 }
 
+# can_dkim_domain(&domain, &dkim)
+# Returns 1 if a domain should have DKIM enabled by default
+sub can_dkim_domain
+{
+my ($d, $dkim) = @_;
+if (!$d->{'dns'}) {
+	return 0;
+	}
+elsif (&copy_alias_records($d)) {
+	return 0;
+	}
+elsif ($dkim->{'alldns'} == 1) {
+	# Can be enabled even without email
+	return 1;
+	}
+elsif ($dkim->{'alldns'} == 2) {
+	# Cannot be enabled even with email
+	return 0;
+	}
+else {
+	# Depends on email feature
+	return $d->{'mail'} ? 1 : 0;
+	}
+}
+
+# has_dkim_domain(&domain, &dkim)
+# Returns 1 if a domain must have DKIM enabled
+sub has_dkim_domain
+{
+my ($d, $dkim) = @_;
+return 0 if (!$d->{'dns'});
+return 0 if (&copy_alias_records($d));
+return 0 if ($d->{'dkim_enabled'} eq '0');
+return 1 if ($d->{'dkim_enabled'} eq '1');
+return &can_dkim_domain($d, $dkim);
+}
+
 # update_dkim_domains(&domain, action, [no-dns])
 # Updates the list of domains to sign mail for, if needed
 sub update_dkim_domains
@@ -893,7 +932,7 @@ my $dkim = &get_dkim_config();
 return if (!$dkim || !$dkim->{'enabled'});
 
 # Enable DKIM for all domains with mail
-my @doms = grep { $_->{'mail'} && $_->{'dns'} } &list_domains();
+my @doms = grep { &has_dkim_domain($_, $dkim) } &list_domains();
 if (($action eq 'setup' || $action eq 'modify')) {
 	push(@doms, $d);
 	}
@@ -902,12 +941,11 @@ elsif ($action eq 'delete') {
 	}
 my %done;
 @doms = grep { !$done{$_->{'id'}}++ } @doms;
-@doms = grep { &indexof($_->{'dom'}, @{$dkim->{'exclude'}}) < 0 } @doms;
 &set_dkim_domains(\@doms, $dkim);
 &unlock_file(&get_dkim_config_file());
 
 # Add or remove DNS records
-if ($d->{'dns'} && !$nodns) {
+if ($d->{'dns'} && !&copy_alias_records($d) && !$nodns) {
 	if ($action eq 'setup' || $action eq 'modify') {
 		&add_dkim_dns_records([ $d ], $dkim);
 		}
@@ -1032,10 +1070,6 @@ my ($doms, $dkim) = @_;
 my $anychanged = 0;
 foreach my $d (@$doms) {
 	&$first_print(&text('dkim_dns', "<tt>$d->{'dom'}</tt>"));
-	if (&indexof($d->{'dom'}, @{$dkim->{'exclude'}}) >= 0) {
-		&$second_print($text{'dkim_ednsexclude'});
-		next;
-		}
 	&pre_records_change($d);
 	my ($recs, $file) = &get_domain_dns_records_and_file($d);
 	if (!$file) {
@@ -1339,8 +1373,15 @@ else {
 			}
 		$i++;
 		}
-	my $keyfile = $dkim_config;
-	$keyfile =~ s/\/([^\/]+)$/\/$d->{'id'}.dkim-key/;
+	my $keydir = $dkim_config;
+	$keydir =~ s/\/([^\/]+)$//;
+	if ($keydir eq "/etc" && -d "/etc/dkimkeys" &&
+	    !-r $keydir."/".$d->{'id'}.".dkim-key") {
+		# Use /etc/dkimkeys if if exists and the key isn't
+		# already in /etc
+		$keydir = "/etc/dkimkeys";
+		}
+	my $keyfile = $keydir."/".$d->{'id'}.".dkim-key";
 	my $keyline = "$d->{'id'}\t$d->{'dom'}:$dkim->{'selector'}:$keyfile";
 	if ($kidx < 0 && $key) {
 		# Need to add
@@ -1366,7 +1407,7 @@ else {
 	}
 &$second_print($text{'setup_done'});
 
-if ($d->{'dns'}) {
+if ($d->{'dns'} && !&copy_alias_records($d)) {
 	&add_dkim_dns_records([ $d ], $dkim);
 	}
 

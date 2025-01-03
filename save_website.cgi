@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'phpmode_err'});
 $d = &get_domain($in{'dom'});
 &can_edit_domain($d) || &error($text{'edit_ecannot'});
@@ -35,6 +36,26 @@ if (defined($in{'ssi'}) && $in{'ssi'} == 1) {
 &obtain_lock_web($d);
 &obtain_lock_dns($d);
 &obtain_lock_logrotate($d) if ($d->{'logrotate'});
+
+# Save CGI execution mode
+if (defined($in{'cgimode'}) && &get_domain_cgi_mode($d) ne $in{'cgimode'} &&
+    $can) {
+	if ($in{'cgimode'}) {
+		&$first_print(&text('phpmode_cmoding',
+				$text{'phpmode_cgimode'.$in{'cgimode'}}));
+		}
+	else {
+		&$first_print($text{'phpmode_cmodingnone'});
+		}
+	my $err = &save_domain_cgi_mode($d, $in{'cgimode'});
+	if ($err) {
+		&$second_print(&text('setup_efcgiwrap', $err));
+		}
+	else {
+		&$second_print($text{'setup_done'});
+		}
+	$anything++;
+	}
 
 # Save Ruby execution mode
 if (defined($in{'rubymode'}) && &get_domain_ruby_mode($d) ne $in{'rubymode'} &&
@@ -209,6 +230,28 @@ if (&domain_has_ssl($d) && &can_edit_redirect() && &has_web_redirects($d)) {
 		}
 	}
 
+# Update www redirect
+if (!$d->{'alias'} && &can_edit_redirect() &&
+    &has_web_redirects($d) && &has_web_host_redirects($d)) {
+	my @r = grep { &is_www_redirect($d, $_) } &list_redirects($d);
+	my $oldredir = @r ? &is_www_redirect($d, $r[0]) : undef;
+	my $err;
+	if ($in{'wwwredir'} != $oldredir) {
+		&$first_print(&text('phpmode_wwwredirdo'.$in{'wwwredir'},
+				    $d->{'dom'}));
+		foreach my $r (@r) {
+                        $err ||= &delete_redirect($d, $r);
+                        last if ($err);
+                        }
+		foreach my $r (&get_redirect_by_mode($d, $in{'wwwredir'})) {
+			$err ||= &create_redirect($d, $r);
+			last if ($err);
+			}
+		&$second_print($err ? $err : $text{'setup_done'});
+		$anything++;
+		}
+	}
+
 # Change HTML directory
 if (defined($in{'htmldir'}) &&
     !$d->{'alias'} && $d->{'public_html_dir'} !~ /\.\./ &&
@@ -221,7 +264,7 @@ if (defined($in{'htmldir'}) &&
 	}
 
 if (!$anything) {
-	&$first_print($text{'phpmode_nothing'});
+	&$first_print($text{'phpmode_nothing2'});
 	&$second_print($text{'phpmode_nothing_skip'});
 	}
 

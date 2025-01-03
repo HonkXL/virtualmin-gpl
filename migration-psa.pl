@@ -47,13 +47,13 @@ return (undef, $dom, $user, $pass);
 }
 
 # migration_psa_migrate(file, domain, username, create-webmin, template-id,
-#			&ipinfo, pass, [&parent], [prefix], [email])
+#			&ipinfo, pass, [&parent], [prefix], [email], [&plan])
 # Actually extract the given Plesk backup, and return the list of domains
 # created.
 sub migration_psa_migrate
 {
 local ($file, $dom, $user, $webmin, $template, $ipinfo, $pass, $parent,
-       $prefix, $email) = @_;
+       $prefix, $email, $plan) = @_;
 
 # Check for prefix clash
 $prefix ||= &compute_prefix($dom, undef, $parent, 1);
@@ -179,7 +179,8 @@ if (!$parent && &has_home_quotas()) {
 # Create the virtual server object
 local %dom;
 $prefix ||= &compute_prefix($dom, $group, $parent, 1);
-local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
+$plan = $parent ? &get_plan($parent->{'plan'}) :
+        $plan ? $plan : &get_default_plan();
 %dom = ( 'id', &domain_id(),
 	 'dom', $dom,
          'user', $duser,
@@ -190,7 +191,7 @@ local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
          'ugid', $ugid,
          'owner', "Migrated Plesk server $dom",
          'email', $email ? $email : $parent ? $parent->{'email'} : undef,
-	 'dns_ip', $ipinfo->{'virt'} || $config{'all_namevirtual'} ? undef :
+	 'dns_ip', $ipinfo->{'virt'} ? undef :
 		   &get_dns_ip($parent ? $parent->{'id'} : undef),
 	 $parent ? ( 'pass', $parent->{'pass'} )
 		 : ( 'pass', $pass ),
@@ -407,7 +408,7 @@ foreach my $mailuser (@mailusers) {
 	if ($mailuser->{'services'}->{'postbox'} eq 'true') {
 		# Add delivery to user's mailbox
 		local $escuser = $muinfo->{'user'};
-		if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
+		if ($mail_system == 0 && $escuser =~ /\@/) {
 			$escuser = &escape_replace_atsign_if_exists($escuser);
 			}
 		else {
@@ -417,7 +418,6 @@ foreach my $mailuser (@mailusers) {
 		}
 	if (&has_home_quotas()) {
 		local $q = $mailuser->{'login'}->{'quota'};
-		$muinfo->{'qquota'} = $q;
 		$muinfo->{'quota'} = $q / &quota_bsize("home");
 		$muinfo->{'mquota'} = $q / &quota_bsize("home");
 		}
@@ -660,6 +660,7 @@ foreach my $sdom (keys %$subdoms) {
 			'email', $dom{'email'},
 			'name', 1,
 			'ip', $dom{'ip'},
+			'dns_ip', $dom{'dns_ip'},
 			'virt', 0,
 			'source', $dom{'source'},
 			'parent', $dom{'id'},

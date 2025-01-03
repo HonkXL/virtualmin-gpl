@@ -1,5 +1,6 @@
 
 use feature 'state';
+use Fcntl ':mode';
 
 # Functions for accessing files and running commands as a domain owner
 
@@ -16,29 +17,35 @@ my @uinfo = getpwnam($d->{'user'});
 return scalar(@uinfo) ? 1 : 0;
 }
 
-# switch_to_domain_user(&domain)
-# Changes the current UID and GID to that of the domain's unix user
+# switch_to_domain_user(&domain|&user)
+# Changes the current UID and GID to that of the domain's unix user, or
+# a mailbox user
 sub switch_to_domain_user
 {
-my ($d) = @_;
-if ($d->{'parent'}) {
-	$d = &get_domain($d->{'parent'});
-	}
-return 0 if (!$d->{'unix'});	# Doesn't have a user
-if (defined(&switch_to_unix_user)) {
-	# Use new Webmin function that takes care of platform issues
+my ($d_or_user) = @_;
+if ($d_or_user->{'id'}) {
+	# Virtualmin domain given
+	my $d = $d_or_user;
+	if ($d->{'parent'}) {
+		$d = &get_domain($d->{'parent'});
+		}
+	return 0 if (!$d->{'unix'});	# Doesn't have a user
 	&switch_to_unix_user([ $d->{'user'}, undef, $d->{'uid'},
 			       $d->{'ugid'} ]);
+	$ENV{'USER'} = $ENV{'LOGNAME'} = $d->{'user'};
+	$ENV{'HOME'} = $d->{'home'};
+	return 1;
 	}
 else {
-	# DIY
-	($(, $)) = ( $d->{'ugid'},
-		     "$d->{'ugid'} ".join(" ", $d->{'ugid'},
-					 &other_groups($d->{'user'})) );
-	($<, $>) = ( $d->{'uid'}, $d->{'uid'} );
+	# Mailbox user given
+	my $user = $d_or_user;
+	return 0 if (!$user->{'uid'});
+	&switch_to_unix_user([ $user->{'user'}, undef, $user->{'uid'},
+			       $user->{'gid'} ]);
+	$ENV{'USER'} = $ENV{'LOGNAME'} = $user->{'user'};
+	$ENV{'HOME'} = $user->{'home'};
+	return 1;
 	}
-$ENV{'USER'} = $ENV{'LOGNAME'} = $d->{'user'};
-$ENV{'HOME'} = $d->{'home'};
 }
 
 # run_as_domain_user(&domain, command, background, [never-su])
@@ -119,7 +126,7 @@ return $ex ? 0 : 1;
 sub unlink_file_as_domain_user
 {
 my ($d, @files) = @_;
-return 1 if (&is_readonly_mode());
+return (wantarray ? (1) : 1) if (&is_readonly_mode());
 while(@files) {
 	my @del;
 	if (@files > 100) {
@@ -132,9 +139,9 @@ while(@files) {
 		}
 	local $cmd = "rm -rf ".join(" ", map { quotemeta($_) } @del)." 2>&1";
 	local ($out, $ex) = &run_as_domain_user($d, $cmd);
-	return 0 if ($ex);
+	return wantarray ? ($ex ? 0 : 1, $out) : $ex ? 0 : 1;
 	}
-return 1;
+return wantarray ? (1) : 1;
 }
 
 # unlink_logged_as_domain_user(&domain, file, ...)
@@ -522,96 +529,41 @@ else {
 	}
 }
 
-# control_path_permissions(action, dir/file, [under_dir])
-# Can set and get given file permissions for each path parts
-#
-# Example:
-#      call: control_path_permissions('set', '/root/dir1/dir2/dir3/file1.txt', '/root/dir1');
-#    stores: ['/root/dir1/dir2/dir3/file1.txt'  =>
-#        {
-#          '/root/dir1/dir2/dir3/file1.txt'   => oct # 644
-#          '/root/dir1/dir2/dir3'             => oct # 755
-#          '/root/dir1/dir2'                  => oct # 755
-#          '/root/dir1'                       => oct # 755
-#        }]
-sub control_path_permissions
+# remove_write_permissions_for_group(dir, [&excludes])
+# Removes write permissions for group from all files and directories under
+# given directory, except those that match excludes given in array reference
+sub remove_write_permissions_for_group
 {
-my ($action, $path, $under) = @_;
-state %paths;
-
-# Store and fix initial path
-my $ipath = $path;
-$ipath =~ s/[\/]+$//g;
-
-# Return existing
-if ($action eq 'get') {
-    return $paths{$ipath};
-    }
-elsif ($action eq 'set') {
-    # Controls which path parts are affected when called,
-    # e.g. passing /home/user/public_html/script will not
-    # consider anything below given directory
-    my $under_dir =
-         !ref($under) && -d $under ? $under :
-          ref($under) ? $under->{'home'} || "/" : "/";
-
-    # Sanity check for passed path to
-    # make sure that a directory ends
-    # always with trailing slash
-    if (-d $path && $path !~ /\/$/) {
-        $path .= "/";
-    }
-
-    my $xpath = $path;
-    my %cpaths;
-
-    # In case initial param refers to a file, always add it
-    # manually, as next iteration only works on directories
-    $cpaths{$path} = sprintf("%04o", (stat($path))[2] & 07777)
-      if (!-d $path && -r $path);
-
-    # Build a hash storing `file => currperms` records
-    map {
-        $xpath =~ s/(.*)(\/.*)/$1/;
-        if (&is_under_directory($under_dir, $xpath)) {
-            $cpaths{$xpath} = sprintf("%04o", (stat($xpath))[2] & 07777)
-                if ($xpath && -e $xpath);
-        }
-    } split('/', $path);
-
-    # Return a list of current permissions for passed path
-    $paths{$ipath} = \%cpaths;
-    return $paths{$ipath};
-    }
+my ($dir, $excludes) = @_;
+opendir(my $dh, $dir) || die("Cannot open directory $dir: $!");
+my @entries = readdir($dh);
+closedir($dh);
+ENTRY: 
+foreach my $entry (@entries) {
+	next if ($entry eq '.' || $entry eq '..');
+	my $path = "$dir/$entry";
+	if ($excludes) {
+		foreach my $exclude (@$excludes) {
+			next ENTRY if ($path =~ /\Q$exclude\E/);
+			}
+		}
+	my $mode = (stat($path))[2];
+	if ($mode & S_IWGRP) {
+		$mode &= ~S_IWGRP;
+		chmod($mode, $path) || warn("Failed to change permissions for $path: $!");
+		}
+	&remove_write_permissions_for_group($path, $excludes) if (-d $path);
+	}
 }
 
-# set_filepath_permissions_as_domain_user(&domain, file, [perms], [under])
-# Set given file and each path parts certain
-# permissions (to make file and path writable)
-sub set_filepath_permissions_as_domain_user
+# make_file_writable_as_domain_user(&domain, file)
+# Ensure that the domain owner can write to some file. Returns undef on
+# success or an error message on failure.
+sub make_file_writable_as_domain_user
 {
-my ($d, $file, $perms, $under) = @_;
-$perms ||= 0755;
-my $fileparts = &control_path_permissions('set', $file, $under || $d->{'home'});
-my @files = keys %{$fileparts};
-my $done_num = &set_permissions_as_domain_user($d, $perms, @files)
-    if (@files);
-return $done_num;
-}
-
-# restore_filepath_permissions_as_domain_user(&domain, file, [under])
-# Restores given file and each path parts initial permissions
-sub restore_filepath_permissions_as_domain_user
-{
-my ($d, $file, $under) = @_;
-my $fileparts = &control_path_permissions('get', $file, $under || $d->{'home'});
-my $done_num;
-foreach my $ifile (keys %{$fileparts}) {
-    if (&set_permissions_as_domain_user($d, oct($fileparts->{$ifile}), $ifile)) {
-        $done_num++;
-        }
-    }
-return $done_num;
+my ($d, $file) = @_;
+my ($out, $ex) = &run_as_domain_user($d, "chmod u+w ".quotemeta($file)." 2>&1");
+return $ex ? $out : undef;
 }
 
 # write_as_domain_user(&domain, &code)

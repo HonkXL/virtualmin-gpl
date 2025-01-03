@@ -28,24 +28,14 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--id-only") {
-		$idonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
-		}
-	else {
-		&usage("Unknown parameter $a");
-		}
+	&usage("Unknown parameter $a");
 	}
 
 @keys = &list_backup_keys();
-if ($multi) {
+if ($multiline) {
 	# Show full details
 	foreach $key (@keys) {
 		print $key->{'id'},"\n";
@@ -80,7 +70,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists all available backup encryption keys.\n";
 print "\n";
-print "virtualmin list-backup-keys [--multiline]\n";
+print "virtualmin list-backup-keys [--multiline | --json | --xml]\n";
 print "                            [--id-only]\n";
 exit(1);
 }

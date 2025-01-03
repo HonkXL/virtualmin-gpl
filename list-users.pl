@@ -51,6 +51,7 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -61,15 +62,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--all-domains") {
 		$all = 1;
-		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--email-only") {
-		$emailonly = 1;
 		}
 	elsif ($a eq "--include-owner") {
 		$owner = 0;
@@ -82,9 +74,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--simple-aliases") {
 		$simplemode = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -102,13 +91,13 @@ else {
 @ashells = grep { $_->{'mailbox'} } &list_available_shells();
 
 foreach $d (@doms) {
-	@users = &list_domain_users($d, $owner, 0, 0, 0);
+	@users = &list_domain_users($d, $owner, 0, 0, 0, 1);
 	if (%usernames) {
 		@users = grep { $usernames{$_->{'user'}} ||
 				$usernames{&remove_userdom($_->{'user'}, $d)} }
 			      @users;
 		}
-	if ($multi) {
+	if ($multiline) {
 		# Show attributes on separate lines
 		$home_bsize = &has_home_quotas() ? &quota_bsize("home") : 0;
 		$mail_bsize = &has_mail_quotas() ? &quota_bsize("mail") : 0;
@@ -116,20 +105,30 @@ foreach $d (@doms) {
 			print "$u->{'user'}\n";
 			print "    User: " . &remove_userdom($u->{'user'}, $d),"\n";
 			print "    Domain: $d->{'dom'}\n";
-			print "    Unix username: ",$u->{'user'},"\n";
+			print "    Unix username: ",$u->{'user'},"\n" if (!$u->{'extra'});
 			print "    Real name: ",$u->{'real'},"\n";
+			if (defined($u->{'firstname'})) {
+				print "    First name: ",$u->{'firstname'},"\n";
+				}
+			if (defined($u->{'surname'})) {
+				print "    Surname: ",$u->{'surname'},"\n";
+				}
 			if (defined($u->{'plainpass'})) {
 				print "    Password: ",$u->{'plainpass'},"\n";
 				}
 			$pass = $u->{'pass'};
 			$disable = ($pass =~ s/^\!// ? 1 : 0);
 			print "    Encrypted password: ",$pass,"\n";
+			my $existing_key = &get_domain_user_ssh_pubkey($d, $u);
+			if ($existing_key) {
+				print "    SSH public key: $existing_key\n";
+				}
 			print "    Disabled: ",($disable ? "Yes" : "No"),"\n";
 			print "    Home directory: ",$u->{'home'},"\n";
 			if ($u->{'domainowner'}) {
 				$u->{'shell'} = &get_domain_shell($d, $u);
 				}
-			($shell) = grep { $_->{'shell'} eq $u->{'shell'} }
+			($shell) = grep { $_->{'shell'} eq &get_user_shell($u) }
 					@ashells;
 			print "    FTP access: ",
 			    ($shell->{'id'} eq 'nologin' ? "No" : "Yes"),"\n";
@@ -137,17 +136,15 @@ foreach $d (@doms) {
 				print "    Login permissions: ",
 				      $shell->{'desc'},"\n";
 				}
-			print "    Shell: ",$u->{'shell'},"\n";
+			my $ushell = &get_user_shell($u);
+			$ushell .= " ($u->{'shell'})"
+				if ($ushell ne $u->{'shell'});
+			print "    Shell: $ushell","\n";
 			print "    User type: ",
 				($u->{'domainowner'} ? "Server owner" :
 				 $u->{'webowner'} ? "Website manager" :
 						    "Normal user"),"\n";
-			if ($u->{'mailquota'}) {
-				print "    Mail server quota: ",
-				      $u->{'qquota'},"\n";
-				}
-			if ($u->{'unix'} && &has_home_quotas() &&
-			    !$u->{'noquota'}) {
+			if (&has_home_quotas() && !$u->{'noquota'}) {
 				print "    Home quota: ",
 				      &quota_show($u->{'quota'}, "home"),"\n";
 				print "    Home quota used: ",
@@ -166,8 +163,7 @@ foreach $d (@doms) {
 					      ($u->{'quota_cache'} * $home_bsize),"\n";
 					}
 				}
-			if ($u->{'unix'} && &has_mail_quotas() &&
-			    !$u->{'noquota'}) {
+			if (&has_mail_quotas() && !$u->{'noquota'}) {
 				print "    Mail quota: ",
 				      &quota_show($u->{'mquota'}, "mail"),"\n";
 				print "    Mail quota used: ",
@@ -218,11 +214,14 @@ foreach $d (@doms) {
 				print "    Last logins: ",
 				    join(", ",
 				       map { $_." ".&make_date($ll->{$_}) }
-					   keys %$ll),"\n";
+					   sort { $a cmp $b } keys %$ll),"\n";
 				}
 			@dblist = ( );
 			foreach $db (@{$u->{'dbs'}}) {
 				push(@dblist, $db->{'name'}." ($db->{'type'})");
+				}
+			if ($u->{'extra'} && $u->{'type'} eq 'db') {
+				print "    Database username: ",$u->{'user'},"\n";
 				}
 			if (@dblist) {
 				print "    Databases: ",
@@ -307,7 +306,6 @@ foreach $d (@doms) {
 				    $u->{'email'} ? "Yes" : "No",
 				    $shell->{'id'} eq 'nologin' ? "No" : "Yes",
 				    scalar(@{$u->{'dbs'}}) || "No",
-				    $u->{'mailquota'} ? $u->{'qquota'} :
 				    &has_home_quotas() ? 
 					    &quota_show($u->{'quota'}, "home") :
 					    "NA";
@@ -324,7 +322,8 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists the mail, FTP and database users in one or more virtual servers.\n";
 print "\n";
 print "virtualmin list-users --all-domains | --domain name | --domain-user username\n";
-print "                     [--multiline | --name-only | --email-only]\n";
+print "                     [--multiline | --json | --xml]\n";
+print "                     [--name-only | --email-only]\n";
 print "                     [--include-owner]\n";
 print "                     [--user name]\n";
 print "                     [--simple-aliases]\n";

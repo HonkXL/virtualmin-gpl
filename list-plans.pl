@@ -8,7 +8,7 @@ The command simply outputs a list of available plans for use when
 creating new virtual servers, or for applying to existing servers.
 
 To just display the plan names, you can give the C<--name-only> parameter.
-Or to show full details about each plan in a more machine-readable format,
+Or to show full details about each plan in a more parsable format,
 use the C<--multiline> option.
 
 =cut
@@ -30,25 +30,14 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--id-only") {
-		$idonly = 1;
-		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
-		}
-	elsif ($a eq "--id") {
+	if ($a eq "--id") {
 		$planid = shift(@ARGV);
 		}
 	elsif ($a eq "--name") {
 		$planname = shift(@ARGV);
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -157,7 +146,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the available account plans for virtual servers.\n";
 print "\n";
-print "virtualmin list-plans [--name-only | --multiline]\n";
+print "virtualmin list-plans [--multiline | --json | --xml]\n";
 print "                      [--id number | --name \"plan name\"]\n";
 exit(1);
 }

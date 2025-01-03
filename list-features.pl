@@ -39,6 +39,7 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--parent") {
@@ -49,15 +50,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--subdom") {
 		$subname = shift(@ARGV);
-		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -87,7 +79,7 @@ if ($subname) {
 
 # Get and show feautures
 @feats = &list_available_features($parentdom, $aliasdom, $subdom);
-if ($multi) {
+if ($multiline) {
 	# Several lines each
 	foreach $f (@feats) {
 		print "$f->{'feature'}\n";
@@ -122,7 +114,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the available features for new virtual servers.\n";
 print "\n";
-print "virtualmin list-features [--multiline | --name-only]\n";
+print "virtualmin list-features [--multiline | --json | --xml | --name-only]\n";
 print "                         [--parent name | --subdom name | --alias name]\n";
 exit(1);
 }

@@ -54,13 +54,13 @@ return (undef, $dom, $user, $pass);
 }
 
 # migration_lxadmin_migrate(file, domain, username, create-webmin, template-id,
-#			    &ipinfo, pass, [&parent], [prefix], [email])
+#			    &ipinfo, pass, [&parent], [prefix], [email],[&plan])
 # Actually extract the given LXadmin backup, and return the list of domains
 # created.
 sub migration_lxadmin_migrate
 {
 local ($file, $dom, $user, $webmin, $template, $ipinfo, $pass, $parent,
-       $prefix, $email) = @_;
+       $prefix, $email, $plan) = @_;
 local @rv;
 
 # Extract the backup
@@ -144,7 +144,8 @@ else {
 # Create the virtual server object
 local %dom;
 $prefix ||= &compute_prefix($dom, $group, $parent, 1);
-local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
+$plan = $parent ? &get_plan($parent->{'plan'}) :
+        $plan ? $plan : &get_default_plan();
 %dom = ( 'id', &domain_id(),
 	 'dom', $dom,
          'user', $duser,
@@ -155,7 +156,7 @@ local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
          'ugid', $ugid,
          'owner', "Migrated LXadmin domain $dom",
          'email', $email ? $email : $parent ? $parent->{'email'} : undef,
-	 'dns_ip', $ipinfo->{'virt'} || $config{'all_namevirtual'} ? undef :
+	 'dns_ip', $ipinfo->{'virt'} ? undef :
 		   &get_dns_ip($parent ? $parent->{'id'} : undef),
 	 $parent ? ( 'pass', $parent->{'pass'} )
 		 : ( 'pass', $pass ),

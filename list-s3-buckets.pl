@@ -34,15 +34,10 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--access-key") {
+	if ($a eq "--access-key") {
 		$akey = shift(@ARGV);
 		}
 	elsif ($a eq "--secret-key") {
@@ -51,19 +46,13 @@ while(@ARGV > 0) {
 	elsif ($a eq "--bucket") {
 		$bucket = shift(@ARGV);
 		}
-	elsif ($a eq "--help") {
-		&usage();
-		}
 	else {
 		&usage("Unknown parameter $a");
 		}
 	}
-$akey ||= $config{'s3_akey'};
-$skey ||= $config{'s3_skey'};
-if (!&can_use_aws_s3_creds()) {
-	$akey || &usage("Missing --access-key parameter");
-	$skey || &usage("Missing --secret-key parameter");
-	}
+($akey, $skey, $iam) = &lookup_s3_credentials($akey, $skey);
+$iam || $akey || &usage("Missing --access-key parameter");
+$iam || $skey || &usage("Missing --secret-key parameter");
 
 # List the directory
 $files = &s3_list_buckets($akey, $skey);
@@ -75,7 +64,7 @@ if (!ref($files)) {
 if ($bucket) {
 	@$files = grep { $_->{'Name'} eq $bucket } @$files;
 	}
-if ($multi) {
+if ($multiline) {
 	# Full details
 	foreach $f (@$files) {
 		print $f->{'Name'},"\n";
@@ -88,12 +77,12 @@ if ($multi) {
 			}
 		if ($info && $info->{'acl'}) {
 			print "    Owner: ",
-			      $info->{'acl'}->{'Owner'}->[0]->{'DisplayName'}->[0],"\n";
+			      ($info->{'acl'}->{'Owner'}->[0]->{'DisplayName'}->[0] || $info->{'acl'}->{'Owner'}->[0]->{'ID'}->[0]),"\n";
 			$acl = $info->{'acl'}->{'AccessControlList'}->[0];
 			@grant = @{$acl->{'Grant'}};
 			foreach my $g (@grant) {
 				print "    Grant: $g->{'Permission'}->[0] to ",
-				      $g->{'Grantee'}->[0]->{'DisplayName'}->[0],"\n";
+				      ($g->{'Grantee'}->[0]->{'DisplayName'}->[0] || $g->{'Grantee'}->[0]->{'ID'}->[0]),"\n";
 				}
 			}
 		if ($info && $info->{'lifecycle'}) {
@@ -148,7 +137,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists all buckets owned by an S3 account.\n";
 print "\n";
-print "virtualmin list-s3-buckets [--multiline | --name-only]\n";
+print "virtualmin list-s3-buckets [--multiline | --json | --xml | --name-only]\n";
 print "                           [--bucket name]\n";
 print "                           [--access-key key]\n";
 print "                           [--secret-key key]\n";

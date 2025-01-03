@@ -10,6 +10,7 @@ my @rv = ( { 'name' => 'route53',
 	     'defttl' => 0,
 	     'proxy' => 0,
 	     'disable' => 0,
+	     'import' => 0,
 	     'url' => 'https://aws.amazon.com/route53/',
 	     'longdesc' => $text{'dnscloud_route53_longdesc'} } );
 if (defined(&list_pro_dns_clouds)) {
@@ -58,6 +59,9 @@ return $d->{'dns'} && $d->{'dns_cloud'} eq $c->{'name'};
 sub get_domain_dns_cloud
 {
 my ($d) = @_;
+if ($d->{'dns_subof'}) {
+	return &get_domain_dns_cloud(&get_domain($d->{'dns_subof'}));
+	}
 foreach my $c (&list_dns_clouds()) {
 	return $c if (&dns_uses_cloud($d, $c));
 	}
@@ -94,6 +98,17 @@ else {
 	}
 }
 
+# dnscloud_route53_test()
+# Returns an error message if route53 API calls fail, or undef if OK
+sub dnscloud_route53_test
+{
+my $rv = &call_route53_cmd(
+	$config{'route53_akey'},
+	[ 'list-hosted-zones' ],
+	undef, 1);
+return ref($rv) ? undef : $rv;
+}
+
 # dnscloud_route53_show_inputs()
 # Show fields for entering credentials for AWS
 sub dnscloud_route53_show_inputs
@@ -113,7 +128,7 @@ else {
 	}
 
 # Default location for zones
-my @locs = &s3_list_locations();
+my @locs = &s3_list_aws_locations();
 if (&get_ec2_aws_region()) {
 	unshift(@locs, [ "", $text{'dnscloud_route53_def'} ]);
 	}

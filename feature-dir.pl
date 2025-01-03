@@ -16,50 +16,51 @@ return undef;
 # Creates the home directory
 sub setup_dir
 {
-local $tmpl = &get_template($_[0]->{'template'});
+my ($d) = @_;
+my $tmpl = &get_template($d->{'template'});
 &require_useradmin();
-local $qh = quotemeta($_[0]->{'home'});
+my $qh = quotemeta($d->{'home'});
 &$first_print($text{'setup_home'});
 
 # Get Unix user, either for this domain or its parent
-local $uinfo;
-if ($_[0]->{'unix'} || $_[0]->{'parent'}) {
-	local @users = &list_all_users();
-	($uinfo) = grep { $_->{'user'} eq $_[0]->{'user'} } @users;
+my $uinfo;
+if ($d->{'unix'} || $d->{'parent'}) {
+	my @users = &list_all_users();
+	($uinfo) = grep { $_->{'user'} eq $d->{'user'} } @users;
 	}
-if ($_[0]->{'unix'} && !$uinfo) {
+if ($d->{'unix'} && !$uinfo) {
 	# If we are going to have a Unix user but none has been created
 	# yet, fake his details here for use in chowning and skel copying
 	# This should never happen!
-	$uinfo ||= { 'uid' => $_[0]->{'uid'},
-		     'gid' => $_[0]->{'ugid'},
+	$uinfo ||= { 'uid' => $d->{'uid'},
+		     'gid' => $d->{'ugid'},
 		     'shell' => '/bin/sh',
-		     'group' => $_[0]->{'group'} || $_[0]->{'ugroup'} };
+		     'group' => $d->{'group'} || $d->{'ugroup'} };
 	}
 
 # Create and populate home directory
-&create_domain_home_directory($_[0], $uinfo);
+&create_domain_home_directory($d, $uinfo);
 
 # Populate home dir
-if ($tmpl->{'skel'} ne "none" && !$_[0]->{'nocopyskel'} &&
-    !$_[0]->{'alias'}) {
+if ($tmpl->{'skel'} ne "none" && !$d->{'nocopyskel'} &&
+    !$d->{'alias'}) {
 	# Don't die if this fails due to quota issues
 	eval {
 	  local $main::error_must_die = 1;
-	  &copy_skel_files(&substitute_domain_template($tmpl->{'skel'}, $_[0]),
-	  		   $uinfo, $_[0]->{'home'},
-	  		   $_[0]->{'group'} || $_[0]->{'ugroup'}, $_[0]);
+	  &copy_skel_files(&substitute_domain_template($tmpl->{'skel'}, $d),
+	  		   $uinfo, $d->{'home'},
+	  		   $d->{'group'} || $d->{'ugroup'}, $d);
 	  };
 	}
 
 # If this is a sub-domain, move public_html from any skeleton to it's sub-dir
 # under the parent
-if ($_[0]->{'subdom'}) {
-	local $phsrc = &public_html_dir($_[0], 0, 1);
-	local $phdst = &public_html_dir($_[0], 0, 0);
+if ($d->{'subdom'}) {
+	my $phsrc = &public_html_dir($d, 0, 1);
+	my $phdst = &public_html_dir($d, 0, 0);
 	if (-d $phsrc && !-d $phdst) {
-		&make_dir($phdst, 0755);
-		&set_ownership_permissions($_[0]->{'uid'}, $_[0]->{'gid'},
+		&make_dir($phdst, 0755, 1);
+		&set_ownership_permissions($d->{'uid'}, $d->{'gid'},
 					   undef, $phdst);
 		&copy_source_dest($phsrc, $phdst);
 		&unlink_file($phsrc);
@@ -67,15 +68,15 @@ if ($_[0]->{'subdom'}) {
 	}
 
 # Setup sub-directories
-&create_standard_directories($_[0]);
+&create_standard_directories($d);
 &$second_print($text{'setup_done'});
 
 # Create mail file
-if (!$_[0]->{'parent'} && $uinfo) {
+if (!$d->{'parent'} && $uinfo) {
 	&$first_print($text{'setup_usermail3'});
 	eval {
 		local $main::error_must_die = 1;
-		&create_mail_file($uinfo, $_[0]);
+		&create_mail_file($uinfo, $d);
 
 		# Set the user's Usermin IMAP password
 		&set_usermin_imap_password($uinfo);
@@ -90,7 +91,7 @@ if (!$_[0]->{'parent'} && $uinfo) {
 
 # Copy excludes from template
 if ($tmpl->{'exclude'} ne 'none') {
-	$_[0]->{'backup_excludes'} = $tmpl->{'exclude'};
+	$d->{'backup_excludes'} = $tmpl->{'exclude'};
 	}
 
 return 1;
@@ -257,8 +258,7 @@ local ($d, $preserve) = @_;
 
 # Delete homedir
 &require_useradmin();
-if (-d $d->{'home'} && $d->{'home'} ne "/" &&
-    !&same_file($d->{'home'}, $home_base)) {
+if (-d $d->{'home'} && &safe_delete_dir($d, $d->{'home'})) {
 	&$first_print($text{'delete_home'});
 
 	# Don't delete if on remote
@@ -465,7 +465,7 @@ sub check_dir_clash
 return 0;
 }
 
-# backup_dir(&domain, file, &options, home-format, incremental, [&as-domain],
+# backup_dir(&domain, file, &options, home-format, differential, [&as-domain],
 # 	     &all-options, &key)
 # Backs up the server's home directory in tar format to the given file
 sub backup_dir
@@ -477,10 +477,9 @@ local $compression = $opts->{'compression'};
 			      : $text{'backup_dirtar'});
 local $out;
 local $cmd;
-local $gzip = $homefmt && &has_command("gzip");
 local $destfile = $file;
 if (!$homefmt) {
-	$destfile .= ".".&compression_to_suffix($compression);
+	$destfile .= ".".&compression_to_suffix_inner($compression);
 	}
 
 # Create an indicator file in the home directory showing where this backup
@@ -498,6 +497,17 @@ if ($src{'mount'} !~ /^[a-z0-9_\-\.]+:/i) {
 &write_as_domain_user($d, sub {
 	&write_file("$d->{'home'}/.virtualmin-src", \%src)
 	});
+
+# If this is a home-format backup, create a dummy file in .backup even though
+# it's not used so that the restore process knows what domain this came from
+if ($homefmt) {
+	my $backupdir = "$d->{'home'}/.backup";
+	my $dummy = $backupdir."/".$d->{'dom'}."_dir";
+	&make_dir_as_domain_user($d, $backupdir, 0755);
+	&write_as_domain_user($d, sub {
+		&write_file_contents($dummy, "")
+		});
+	}
 
 # Create exclude file
 local $xtemp = &transname();
@@ -556,7 +566,7 @@ foreach my $x (@xlist) {
 	}
 &close_tempfile(XTEMP);
 
-# Work out incremental flags
+# Work out differential flags
 local ($iargs, $iflag, $ifile, $ifilecopy);
 if (&has_incremental_tar() && $increment != 2) {
 	if (!-d $incremental_backups_dir) {
@@ -568,7 +578,7 @@ if (&has_incremental_tar() && $increment != 2) {
 		&unlink_file($ifile);
 		}
 	else {
-		# Add a flag file indicating that this was an incremental,
+		# Add a flag file indicating that this was an differential,
 		# and take a copy of the file so we can put it back as before
 		# the backup (as tar modifies it)
 		if (-r $ifile) {
@@ -620,6 +630,11 @@ elsif ($homefmt && $compression == 1) {
 elsif ($compression == 3) {
 	# ZIP archive
 	$cmd = &make_zip_command("-x\@".quotemeta($xtemp), "-", @ilist);
+	}
+elsif ($homefmt && $compression == 4) {
+	# With zstd
+	$cmd = &make_tar_command("cfX", "-", $xtemp, $iargs, @ilist).
+	       " | ".&get_zstd_command();
 	}
 else {
 	# Plain tar
@@ -794,7 +809,8 @@ if ($cf == 4) {
 else {
 	local $comp = $cf == 1 ? &get_gunzip_command()." -c" :
 		      $cf == 2 ? "uncompress -c" :
-		      $cf == 3 ? &get_bunzip2_command()." -c" : "cat";
+		      $cf == 3 ? &get_bunzip2_command()." -c" :
+		      $cf == 6 ? &get_unzstd_command() : "cat";
 	local $tarcmd = &make_tar_command("xvfX", "-", $xtemp);
 	local $reader = $catter." | ".$comp;
 	if ($asd) {
@@ -817,8 +833,8 @@ if ($ex) {
 	return 0;
 	}
 else {
-	# Check for incremental restore of newly-created domain, which indicates
-	# that is is not complete
+	# Check for differential restore of newly-created domain, which
+	# indicates that is is not complete
 	my $wasincr = -r $iflag;
 	if ($d->{'wasmissing'} && $wasincr) {
 		&$second_print($text{'restore_wasmissing'});
@@ -844,7 +860,7 @@ else {
 		&set_php_wrappers_writable($d, 0, 1);
 		}
 	
-	# Incremental file is no longer valid, so clear it
+	# differential file is no longer valid, so clear it
 	local $ifile = "$incremental_backups_dir/$d->{'id'}";
 	&unlink_file($ifile);
 
@@ -864,7 +880,8 @@ else {
 			}
 		}
 
-	# For a non-incremental restore, delete files that weren't in the backup
+	# For a non-differential restore, delete files that weren't in
+	# the backup
 	if (!$wasincr && $cf != 4 && $opts->{'delete'}) {
 		# Parse tar output to find files that were restored
 		my %restored;
@@ -1148,11 +1165,29 @@ while(@srcs) {
 				&open_tempfile_as_domain_user(
 					$d, DATA, ">".$destfile);
 				if ($f =~ /\.(html|htm|txt|php|php4|php5)$/i) {
-					local %hash = %$d;
-					$hash{uc('tmpltpageheadtitle')} = $content if ($content);
-					%hash = &populate_default_index_page($d, %hash);
-					$data = &replace_default_index_page($d, $data);
-					$data = &substitute_virtualmin_template($data, \%hash);
+					my %hash = %$d;
+					# Use default Virtualmin index.html page
+					if (!$content) {
+						%hash = &populate_default_index_page($d, %hash);
+						$data = &replace_default_index_page($d, $data);
+						$data = &substitute_virtualmin_template($data, \%hash);
+						}
+					# Use provided content
+					else {
+						# If content is a file
+						if (-f $content && -r $content) {
+							if (&master_admin()) {
+								$data = &read_file_contents($content);
+								}
+							else {
+								$data = &read_file_contents_as_domain_user($d, $content);
+								}
+							}
+						else {
+							$data = $content;
+							}
+						$data = &substitute_virtualmin_template($data, \%hash);
+						}
 					}
 				&print_tempfile(DATA, $data);
 				&close_tempfile_as_domain_user($d, DATA);
@@ -1178,6 +1213,23 @@ return $tab && $tab->[1] =~ /^[a-z0-9\.\_\-]+:/i ? $tab->[1] : undef;
 sub can_reset_dir
 {
 return 0;
+}
+
+# safe_delete_dir(&domain, dir)
+# Returns 1 if a directory for a domain can be safely removed
+sub safe_delete_dir
+{
+my ($d, $dir) = @_;
+return 0 if ($dir eq '');
+$dir = &simplify_path($dir);
+return 0 if (!defined($dir));
+return $dir eq '/' ||
+       &is_under_directory('/root', $dir) ||
+       &is_under_directory('/etc', $dir) ||
+       &same_file($dir, '/usr') ||
+       &same_file($dir, $home_base) ||
+       &is_under_directory($root_directory, $dir) ||
+       !&is_under_directory($d->{'home'}, $dir) ? 0 : 1;
 }
 
 $done_feature_script{'dir'} = 1;

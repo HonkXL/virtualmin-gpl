@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 $d = &get_domain($in{'dom'});
 &can_edit_domain($d) && &can_edit_scripts() || &error($text{'edit_ecannot'});
 &error_setup($text{'massg_err'});
@@ -56,7 +57,19 @@ if ($in{'confirm'}) {
 			}
 
 		&$indent_print();
-		local $phpver = $sinfo->{'opts'}->{'phpver'};
+
+		# Setup PHP version
+		if (&indexof("php", @{$script->{'uses'}}) >= 0) {
+			my ($phpver, $phperr) = &setup_php_version(
+				$d, $script, $ver, $opts->{'path'});
+			if (!$phpver) {
+				&$second_print($phperr);
+				next;
+				}
+			$opts->{'phpver'} = $phpver;
+			}
+
+		local $phpver = $opts->{'phpver'};
 		if ($derr = &check_script_depends($script, $d, $ver, $sinfo, $phpver)) {
 			# Failed depends
 			&$second_print(&text('massscript_edep', $derr));

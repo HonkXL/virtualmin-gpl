@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'spam_err'});
 $d = &get_domain($in{'dom'});
 &can_edit_domain($d) || &error($text{'edit_ecannot'});
@@ -86,6 +87,7 @@ elsif ($in{'trashclear'} == 2) {
 	$in{'trashsize'} =~ /^\d+$/ || &error($text{'spam_etrashsize'});
 	$auto->{'trashsize'} = $in{'trashsize'}*$in{'trashsize_units'};
 	}
+$auto->{'subfolders'} = $in{'subfolders'};
 &save_domain_spam_autoclear($d, $auto);
 
 # Save spamtrap setting

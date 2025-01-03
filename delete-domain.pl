@@ -6,7 +6,7 @@ Delete one or more virtual servers.
 
 To delete one or many servers (and all of their sub-servers and alias domains)
 from the system, use this program. The domains to remove can be specified with
-the C<--domain> flag, must can be given multiple times. Alternately, you can
+the C<--domain> flag, which can be given multiple times. Alternately, you can
 select virtual servers by username, using the C<--user> flag.
 
 The C<--only> option can be used to not actually delete the servers, but
@@ -36,6 +36,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "delete-domain.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 
 &set_all_text_print();
@@ -86,6 +87,10 @@ $config{'pre_command'} = $precommand if ($precommand);
 $config{'post_command'} = $postcommand if ($postcommand);
 foreach $d (@doms) {
 	print "Deleting virtual server $d->{'dom'} ..\n";
+	if ($d->{'protected'}) {
+		print ".. skip : protected domain\n\n";
+		next;
+		}
 	&$indent_print();
 	$err = &delete_virtual_server($d, $only, 0, $preserve);
 	&$outdent_print();

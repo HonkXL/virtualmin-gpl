@@ -33,22 +33,14 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
 		$domain = shift(@ARGV);
 		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
 	elsif ($a eq "--full-version") {
 		$fullver = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -60,7 +52,7 @@ $d = &get_domain_by("dom", $domain);
 $d || usage("Virtual server $domain does not exist");
 @dirs = &list_domain_php_directories($d);
 
-if ($multi) {
+if ($multiline) {
 	# Show on separate lines
 	foreach $dir (@dirs) {
 		my $fullver = &get_php_version($dir->{'version'}, $d);
@@ -96,7 +88,8 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists web directories with different PHP versions in a virtual server.\n";
 print "\n";
 print "virtualmin list-php-directories --domain domain.name\n";
-print "                               [--multiline | --name-only]\n";
+print "                               [--multiline | --json | --xml |\n";
+print "                                --name-only]\n";
 print "                               [--full-version]\n";
 exit(1);
 }

@@ -16,7 +16,7 @@ $from = &get_global_from_address();
 
 # Check if we need to update
 ($oldip, $oldwhen) = &get_last_dynip_update($config{'dynip_service'});
-$newip = $config{'dynip_auto'} ? &get_external_ip_address()
+$newip = $config{'dynip_auto'} ? &get_any_external_ip_address()
 			       : &get_default_ip();
 if (!$newip) {
 	# Failed to get current IP address .. so do nothing
@@ -57,7 +57,7 @@ if ($ip) {
 	}
 if ($ip && $ip ne $oldip) {
 	# Fix up any virtual servers using the old IP
-	if ($oldip) {
+	if ($oldip && $config{'dynip_update'}) {
 		&set_all_null_print();
 		$dc = &update_all_domain_ip_addresses($ip, $oldip);
 

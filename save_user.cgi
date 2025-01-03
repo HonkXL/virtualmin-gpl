@@ -4,6 +4,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'user_err'});
 if ($in{'dom'}) {
 	$d = &get_domain($in{'dom'});
@@ -16,8 +17,7 @@ else {
 
 if ($in{'recoverybut'}) {
 	# Redirect to password recovery form
-	&redirect("recovery.cgi?dom=$in{'dom'}&user=$in{'old'}&".
-		  "unix=$in{'unix'}");
+	&redirect("recovery.cgi?dom=$in{'dom'}&user=".&urlize($in{'old'}));
 	return;
 	}
 
@@ -30,11 +30,11 @@ $tmpl = $d ? &get_template($d->{'template'}) : &get_template(0);
 if (!$in{'new'}) {
 	# Lookup user details
 	($user) = grep { ($_->{'user'} eq $in{'old'} ||
-			  &remove_userdom($_->{'user'}, $d) eq $in{'old'}) &&
-			 $_->{'unix'} == $in{'unix'} } @users;
+			  &remove_userdom($_->{'user'}, $d) eq $in{'old'})
+		       } @users;
 	$user || &error("User does not exist!");
 	%old = %$user;
-	$mailbox = $d && $d->{'user'} eq $user->{'user'} && $user->{'unix'};
+	$mailbox = $d && $d->{'user'} eq $user->{'user'};
 	$user->{'olduser'} = $user->{'user'};
 	}
 else {
@@ -58,7 +58,15 @@ if ($in{'switch'}) {
 elsif ($in{'remailbut'}) {
 	# Re-send signup email
 	&error_setup($text{'user_err2'});
-	@erv = &send_user_email($d, $user, $user->{'email'}, 0);
+	if ($user->{'domainowner'}) {
+		&push_all_print();
+		&set_all_null_print();
+		@erv = &send_domain_email($d, $d->{'emailto'});
+		&pop_all_print();
+		}
+	else {
+		@erv = &send_user_email($d, $user, $user->{'email'}, 0);
+		}
 	if (!$erv[0]) {
 		&error($erv[1]);
 		}
@@ -77,6 +85,9 @@ elsif ($in{'delete'}) {
 		# Delete simple autoreply file
 		$simple = &get_simple_alias($d, $user);
 		&delete_simple_autoreply($d, $simple) if ($simple);
+
+		# Delete SSH public key
+		&delete_domain_user_ssh_pubkey($d, $user);
 
 		# Delete the user, his virtusers and aliases
 		&delete_user($user, $d);
@@ -115,16 +126,19 @@ elsif ($in{'delete'}) {
 		print &ui_form_start("save_user.cgi");
 		print &ui_hidden("dom", $in{'dom'});
 		print &ui_hidden("old", $in{'old'});
-		print &ui_hidden("unix", $in{'unix'});
 		print &ui_hidden("delete", 1);
 
 		# Count up home directory size
 		local ($mailsz) = &mail_file_size($user);
-		local ($homesz) = &disk_usage_kb($user->{'home'});
-		local $msg = $user->{'nocreatehome'} || !$user->{'home'} ?
-				'user_rusurew' :
-			     $mailsz && $homesz && !&mail_under_home() ?
+		local ($msg, $homesz);
+		if ($user->{'nocreatehome'} || !$user->{'home'}) {
+			$msg = 'user_rusurew';
+			}
+		else {
+			($homesz) = &disk_usage_kb($user->{'home'});
+			$msg = $mailsz && $homesz && !&mail_under_home() ?
 				'user_rusure' :'user_rusureh';
+			}
 		print "<p>",&text($msg, "<tt>$in{'old'}</tt>",
 			  	  &nice_size($mailsz),
 				  &nice_size($homesz*1024),
@@ -174,11 +188,17 @@ else {
 		$olderr = $in{'new'} ? undef
 				     : &valid_mailbox_name($user->{'user'});
 		&error($err) if ($err && !$olderr);
-		if ($user->{'person'}) {
-			$in{'real'} =~ /^[^:\r\n]*$/ ||
-				&error($text{'user_ereal'});
-			$user->{'real'} = $in{'real'};
+		if (&supports_firstname()) {
+			$in{'firstname'} =~ /^[^:\r\n]*$/ ||
+				&error($text{'user_efirstname'});
+			$user->{'firstname'} = $in{'firstname'};
+			$in{'surname'} =~ /^[^:\r\n]*$/ ||
+				&error($text{'user_esurname'});
+			$user->{'surname'} = $in{'surname'};
 			}
+		$in{'real'} =~ /^[^:\r\n]*$/ ||
+			&error($text{'user_ereal'});
+		$user->{'real'} = $in{'real'};
 		if (!$in{'new'} && $in{'mailpass_def'}) {
 			# Password not being changed
 			$user->{'passmode'} = 4;
@@ -197,18 +217,7 @@ else {
 			# Disable account if requested
 			&set_pass_disable($user, $in{'disable'});
 			}
-		if ($user->{'mailquota'}) {
-			# Check and save qmail quota
-			if (!$in{'qquota_def'}) {
-				$in{'qquota'} =~ /^\d+$/ ||
-					&error($text{'user_eqquota'});
-				$user->{'qquota'} = $in{'qquota'};
-				}
-			else {
-				$user->{'qquota'} = 0;
-				}
-			}
-		if ($user->{'unix'} && !$user->{'noquota'}) {
+		if (!$user->{'noquota'}) {
 			# Check and save quota inputs
 			$qedit = &can_mailbox_quota();
 			@defmquota = split (/ /, $tmpl->{'defmquota'});
@@ -218,9 +227,11 @@ else {
 				if ( $in{'quota'} eq -1 ) {
 					$in{'quota'} = $in{'otherquota'};
 					}
-				$in{'quota_def'} || $in{'quota'} =~ /^[0-9\.]+$/ ||
+				$in{'quota_def'} ||
+				    $in{'quota'} =~ /^[0-9\.]+$/ ||
 					&error($text{'user_equota'});
-				$user->{'quota'} = $in{'quota_def'} ? 0 : &quota_parse("quota", "home");
+				$user->{'quota'} = $in{'quota_def'} ? 0 :
+					&quota_parse("quota", "home");
 				!$user->{'quota'} || !$pd->{'quota'} ||
 				  $user->{'quota'} <= $pd->{'quota'} ||
 				  &error(&text('user_eoverquota',
@@ -235,9 +246,11 @@ else {
 				if ( $in{'mquota'} eq -1 ) {
 					$in{'mquota'} = $in{'othermquota'};
 					}
-				$in{'mquota_def'} || $in{'mquota'} =~ /^[0-9\.]+$/ ||
+				$in{'mquota_def'} ||
+				    $in{'mquota'} =~ /^[0-9\.]+$/ ||
 					&error($text{'user_equota'});
-				$user->{'mquota'} = $in{'mquota_def'} ? 0 : &quota_parse("mquota", "mail");
+				$user->{'mquota'} = $in{'mquota_def'} ? 0 :
+					&quota_parse("mquota", "mail");
 				!$user->{'mquota'} || !$pd->{'mquota'} ||
 				  $user->{'mquota'} <= $pd->{'mquota'} ||
 				  &error(&text('user_eovermquota',
@@ -312,7 +325,7 @@ else {
 		}
 
 	# Save recovery address
-	if (!$mailbox) {
+	if (!$mailbox && ($in{'recovery_def'} || $in{'recovery'})) {
 		$in{'recovery_def'} || $in{'recovery'} =~ /^\S+\@\S+$/ ||
 			&error($text{'user_erecovery'});
 		$user->{'recovery'} = $in{'recovery_def'} ? ""
@@ -322,12 +335,12 @@ else {
 	# Get the email address to send new/updated mailbox, for the mailbox
 	# itself. Email may also be sent to the reseller and domain owner
 	if ($in{'new'} && &will_send_user_email($d, 1) &&
-	    !$in{'newmail_def'}) {
+	    !$in{'newmail_def'} && $in{'newmail'}) {
 		$in{'newmail'} =~ /^\S+$/ || &error($text{'user_enewmail'});
 		$newmailto = $in{'newmail'};
 		}
 	elsif (!$in{'new'} && &will_send_user_email($d, 0) &&
-	       !$in{'remail_def'}) {
+	       !$in{'remail_def'} && $in{'remail'}) {
 		$in{'remail'} =~ /^\S+$/ || &error($text{'user_eremail'});
 		$newmailto = $in{'remail'};
 		}
@@ -336,15 +349,22 @@ else {
 		# Find home
 		if (&can_mailbox_home($user) &&
 		    $d && $d->{'home'} && !$in{'home_def'}) {
-			$in{'home'} =~ /^\S.*\S$/ && $in{'home'} !~ /\.\./ ||
-				&error($text{'user_ehome'});
+			$in{'home'} =~ /\.\.\// && &error($text{'user_ehome'});
 			$in{'home'} =~ /^\// && &error($text{'user_ehome2'});
 			if ($user->{'webowner'}) {
 				# Custom home directory for web FTP user
-				$home = &public_html_dir($d)."/".$in{'home'};
+				if (!$in{'home'}) {
+					$home = $d->{'home'};
+					}
+				else {
+					$home = &public_html_dir($d)."/".
+							$in{'home'};
+					}
 				}
 			else {
 				# Custom home directory for mailbox user
+				&error($text{'user_ehome'})
+					if ($in{'home'} =~ /^\s*$/);
 				$home = "$d->{'home'}/$in{'home'}";
 				}
 			$user->{'maybecreatehome'} = 1;
@@ -369,7 +389,7 @@ else {
 
 		# Make sure home exists, for web owner user
 		if ($user->{'webowner'} && !-d $home) {
-			&error($text{'user_ehomeexists'});
+			&error(&text('user_ehomeexists', &html_escape($home)));
 			}
 		}
 
@@ -396,10 +416,11 @@ else {
 		}
 
 	# Create or update the user
+	my $sshkey_mode = $in{'sshkey_mode'} == 2 ? 1 : 0;
 	$emailmailbox = 0;
 	if ($in{'new'}) {
 		# Set new user parameters
-		if ($user->{'unix'} && !$user->{'webowner'}) {
+		if (!$user->{'webowner'}) {
 			# UID needs to be unique
 			$user->{'uid'} = &allocate_uid(\%taken);
 			}
@@ -411,24 +432,20 @@ else {
 				      getgrnam($config{'localgroup'});
 
 		# Check for clash within this domain
-		($clash) = grep { $_->{'user'} eq $in{'mailuser'} &&
-			  	  $_->{'unix'} == $user->{'unix'} } @users;
+		($clash) = grep { $_->{'user'} eq $in{'mailuser'} } @users;
 		$clash && &error($text{'user_eclash2'});
 
-		if ($user->{'unix'}) {
-			if (&can_mailbox_ftp()) {
-				# Shell can be set based on FTP flag
-				&check_available_shell($in{'shell'}, 'mailbox',
-						       undef) ||
-					&error($text{'user_eshell'});
-				$user->{'shell'} = $in{'shell'};
-				}
-			elsif ($in{'new'}) {
-				# If the shell cannot be edited, always use
-				# the default.
-				$user->{'shell'} =
-					&default_available_shell('mailbox');
-				}
+		if (&can_mailbox_ftp()) {
+			# Shell can be set to one that's allowed for FTP
+			&check_available_shell($in{'shell'}, 'mailbox')
+				|| &error($text{'user_eshell'});
+			$user->{'shell'} = $in{'shell'};
+			}
+		else {
+			# If the shell cannot be edited, always use
+			# the default.
+			$user->{'shell'} =
+				&default_available_shell('mailbox');
 			}
 		if (!$user->{'fixedhome'} && !$user->{'brokenhome'}) {
 			$user->{'home'} = $home;
@@ -439,7 +456,8 @@ else {
 			# Need to append domain name
 			if ($d) {
 				# Add group name
-				$user->{'user'} = &userdom_name($in{'mailuser'},$d);
+				$user->{'user'} = &userdom_name(
+					$in{'mailuser'},$d);
 				}
 			else {
 				# No domain to add, so give up!
@@ -451,7 +469,7 @@ else {
 			$user->{'user'} = $in{'mailuser'};
 			}
 
-		if ($d && $user->{'unix'}) {
+		if ($d) {
 			# Check for a Unix clash
 			$mclash = &check_clash($in{'mailuser'}, $d->{'dom'});
 			if ($utaken{$user->{'user'}} ||
@@ -470,8 +488,7 @@ else {
 			}
 
 		# Check if the name is too long
-		if ($user->{'unix'} &&
-		    ($lerr = &too_long($user->{'user'}))) {
+		if ($lerr = &too_long($user->{'user'})) {
 			&error($lerr);
 			}
 
@@ -489,8 +506,8 @@ else {
 				&parse_simple_form($simple, \%in, $d, 1, 1, 1,
 						   $user->{'user'});
 				$simple->{'from'} = $fullemail;
-				$user->{'user_extra'} = &replace_atsign($user->{'user'})
-					if (&need_extra_user($user));
+				$user->{'user_extra'} = &replace_atsign(
+				  $user->{'user'}) if (&need_extra_user($user));
 				&save_simple_alias($d, $user, $simple);
 				if (@{$user->{'to'}} == 1 &&
 				    $simple->{'tome'}) {
@@ -519,13 +536,63 @@ else {
 
 		# Validate plugins
 		foreach $f (&list_mail_plugins()) {
-			$err = &plugin_call($f, "mailbox_validate", $user, \%old, \%in, $in{'new'}, $d);
+			$err = &plugin_call($f, "mailbox_validate", $user,
+					    \%old, \%in, $in{'new'}, $d);
 			&error($err) if ($err);
 			}
 
+		# Validate if extra database user exists
+		# which can be merged with Unix user
+		my $extra_db_user = &get_extra_db_user($d, $user->{'user'});
+		my $extra_web_user = &get_extra_web_user($d, $user->{'user'});
+		if (($extra_db_user || $extra_web_user) && !$in{'confirm'}) {
+			# Confirm suppression first
+			&ui_print_header(&domain_in($d), $text{'user_createovertitle'}, "");
+			my @save_user_hids;
+			foreach my $key (keys %in) {
+				push(@save_user_hids, [$key, $in{$key}]);
+				}
+			my $createoverdesc = $extra_db_user && $extra_web_user ?
+				"dbweb" : $extra_db_user ? "db" : "web";
+			my $createoverdescm = $extra_db_user && $extra_web_user ? 2 : 1;
+			print &ui_confirmation_form(
+				"save_user.cgi",
+				&text("user_createoverdesc$createoverdesc",
+					"<tt>$user->{'user'}</tt>").
+				  "<br>".$text{"user_createoverdescm$createoverdescm"}.
+				  "<br>".$text{"user_createoverdescmf$createoverdescm"},
+				\@save_user_hids,
+				[ [ "confirm", $text{"user_createover$createoverdescm"} ],
+				  [ "", $text{'user_creategoback'}, undef,  undef,
+					'onclick="event.preventDefault(); '.
+					'event.stopImmediatePropagation(); '.
+					'window.history.back();"' ] ],
+				);
+			&ui_print_footer("list_users.cgi?dom=$in{'dom'}",
+				$text{'users_return'});
+			exit;
+			}
+		
+		# Validate SSH public key if given
+		my $sshkey = $in{'sshkey'};
+		if ($sshkey_mode) {
+			$sshkey =~ s/\r|\n/ /g;
+			$sshkey = &trim($sshkey);
+			$sshkeyerr = &validate_ssh_pubkey($sshkey);
+			&error($sshkeyerr) if ($sshkeyerr);
+			}
+
 		# Validate user
+		$user->{'nocheck'} = 1 if ($extra_db_user);
 		$err = &validate_user($d, $user);
 		&error($err) if ($err);
+
+		# If an extra web user exists and new directories are given then
+		# remove access to the old directories first to avoid overlap
+		# and have duplicated records
+		if ($extra_web_user && $in{'virtualmin_htpasswd'}) {
+			&revoke_webserver_user_access($user, $d);
+			}
 
 		if ($home && !$user->{'nocreatehome'} &&
 		    (!$user->{'maybecreatehome'} || !-d $home)) {
@@ -541,8 +608,14 @@ else {
 		if ($user->{'email'} || $newmailto) {
 			$emailmailbox = 1;
 			}
+		
+		# Setup SSH public key if given
+		if ($sshkey_mode) {
+			$err = &add_domain_user_ssh_pubkey($d, $user, $sshkey);
+			&error($err) if ($err);
+			}
 		}
-	else {
+	else { 
 		# Check if any extras clash
 		%oldextra = map { $_, 1 } @{$old{'extraemail'}};
 		foreach $e (@extra) {
@@ -568,8 +641,8 @@ else {
 			# Update user parameters (handle rename and .group)
 			if ($in{'mailuser'} ne $in{'oldpop3'}) {
 				# Check for a clash in this domain
-				($clash) = grep { $_->{'user'} eq $in{'mailuser'} &&
-				  $_->{'unix'} == $user->{'unix'} } @users;
+				($clash) = grep {
+				  $_->{'user'} eq $in{'mailuser'} } @users;
 				$clash && &error($text{'user_eclash2'});
 
 				# Has been renamed .. check for a username clash
@@ -630,7 +703,8 @@ else {
 
 		# Validate plugins
 		foreach $f (&list_mail_plugins()) {
-			$err = &plugin_call($f, "mailbox_validate", $user, \%old, \%in, $in{'new'}, $d);
+			$err = &plugin_call($f, "mailbox_validate", $user,
+					    \%old, \%in, $in{'new'}, $d);
 			&error($err) if ($err);
 			}
 
@@ -674,6 +748,40 @@ else {
 				# Rename his mail file (if needed)
 				&rename_mail_file($user, \%old);
 				}
+			}
+		elsif (&master_admin()) {
+			# Update shell if called in master admin mode, and
+			# only if available 
+			if (defined($in{'shell'})) {
+				&check_available_shell($in{'shell'}, 'mailbox',
+						       $user->{'shell'}) ||
+					&error($text{'user_eshell'});
+				$user->{'shell'} = $in{'shell'};
+				}
+			}
+
+		# Update SSH public key
+		if ($sshkey_mode) {
+			my $sshkey = $in{'sshkey'};
+			$sshkey =~ s/\r|\n/ /g;
+			$sshkey = &trim($sshkey);
+			$sshkeyerr = &validate_ssh_pubkey($sshkey);
+			&error($sshkeyerr) if ($sshkeyerr);
+			my $existing_key = &get_domain_user_ssh_pubkey(
+						$d, \%old);
+			if ($existing_key) {
+				&update_domain_user_ssh_pubkey(
+					$d, $user, \%old, $sshkey)
+				}
+			else {
+				$err = &add_domain_user_ssh_pubkey(
+					$d, $user, $sshkey);
+				&error($err) if ($err);
+				}
+			}
+		# Delete SSH public key
+		else {
+			&delete_domain_user_ssh_pubkey($d, \%old);
 			}
 
 		# Update the user and any virtusers and aliases

@@ -40,13 +40,13 @@ return (undef, $dom, $user, $pass);
 }
 
 # migration_ensim_migrate(file, domain, username, create-webmin, template-id,
-#			  &ipinfo, pass, [&parent], [prefix], [email])
+#			  &ipinfo, pass, [&parent], [prefix], [email], [&plan])
 # Actually extract the given ensim backup, and return the list of domains
 # created.
 sub migration_ensim_migrate
 {
 local ($file, $dom, $user, $webmin, $template, $ipinfo, $pass, $parent,
-       $prefix, $defemail) = @_;
+       $prefix, $defemail, $plan) = @_;
 local ($ok, $root) = &extract_ensim_dir($file);
 
 # Check for prefix clash
@@ -170,7 +170,8 @@ local $oldip = $ii ? $ii->{'config'}->{'nbaddr'} : undef;
 # Create the virtual server object
 local %dom;
 $prefix ||= &compute_prefix($dom, $group, $parent, 1);
-local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
+$plan = $parent ? &get_plan($parent->{'plan'}) :
+        $plan ? $plan : &get_default_plan();
 %dom = ( 'id', &domain_id(),
 	 'dom', $dom,
          'user', $duser,
@@ -181,7 +182,7 @@ local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
          'ugid', $ugid,
          'owner', "Migrated Ensim server $dom",
          'email', $defemail ? $defemail : $parent ? $parent->{'email'} : $email,
-	 'dns_ip', $ipinfo->{'virt'} || $config{'all_namevirtual'} ? undef :
+	 'dns_ip', $ipinfo->{'virt'} ? undef :
 		   &get_dns_ip($parent ? $parent->{'id'} : undef),
 	 $parent ? ( 'pass', $parent->{'pass'} )
 		 : ( 'pass', $pass,
@@ -413,7 +414,6 @@ if ($userident->{$origuser}) {
 		$uinfo->{'email'} = lc($mu).'@'.$dom;
 		if ($qu) {
 			$uinfo->{'quota'} = $uinfo->{'mquota'} =
-			  $uinfo->{'qquota'} =
 			    $qu->{'config'}->{'quota'} / &quota_bsize("home");
 			}
 		&create_user_home($uinfo, \%dom, 1);
@@ -564,6 +564,7 @@ if ($sa->{config}->{subdomain} and keys %{$sa->{config}->{subdomain}}) {
 				'email', $dom{'email'},
 				'name', 1,
 				'ip', $dom{'ip'},
+				'dns_ip', $dom{'dns_ip'},
 				'virt', 0,
 				'source', $dom{'source'},
 				'parent', $dom{'id'},
@@ -632,6 +633,7 @@ foreach my $ad (@site_aliases) {
 			 'email', $dom{'email'},
 			 'name', 1,
 			 'ip', $dom{'ip'},
+			 'dns_ip', $dom{'dns_ip'},
 			 'virt', 0,
 			 'source', $dom{'source'},
 			 'parent', $dom{'id'},

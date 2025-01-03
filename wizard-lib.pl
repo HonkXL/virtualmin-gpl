@@ -14,15 +14,15 @@ return undef;
 sub get_wizard_steps
 {
 return ( "intro",
-	 "memory",
+	 $config{'spam'} ? ( "memory" ) : ( ),
 	 $config{'virus'} ? ( "virus" ) : ( ),
 	 $config{'spam'} ? ( "spam" ) : ( ),
 	 "db",
 	 $config{'mysql'} ? ( "mysql" ) : ( ),
 	 $config{'dns'} ? ( "dns" ) : ( ),
+	 "email",
 	 "done",
 	 "hashpass",
-	 $config{'mysql'} ? ( "mysize" ) : ( ),
 	 "ssldir",
 	 "alldone" );
 }
@@ -33,24 +33,16 @@ print &ui_table_row(undef,
 	$text{'wizard_intro'}, 2);
 }
 
-# Show a form to enable or disable pre-loading and lookup-domain-daemon
+# Show a form to enable or disable lookup-domain-daemon
 sub wizard_show_memory
 {
-print &ui_table_row(undef, $text{'wizard_memory'}. "<p></p>", 2);
+print &ui_table_row(undef, $text{'wizard_memory2'}. "<p></p>", 2);
 
-local $mem = &get_uname_arch() =~ /64/ ? "40M" : "20M";
-print &ui_table_row($text{'wizard_memory_preload'},
-	&ui_radio("preload", $config{'preload_mode'} ? 1 : 0,
-		  [ [ 1, &text('wizard_memory_preload1', $mem)."<br>" ],
-		    [ 0, $text{'wizard_memory_preload0'} ] ]));
-
-if ($config{'spam'}) {
-	local $mem = &get_uname_arch() =~ /64/ ? "70M" : "35M";
-	print &ui_table_row($text{'wizard_memory_lookup'},
-		&ui_radio("lookup", &check_lookup_domain_daemon(),
-			  [ [ 1, &text('wizard_memory_lookup1', $mem)."<br>" ],
-			    [ 0, $text{'wizard_memory_lookup0'} ] ]));
-	}
+local $mem = &get_uname_arch() =~ /64/ ? "70M" : "35M";
+print &ui_table_row($text{'wizard_memory_lookup'},
+	&ui_radio("lookup", &check_lookup_domain_daemon(),
+		  [ [ 1, &text('wizard_memory_lookup1', $mem)."<br>" ],
+		    [ 0, $text{'wizard_memory_lookup0'} ] ]));
 }
 
 # Enable or disable pre-loading and lookup-domain-daemon
@@ -60,34 +52,17 @@ local ($in) = @_;
 &push_all_print();
 &set_all_null_print();
 
-if ($in->{'preload'} && !$config{'preload_mode'}) {
-	# Turn on preloading
-	$config{'preload_mode'} = 2;
-	&save_module_config();
-	&update_miniserv_preloads(2);
-	&restart_miniserv();
+local $lud = &check_lookup_domain_daemon();
+if ($in->{'lookup'} && !$lud) {
+	# Startup lookup daemon
+	&setup_lookup_domain_daemon();
 	}
-elsif (!$in->{'preload'} && $config{'preload_mode'}) {
-	# Turn off preloading
-	$config{'preload_mode'} = 0;
-	&save_module_config();
-	&update_miniserv_preloads(0);
-	&restart_miniserv();
+elsif (!$in->{'lookup'} && $lud) {
+	# Stop lookup daemon
+	&delete_lookup_domain_daemon();
 	}
-
-if ($config{'spam'}) {
-	local $lud = &check_lookup_domain_daemon();
-	if ($in->{'lookup'} && !$lud) {
-		# Startup lookup daemon
-		&setup_lookup_domain_daemon();
-		}
-	elsif (!$in->{'lookup'} && $lud) {
-		# Stop lookup daemon
-		&delete_lookup_domain_daemon();
-		}
-	$config{'no_lookup_domain_daemon'} = !$in->{'lookup'};
-	&save_module_config();
-	}
+$config{'no_lookup_domain_daemon'} = !$in->{'lookup'};
+&save_module_config();
 
 &pop_all_print();
 return undef;
@@ -232,9 +207,9 @@ sub wizard_show_db
 {
 print &ui_table_row(undef, $text{'wizard_db'}. "<p></p>", 2);
 print &ui_table_row($text{'wizard_db_mysql'},
-                    &ui_yesno_radio("mysql", $config{'mysql'}));
+                    &ui_yesno_radio("mysql", $config{'mysql'} ? 1 : 0));
 print &ui_table_row($text{'wizard_db_postgres'},
-                    &ui_yesno_radio("postgres", $config{'postgres'}));
+                    &ui_yesno_radio("postgres", $config{'postgres'} ? 1 : 0));
 }
 
 # Enable or disable MySQL and PostgreSQL, depending on user's selections
@@ -314,12 +289,6 @@ if (&mysql::is_mysql_running() == -1) {
 		&ui_textbox("mypass", undef, 20)."<br>\n".
 		&ui_checkbox("forcepass", 1, $text{'wizard_mysql_forcepass'}, 0));
 	}
-elsif (defined(&mysql::mysql_login_type) &&
-       &mysql::mysql_login_type($mysql::mysql_login || 'root')) {
-	# Using socket authentication
-	print &ui_table_row(undef, $text{'wizard_mysql5'}, 2);
-	print &ui_hidden("socket", 1);
-	}
 else {
 	# Offer to change the password
 	print &ui_hidden("needchange", 0);
@@ -333,8 +302,21 @@ else {
 					$text{'wizard_mysql_pass0'}));
 		}
 	else {
-		print &ui_table_row($text{'wizard_mysql_empty'},
+		if (defined(&mysql::mysql_login_type) &&
+		    &mysql::mysql_login_type($mysql::mysql_login || 'root')) {
+			# Using socket authentication
+			my $text_mysql_def = $text{'wizard_mysql_pass2'} .
+				"&nbsp;".&ui_help($text{'wizard_mysql5'});
+			print &ui_hidden("socket", 1);
+			print &ui_table_row($text{'wizard_mysql_pass'},
+			&ui_opt_textbox("mypass", &random_password(16), 20,
+					$text_mysql_def."<br>",
+					$text{'wizard_mysql_pass0'}));
+			}
+		else {
+			print &ui_table_row($text{'wizard_mysql_empty'},
 			&ui_textbox("mypass", &random_password(16), 20));
+			}
 		}
 
 	# Offer to clean up test/anonymous DB and user, if they exist
@@ -360,7 +342,7 @@ sub wizard_parse_mysql
 {
 local ($in) = @_;
 &require_mysql();
-if ($in->{'socket'}) {
+if ($in->{'socket'} && !$in->{'mypass'}) {
 	# No password needed
 	return undef;
 	}
@@ -412,146 +394,21 @@ if ($in->{'delanon'}) {
 	}
 
 # Work out the max mysql username length, but only for new installs
-if (!$config{'mysql_user_size'}) {
+if ($config{'mysql_user_size_auto'} != 2) {
 	eval {
 		local $main::error_must_die = 1;
 		my @str = &mysql::table_structure($mysql::master_db, "user");
 		my ($ufield) = grep { lc($_->{'field'}) eq 'user' } @str;
 		if ($ufield && $ufield->{'type'} =~ /\((\d+)\)/) {
+			&lock_file($module_config_file);
 			$config{'mysql_user_size'} = $1;
+			$config{'mysql_user_size_auto'} = 2;
 			&save_module_config();
+			&unlock_file($module_config_file);
 			}
 		};
 	}
 
-return undef;
-}
-
-# Show a form to select the MySQL size configuration
-sub wizard_show_mysize
-{
-print &ui_table_row(undef, $text{'wizard_mysize'} . "<p></p>", 2);
-
-&require_mysql();
-if (-r $mysql::config{'my_cnf'}) {
-	# Show options to change MySQL limits based on RAM
-	local $mem = &get_real_memory_size();
-	local $mysize = $config{'mysql_size'} || "";
-	local $recsize;
-	if ($mem) {
-		$recsize = $mem <= 1024*1024*1024 ? "small" :
-			   $mem <= 2048*1024*1024 ? "medium" :
-			   $mem <= 4096*1024*1024 ? "large" : "huge";
-		}
-	my @types = &list_mysql_size_setting_types();
-	my $conf = &mysql::get_mysql_config();
-	my $currt;
-	foreach my $t (@types) {
-		my ($oneset) = &list_mysql_size_settings($t);
-		my $sname = $oneset->[2] || "mysqld";
-		my ($sect) = grep { $_->{'name'} eq $sname &&
-				    $_->{'members'} } @$conf;
-		if ($sect) {
-			my $v = &mysql::find_value($oneset->[0], $sect->{'members'});
-			if ($v && $v eq $oneset->[1]) {
-				$currt = $t;
-				}
-			}
-		}
-	$currt ||= "default";
-	my $recom = 'wizard_myrec';
-	# All types like 'small' 'medium' 'large' and 'huge'
-	my @types_r = map { [ $_, $text{'wizard_mysize_'.$_}.
-			        ($_ eq $recsize ? " <span data-$recom>$text{$recom}</span>" : "") ] } @types;
-
-	# Always allow to skip MySQL setup and use service defaults
-	# All types depend on if wizard runs the first time or not
-	my $types_all = [ @types_r ];
-	print &ui_table_row($text{'wizard_mysize_type'},
-		    &ui_radio_table("mysize", $currt, $types_all));
-	}
-else {
-	print &ui_table_row(&text('wizard_mysize_ecnf',
-				  "<tt>$mysql::config{'my_cnf'}</tt>"));
-	}
-}
-
-sub wizard_parse_mysize
-{
-local ($in) = @_;
-&require_mysql();
-if ($in->{'mysize'} && -r $mysql::config{'my_cnf'}) {
-	# Stop MySQL
-	local $running = &mysql::is_mysql_running();
-	my ($myver, $variant);
-	if ($running) {
-
-		# Get MySQL/MariaDB version and variant before stopping it
-		($myver, $variant) = &get_dom_remote_mysql_version();
-		&mysql::stop_mysql();
-		}
-
-	# Copy my.cnf in preparation for fixing it
-	my $temp = &transname();
-	my $conf = &mysql::get_mysql_config();
-	my @files = &unique(map { $_->{'file'} } @$conf);
-	foreach my $file (@files) {
-		my $bf = $file;
-		$bf =~ s/.*\///;
-		&copy_source_dest($file, $temp."_".$bf);
-		&lock_file($file);
-		}
-
-	foreach my $s (&list_mysql_size_settings($in->{'mysize'}, $myver, $variant)) {
-		my $sname = $s->[2] || "mysqld";
-		my ($sect) = grep { $_->{'name'} eq $sname &&
-				    $_->{'members'} } @$conf;
-		if ($sect) {
-			&mysql::save_directive($conf, $sect, $s->[0],
-					       $s->[1] ? [ $s->[1] ] : [ ]);
-			}
-		}
-	$config{'mysql_size'} = $in->{'mysize'};
-
-	# Adjust max packet size if default is too small
-	my ($sect) = grep { $_->{'name'} eq "mysqld" &&
-			    $_->{'members'} } @$conf;
-	if ($sect) {
-		my $pack = &mysql::find_value(
-			"max_allowed_packet", $sect->{'members'});
-		if (($pack && &php_value_diff($pack, "64M") < 0) ||
-		    !$pack) {
-			&mysql::save_directive(
-				$conf, $sect, "max_allowed_packet", [ "64M" ]);
-			}
-		}
-
-	# Write out the config files
-	foreach my $file (@files) {
-		&flush_file_lines($file, undef, 1);
-		&unlock_file($file);
-		}
-
-	# Start it up again
-	if ($running) {
-		&mysql::stop_mysql();
-		my $err = &mysql::start_mysql();
-		if ($err) {
-			# Panic! MySQL couldn't start with the new config ..
-			# try to roll it back
-			foreach my $file (@files) {
-				my $bf = $file;
-				$bf =~ s/.*\///;
-				&copy_source_dest($temp."_".$bf, $file);
-				}
-			&mysql::start_mysql();
-			return &text('wizard_emysizestart', $err);
-			}
-		}
-	}
-&lock_file($module_config_file);
-&save_module_config();
-&unlock_file($module_config_file);
 return undef;
 }
 
@@ -619,6 +476,30 @@ $tmpl->{'dns_ns'} = join(" ", @secns);
 # Save skip option
 $config{'prins_skip'} = $in{'prins_skip'};
 &save_module_config();
+}
+
+sub wizard_show_email
+{
+&foreign_require("mailboxes");
+print &ui_table_row(undef, $text{'wizard_email_desc'}, 2);
+
+print &ui_table_row($text{'wizard_from_addr'},
+	&ui_opt_textbox("from_addr", $config{'from_addr'}, 50,
+		$text{'default'}." (".&mailboxes::get_from_address().")<br>",
+		$text{'wizard_from_addr2'}));
+}
+
+sub wizard_parse_email
+{
+local ($in) = @_;
+if ($in->{'from_addr_def'}) {
+	delete($config{'from_addr'});
+	}
+else {
+	$in->{'from_addr'} =~ /\S+\@\S+/ || return $text{'wizard_efrom_addr'};
+	$config{'from_addr'} = $in->{'from_addr'};
+	&save_module_config();
+	}
 }
 
 sub wizard_show_done

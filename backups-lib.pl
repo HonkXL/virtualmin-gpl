@@ -209,6 +209,7 @@ elsif (!$backup->{'enabled'} && $job) {
 sub delete_scheduled_backup
 {
 local ($backup) = @_;
+$backup->{'id'} || &error("Missing backup ID!");
 $backup->{'id'} == 1 && &error("The default backup cannot be deleted!");
 &unlink_file($backup->{'file'});
 
@@ -251,7 +252,7 @@ return $asd;
 
 # backup_domains(file, &domains, &features, dir-format, skip-errors, &options,
 #		 home-format, &virtualmin-backups, mkdir, onebyone, as-owner,
-#		 &callback-func, incremental, on-schedule, &key, kill-running,
+#		 &callback-func, differential, on-schedule, &key, kill-running,
 #		 compression-format)
 # Perform a backup of one or more domains into a single tar.gz file. Returns
 # an OK flag, the size of the backup file, and a list of domains for which
@@ -281,7 +282,7 @@ if (!defined($compression) || $compression eq '') {
 	}
 $opts->{'dir'}->{'compression'} = $compression;
 
-# Make sure incremental mode is supported with the compression format
+# Make sure differential mode is supported with the compression format
 if ($compression == 3 && $increment) {
 	&$first_print($text{'backup_eincrzip'});
 	return (0, 0, $doms);
@@ -322,6 +323,9 @@ local @okurls;
 foreach my $desturl (@$desturls) {
 	local ($mode, $user, $pass, $server, $path, $port) =
 		&parse_backup_url($desturl);
+	if ($mode == 0) {
+		$desturl = $path;	# Canonicalize path
+		}
 	if ($mode < 0) {
 		&$first_print(&text('backup_edesturl', &nice_backup_url($desturl), $user));
 		return (0, 0, $doms);
@@ -440,11 +444,6 @@ foreach my $desturl (@$desturls) {
 			&$first_print($text{'backup_es3nopath'});
 			next;
 			}
-		local ($cerr) = &check_s3();
-		if ($cerr) {
-			&$first_print($cerr);
-			next;
-			}
 		local $err = &init_s3_bucket($user, $pass, $server,
 					     $s3_upload_tries,
 					     $config{'s3_location'});
@@ -554,6 +553,26 @@ foreach my $desturl (@$desturls) {
 		my ($already) = grep { $_->{'name'} eq $server } @$containers;
 		if (!$already) {
 			local $err = &create_azure_container($server);
+			if ($err) {
+				&$second_print($err);
+				next;
+				}
+			}
+		}
+	elsif ($mode == 12) {
+		# Connect to Drive and create the folder
+		my $folders = &list_drive_folders();
+		if (!ref($folders)) {
+			&$second_print($folders);
+			next;
+			}
+		if (!$path && !$homefmt && !$dirfmt) {
+			&$second_print($text{'backup_edesthomedir'});
+			next;
+			}
+		my $already = &get_drive_folder($server);
+		if (!ref($already)) {
+			local $err = &create_drive_folder($server);
 			if ($err) {
 				&$second_print($err);
 				next;
@@ -722,7 +741,7 @@ foreach my $desturl (@$desturls) {
 			&$second_print(&text('backup_ekilllock', $lpid));
 			}
 		else {
-			# Exit immediatel
+			# Exit immediately
 			&$second_print(&text('backup_esamelock', $lpid));
 			return (0, 0, $doms);
 			}
@@ -845,11 +864,12 @@ DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
 		}
 
 	&$indent_print();
+	my @bplugins = &list_backup_plugins();
 	foreach $f (@backupfeatures) {
-		local $bfunc = "backup_$f";
-		local $fok;
-		local $ffile;
-		if (&indexof($f, &list_backup_plugins()) < 0 &&
+		my $bfunc = "backup_$f";
+		my $fok;
+		my $ffile = "$backupdir/$d->{'dom'}_$f";
+		if (&indexof($f, @bplugins) < 0 &&
 		    defined(&$bfunc) &&
 		    ($d->{$f} || $f eq "virtualmin" ||
 		     $f eq "mail" && &can_domain_have_users($d))) {
@@ -858,9 +878,6 @@ DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
 				# For a home format backup, write the home
 				# itself to the backup destination
 				$ffile = "$dest/$d->{'dom'}.$hfsuffix";
-				}
-			else {
-				$ffile = "$backupdir/$d->{'dom'}_$f";
 				}
 			eval {
 				local $main::error_must_die = 1;
@@ -876,11 +893,15 @@ DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
 				$fok = 0;
 				}
 			}
-		elsif (&indexof($f, &list_backup_plugins()) >= 0 &&
-		       $d->{$f}) {
+		elsif (&indexof($f, @bplugins) >= 0 && $d->{$f}) {
 			# Call plugin backup function
-			$ffile = "$backupdir/$d->{'dom'}_$f";
 			$fok = &plugin_call($f, "feature_backup",
+					  $d, $ffile, $opts->{$f}, $homefmt,
+					  $increment, $asd, $opts);
+			}
+		elsif (&indexof($f, @bplugins) >= 0) {
+			# Call plugin always backup function
+			$fok = &plugin_call($f, "feature_always_backup",
 					  $d, $ffile, $opts->{$f}, $homefmt,
 					  $increment, $asd, $opts);
 			}
@@ -1088,13 +1109,14 @@ DOMAIN: foreach $d (sort { $a->{'dom'} cmp $b->{'dom'} } @$doms) {
 					$dfpath.".dom", $domtemp) if (!$err);
 				}
 			elsif ($mode == 7 || $mode == 8 || $mode == 10 ||
-			       $mode == 11) {
+			       $mode == 11 || $mode == 12) {
 				# Via Google, Dropbox or Backblaze upload
 				&$first_print($text{'backup_upload'.$mode});
 				my $dfpath = $path ? $path."/".$df : $df;
 				my $func = $mode == 7 ? \&upload_gcs_file :
 					   $mode == 8 ? \&upload_dropbox_file :
 					   $mode == 11 ? \&upload_azure_file :
+					   $mode == 12 ? \&upload_drive_file :
 							\&upload_bb_file;
 				my $tries = $mode == 7 ? $gcs_upload_tries :
 					    $mode == 8 ? $dropbox_upload_tries :
@@ -1157,7 +1179,7 @@ local %doneseen;
 # Add all requested Virtualmin config information
 local $vcount = 0;
 if (@$vbs) {
-	&$first_print($text{'backup_global'});
+	&$first_print($text{'backup_global2'});
 	&$indent_print();
 	if ($homefmt) {
 		# Need to make a backup dir, as we cannot use one of the
@@ -1169,8 +1191,9 @@ if (@$vbs) {
 		local $vfile = "$backupdir/virtualmin_".$v;
 		local $vfunc = "virtualmin_backup_".$v;
 		if (defined(&$vfunc)) {
-			&$vfunc($vfile, $vbs);
-			$vcount++;
+			if (&$vfunc($vfile, $vbs)) {
+				$vcount++;
+				}
 			}
 		}
 	&$outdent_print();
@@ -1212,6 +1235,10 @@ if ($ok) {
 				}
 			elsif ($compression == 3) {
 				$destfile =~ s/\.tar$/\.zip/;
+				}
+			elsif ($compression == 4) {
+				$destfile .= ".zst";
+				$comp = &get_zstd_command();
 				}
 
 			# Create command that writes to the final file
@@ -1269,12 +1296,30 @@ if ($ok) {
 		}
 	else {
 		# Tar up the directory into the final file
-		local $comp = "cat";
+		local $comp;
 		if ($dest =~ /\.(gz|tgz)$/i) {
 			$comp = &get_gzip_command();
 			}
 		elsif ($dest =~ /\.(bz2|tbz2)$/i) {
 			$comp = &get_bzip2_command();
+			}
+		elsif ($dest =~ /\.(zst|zstd)$/i) {
+			$comp = &get_zstd_command();
+			}
+		elsif ($dest =~ /\.tar$/i) {
+			$comp = "cat";
+			}
+		elsif ($compression == 0) {
+			$comp = &get_gzip_command();
+			}
+		elsif ($compression == 3) {
+			$comp = &get_bzip2_command();
+			}
+		elsif ($compression == 4) {
+			$comp = &get_zstd_command();
+			}
+		else {
+			$comp = "cat";
 			}
 
 		# Create writer command, which may run as the domain user
@@ -1680,7 +1725,8 @@ foreach my $desturl (@$desturls) {
 		&unlink_file($domtemp);
 		&$second_print($text{'setup_done'}) if ($ok);
 		}
-	elsif ($ok && ($mode == 7 || $mode == 8 || $mode == 10 || $mode == 11) &&
+	elsif ($ok && ($mode == 7 || $mode == 8 || $mode == 10 ||
+		       $mode == 11 || $mode == 12) &&
 	       (@destfiles || !$dirfmt)) {
 		# Upload to Google cloud storage, Dropbox or Backblaze
 		local $err;
@@ -1688,6 +1734,7 @@ foreach my $desturl (@$desturls) {
 		local $func = $mode == 7 ? \&upload_gcs_file :
 			      $mode == 8 ? \&upload_dropbox_file :
 			      $mode == 11 ? \&upload_azure_file :
+			      $mode == 12 ? \&upload_drive_file :
 					   \&upload_bb_file;
 		local $tries = $mode == 7 ? $gcs_upload_tries :
 			       $mode == 8 ? $dropbox_upload_tries :
@@ -1929,10 +1976,15 @@ my %doneerrdom;
 
 # Show some status
 if ($ok) {
-	&$first_print(
-	  ($okcount || $errcount ?
-	    &text('backup_finalstatus', $okcount, $errcount) : "")."\n".
-	  ($vcount ? &text('backup_finalstatus2', $vcount) : ""));
+	if ($okcount && $errcount) {
+		&$first_print(&text('backup_finalstatus', $okcount, $errcount));
+		}
+	elsif ($okcount) {
+		&$first_print(&text('backup_finalstatusok', $okcount));
+		}
+	if ($vcount) {
+		&$first_print(&text('backup_finalstatus2', $vcount));
+		}
 	if ($errcount) {
 		&$first_print(&text('backup_errorsites',
 			      join(" ", map { $_->{'dom'} } @errdoms)));
@@ -1944,8 +1996,8 @@ foreach my $lockfile (@lockfiles) {
 	&unlock_file($lockfile);
 	}
 
-# For any domains that failed and were full backups, clear the incremental
-# file so that future incremental backups aren't diffs against it
+# For any domains that failed and were full backups, clear the differential
+# file so that future differential backups aren't diffs against it
 if ($increment == 0 && &has_incremental_tar()) {
 	foreach my $d (@errdoms) {
 		if ($d->{'id'}) {
@@ -2014,6 +2066,10 @@ if ($mode < 0) {
 	&$second_print(&text('backup_edesturl', $file, $user));
 	return 0;
 	}
+if ($mode == 0) {
+	# Canonicalize path
+	$file = $path;
+	}
 local $starpass = "*" x length($pass);
 if ($mode > 0) {
 	# Need to download to temp file/directory first
@@ -2025,14 +2081,8 @@ if ($mode > 0) {
 		      $mode == 9 ? $text{'restore_downloadwebmin'} :
 		      $mode == 10 ? $text{'restore_downloadbb'} :
 		      $mode == 11 ? $text{'restore_downloadaz'} :
+		      $mode == 12 ? $text{'restore_downloaddr'} :
 				   $text{'restore_downloadssh'});
-	if ($mode == 3) {
-		local ($cerr) = &check_s3();
-		if ($cerr) {
-			&$second_print($cerr);
-			return 0;
-			}
-		}
 	$backup = &transname_owned($asd);
 	local $tstart = time();
 	local $derr = &download_backup($_[0], $backup,
@@ -2044,7 +2094,7 @@ if ($mode > 0) {
 		}
 	else {
 		# Done .. account for bandwidth
-		if ($asd) {
+		if ($asd && $asd->{'id'}) {
 			local $sz = &disk_usage_kb($backup)*1024;
 			&record_backup_bandwidth($asd, $sz, 0, $tstart, time());
 			}
@@ -2141,6 +2191,7 @@ if ($ok) {
 			local $comp = $cf == 1 ? &get_gunzip_command()." -c" :
 				      $cf == 2 ? "uncompress -c" :
 				      $cf == 3 ? &get_bunzip2_command()." -c" :
+				      $cf == 6 ? &get_unzstd_command() :
 						 "cat";
 			local ($compcmd) = &split_quoted_string($comp);
 			if (!&has_command($compcmd)) {
@@ -2181,10 +2232,12 @@ if ($ok) {
 			$lerr =~ s/\r/ /g;
 			my $l = length($key->{'key'});
 			if ($lerr =~ /Good\s+signature\s+from/) {
-				if ($lerr =~ /(key,\s+ID|using\s+\S+\s+key)\s+([A-Za-z0-9]+)/ && substr($2, -$l) eq $key->{'key'}) {
+				if ($lerr =~ /(key,\s+ID|using\s+\S+\s+key)\s+([A-Za-z0-9]+)/ &&
+				    (substr($2, -$l) eq $key->{'key'} || $2 eq substr($key->{'key'}, -length($2)))) {
 					$keyok = 1;
 					}
-				elsif ($lerr =~ /(key\s+ID)\s+([A-Za-z0-9]+)/ && substr($2, -$l) eq $key->{'key'}) {
+				elsif ($lerr =~ /(key\s+ID)\s+([A-Za-z0-9]+)/ &&
+				       (substr($2, -$l) eq $key->{'key'} || $2 eq substr($key->{'key'}, -length($2)))) {
 					$keyok = 1;
 					}
 				}
@@ -2353,6 +2406,7 @@ if ($ok) {
 			# If the domain originally had a different webserver
 			# enabled, use the one from this system instead
 			local $oldweb = $d->{'backup_web_type'};
+			my $changedweb = 0;
 			if (!$oldweb && $d->{'web'}) {
 				$oldweb = 'web';
 				}
@@ -2364,6 +2418,7 @@ if ($ok) {
 				$d->{$oldweb} = 0;
 				my $newweb = &domain_has_website();
 				$d->{$newweb} = 1 if ($newweb);
+				$changedweb = 1;
 				}
 			local $oldssl = $d->{'backup_ssl_type'};
 			if (!$oldssl && $d->{'ssl'}) {
@@ -2468,6 +2523,25 @@ if ($ok) {
 				$d->{'reseller'} = join(" ", @existing);
 				}
 
+			# Does the ACME provider exist?
+			if ($d->{'letsencrypt_id'}) {
+				if (defined(&list_acme_providers)) {
+					($acme) = grep { $_->{'id'} eq $d->{'letsencrypt_id'} } &list_acme_providers();
+					}
+				elsif ($d->{'letsencrypt_id'} eq '1') {
+					$acme = { 'type' => 'letsencrypt' };
+					}
+				if (!$acme && $skipwarnings) {
+					&$second_print($text{'restore_eacme2'});
+					delete($d->{'letsencrypt_id'});
+					}
+				elsif (!$acme) {
+					&$second_print($text{'restore_eacme'});
+					if ($continue) { next DOMAIN; }
+					else { last DOMAIN; }
+					}
+				}
+
 			# Does the remote MySQL server module exist? If not,
 			# use the default. However, if this is a sub-server,
 			# always use the setting from parent.
@@ -2526,7 +2600,7 @@ if ($ok) {
 
 			# If the domain had a custom ugroup before, make sure
 			# it exists on the new system
-			if (!$parentdom && $d->{'gid'} != $d->{'ugid'} &&
+			if (!$parentdom && $d->{'group'} ne $d->{'ugroup'} &&
 			    !getgrnam($d->{'ugroup'})) {
 				if ($skipwarnings) {
 					&$second_print(&text('restore_eugroup2',
@@ -2565,10 +2639,11 @@ if ($ok) {
 				}
 
 			# Build maps of used UIDs and GIDs
-			local (%gtaken, %taken);
-			&build_group_taken(\%gtaken);
-			&build_taken(\%taken);
+			local (%gtaken, %taken, %usertaken, %grouptaken);
+			&build_group_taken(\%gtaken, \%grouptaken);
+			&build_taken(\%taken, \%usertaken);
 
+			&$indent_print();
 			if ($parentdom) {
 				# UID and GID always come from parent
 				$d->{'uid'} = $parentdom->{'uid'};
@@ -2577,6 +2652,7 @@ if ($ok) {
 				}
 			elsif ($opts->{'reuid'}) {
 				# Re-allocate the UID and GID
+				&$first_print($text{'restore_reuiding'});
 				local ($samegid) = ($d->{'gid'}==$d->{'ugid'});
 				$d->{'gid'} = &allocate_gid(\%gtaken);
 				$d->{'ugid'} = $d->{'gid'};
@@ -2589,6 +2665,8 @@ if ($ok) {
                                                 $d->{'ugid'} = $ginfo[2];
                                                 }
                                         }
+				&$second_print(&text('restore_reuiddone',
+					$d->{'uid'}, $d->{'gid'}));
 				}
 			else {
 				# UID and GID are the same - but check for a
@@ -2614,22 +2692,46 @@ if ($ok) {
 					}
 				}
 
+			my $changeduser = 0;
+			if (!$parentdom && $opts->{'reuser'} &&
+			    $usertaken{$d->{'user'}}) {
+				# Re-allocated user name if there is a clash
+				&$first_print($text{'restore_reusering'});
+				my ($newuser) = &unixuser_name($d->{'dom'});
+				if ($newuser) {
+					$d->{'restoreolduser'} = $d->{'user'};
+					$d->{'user'} = $newuser;
+					$changeduser = 1;
+					}
+				}
+			if (!$parentdom && $opts->{'reuser'} &&
+			    $grouptaken{$d->{'group'}}) {
+				# Re-allocated group name if there is a clash
+				&$first_print($text{'restore_reusering'})
+					if (!$changeduser);
+				my ($newgroup) = &unixgroup_name($d->{'dom'});
+				if ($newgroup) {
+					$d->{'restoreoldgroup'} = $d->{'group'};
+					$d->{'group'} = $newgroup;
+					$d->{'ugroup'} = $newgroup;
+					$changeduser = 1;
+					}
+				}
+			if ($changeduser) {
+				&$second_print(&text('restore_reusered',
+					$d->{'user'}, $d->{'group'}));
+				}
+			&$outdent_print();
+
 			# Set the home directory to match this system's base, 
-			# but only if it's not compatible with this system
+			# but only if the old one is not compatible with this
+			# system, or the username changed
 			&require_useradmin();
 			local $newhome = &server_home_directory($d, $parentdom);
 			local $oldhome = $d->{'home'};
-			if ($oldhome !~ /^\Q$home_base\E\//) {
-				# Totally different base
-				$d->{'home'} = $newhome;
-				}
-			if ($d->{'home'} ne $oldhome) {
-				# Fix up setings that reference the home
-				$d->{'ssl_cert'} =~s/\Q$oldhome\E/$d->{'home'}/;
-				$d->{'ssl_key'} =~ s/\Q$oldhome\E/$d->{'home'}/;
-				$d->{'ssl_chain'} =~ s/\Q$oldhome\E/$d->{'home'}/;
-				$d->{'ssl_everything'} =~ s/\Q$oldhome\E/$d->{'home'}/;
-				$d->{'ssl_combined'} =~ s/\Q$oldhome\E/$d->{'home'}/;
+			if (($oldhome !~ /^\Q$home_base\E\// || $changeduser) &&
+			    $newhome ne $oldhome) {
+				&change_home_directory($d, $newhome);
 				}
 
 			# Fix up the IPv4 address if needed
@@ -2710,7 +2812,7 @@ if ($ok) {
 					else { last DOMAIN; }
 					}
 				}
-			elsif (!$d->{'virt'} && !$config{'all_namevirtual'}) {
+			elsif (!$d->{'virt'}) {
 				# Use this system's default IP
 				$d->{'ip'} = $defip;
 				if (!$d->{'ip'}) {
@@ -2824,8 +2926,8 @@ if ($ok) {
 			# DNS external IP is always reset to match this system,
 			# as the old setting is unlikely to be correct.
 			$d->{'old_dns_ip'} = $d->{'dns_ip'};
-			$d->{'dns_ip'} = $virt || $config{'all_namevirtual'} ?
-				undef : &get_dns_ip($d->{'reseller'});
+			$d->{'dns_ip'} = $virt ? undef
+					       : &get_dns_ip($d->{'reseller'});
 
 			# Change provisioning settings to match this system
 			foreach my $f (&list_provision_features()) {
@@ -2870,7 +2972,9 @@ if ($ok) {
 			$d->{'nocreationmail'} = 1;
 			$d->{'nocreationscripts'} = 1;
 			$d->{'nocopyskel'} = 1;
+			$d->{'notmplcgimode'} = 1 if (!$changedweb);
 			$d->{'auto_letsencrypt'} = 0;
+			$d->{'no_mysql_db'} = 1;
 			my $err = &create_virtual_server($d, $parentdom,
 			       $parentdom ? $parentdom->{'user'} : undef, 1);
 			&$outdent_print();
@@ -2932,14 +3036,14 @@ if ($ok) {
 			my $domain_failed = 0;
 			foreach $f (@rfeatures) {
 				# Restore features
-				local $rfunc = "restore_$f";
-				local $fok;
+				my $rfunc = "restore_$f";
+				my $fok;
+				my $ffile = "$restoredir/$d->{'dom'}_$f";
 				if (&indexof($f, @bplugins) < 0 &&
 				    defined(&$rfunc) &&
 				    ($d->{$f} || $f eq "virtualmin" ||
 				     $f eq "mail" &&
 				     &can_domain_have_users($d))) {
-					local $ffile;
 					local $p = "$backup/$d->{'dom'}";
 					local $hft =
 					    $homeformat{"$p.tar.gz"} ||
@@ -2955,8 +3059,6 @@ if ($ok) {
 						@fopts = ( $ffile );
 						}
 					else {
-						$ffile = $restoredir."/".
-							 $d->{'dom'}."_".$f;
 						@fopts = ( $ffile, glob("$ffile.*") );
 						}
 					if ($f eq "virtualmin") {
@@ -2973,16 +3075,20 @@ if ($ok) {
 						}
 					}
 				elsif (&indexof($f, @bplugins) >= 0 &&
-				       $d->{$f}) {
+				       $d->{$f} && -r $ffile) {
 					# Restoring a plugin feature
-					local $ffile =
-						"$restoredir/$d->{'dom'}_$f";
-					if (-r $ffile) {
-						$fok = &plugin_call($f,
-						    "feature_restore", $d,
-						    $ffile, $opts->{$f}, $opts,
-						    $hft, \%oldd, $asowner);
-						}
+					$fok = &plugin_call($f,
+						"feature_restore", $d,
+						$ffile, $opts->{$f}, $opts,
+						$hft, \%oldd, $asowner);
+					}
+				elsif (&indexof($f, @bplugins) >= 0 &&
+				       -r $ffile) {
+					# Restoring a plugin
+					$fok = &plugin_call($f,
+						"feature_always_restore", $d,
+						$ffile, $opts->{$f}, $opts,
+						$hft, \%oldd, $asowner);
 					}
 				if (defined($fok) && !$fok) {
 					# Handle feature failure
@@ -3036,9 +3142,10 @@ elsif (!$ok) {
 
 # If any created restored domains had scripts, re-verify their dependencies
 local @wasmissing = grep { $_->{'wasmissing'} } @$doms;
-if (defined(&list_domain_scripts) && scalar(@wasmissing)) {
+my $bootcount = 0;
+local %scache;
+if (@wasmissing) {
 	&$first_print($text{'restore_phpmods'});
-	local %scache;
 	local (@phpinstalled, $phpanyfailed, @phpbad);
 	foreach my $d (@wasmissing) {
 		local @sinfos = &list_domain_scripts($d);
@@ -3050,6 +3157,9 @@ if (defined(&list_domain_scripts) && scalar(@wasmissing)) {
 					&get_script($sinfo->{'name'});
 				}
 			next if (!$script);
+			my $bfunc = $script->{'bootup_func'};
+			my $sfunc = $script->{'start_server_func'};
+			$bootcount++ if (defined(&$bfunc) || defined(&$bfunc));
 			next if (&indexof('php', @{$script->{'uses'}}) < 0);
 
 			# Work out PHP version for this particular install. Use
@@ -3108,6 +3218,37 @@ if (defined(&list_domain_scripts) && scalar(@wasmissing)) {
 		}
 	}
 
+# If any created restored domains had scripts that started servers at boot
+# time, re-start them
+# XXX re-start regardless?
+if (@wasmissing && $bootcount) {
+	&$first_print($text{'restore_scriptstart'});
+	my $booted = 0;
+	foreach my $d (@wasmissing) {
+		local @sinfos = &list_domain_scripts($d);
+		foreach my $sinfo (@sinfos) {
+			local $script = $scache{$sinfo->{'name'}};
+			next if (!$script);
+			my $bfunc = $script->{'bootup_func'};
+			my $sfunc = $script->{'start_server_func'};
+			next if (!defined(&$bfunc) && !defined(&$bfunc));
+			if (defined(&$bfunc)) {
+				&$bfunc($d, $sinfo->{'opts'});
+				}
+			if (defined(&$sfunc)) {
+				&$sfunc($d, $sinfo->{'opts'});
+				}
+			$booted++;
+			}
+		}
+	if ($booted) {
+		&$second_print(&text('restore_scriptstarted', $booted));
+		}
+	else {
+		&$second_print($text{'restore_noscriptstart'});
+		}
+	}
+
 # Apply symlink and security restrictions on restored domains
 if (!$config{'allow_symlinks'}) {
 	&fix_symlink_security($doms);
@@ -3145,6 +3286,10 @@ local ($file, $wantdoms, $key, $asd) = @_;
 local $backup;
 local ($mode, $user, $pass, $server, $path, $port) = &parse_backup_url($file);
 local $doms;
+if ($mode == 0) {
+	# Canonicalize path
+	$file = $path;
+	}
 local @fst = stat($file);
 local @ist = stat($file.".info");
 local @dst = stat($file.".dom");
@@ -3162,7 +3307,7 @@ if ($mode == 3) {
 elsif ($mode > 0) {
 	# Download info files via SSH or FTP
 	local $infotemp = &transname_owned($asd);
-	local $infoerr = &download_backup($_[0], $infotemp, undef, undef, 1, $asd);
+	local $infoerr = &download_backup($file, $infotemp, undef, undef, 1, $asd);
 	if (!$infoerr) {
 		if (-d $infotemp) {
 			# Got a whole dir of .info files
@@ -3190,7 +3335,7 @@ elsif ($mode > 0) {
 elsif (@ist && $ist[9] >= $fst[9]) {
 	# Local .info file exists, and is new
 	local $oneinfo = &unserialise_variable(
-			&read_file_contents($_[0].".info"));
+			&read_file_contents($file.".info"));
 	%info = %$oneinfo if (%$oneinfo);
 	}
 
@@ -3213,7 +3358,7 @@ if ($mode == 3) {
 elsif ($mode > 0) {
 	# Download .dom files via SSH or FTP
 	local $domtemp = &transname_owned($asd);
-	local $domerr = &download_backup($_[0], $domtemp, undef, undef, 2, $asd);
+	local $domerr = &download_backup($file, $domtemp, undef, undef, 2, $asd);
 	if (!$domerr) {
 		if (-d $domtemp) {
 			# Got a whole dir of .dom files
@@ -3241,7 +3386,7 @@ elsif ($mode > 0) {
 elsif (@dst && $dst[9] >= $fst[9]) {
 	# Local .dom file exists, and is new
 	local $onedom = &unserialise_variable(
-			&read_file_contents($_[0].".dom"));
+			&read_file_contents($file.".dom"));
 	%dom = %$onedom if (%$onedom);
 	}
 
@@ -3266,12 +3411,12 @@ if (%dom && %nvinfo && keys(%dom) >= keys(%nvinfo)) {
 if ($mode > 0) {
 	# Need to download the whole file
 	$backup = &transname_owned($asd);
-	local $derr = &download_backup($_[0], $backup, undef, undef, 0, $asd);
+	local $derr = &download_backup($file, $backup, undef, undef, 0, $asd);
 	return $derr if ($derr);
 	}
 else {
 	# Use local backup file
-	$backup = $_[0];
+	$backup = $file;
 	}
 
 local %rv;
@@ -3336,6 +3481,7 @@ else {
 		$comp = $cf == 1 ? &get_gunzip_command()." -c" :
 			$cf == 2 ? "uncompress -c" :
 			$cf == 3 ? &get_bunzip2_command()." -c" :
+			$cf == 4 ? &get_unzstd_command() :
 				   "cat";
 		local ($compcmd) = &split_quoted_string($comp);
 		if (!&has_command($compcmd)) {
@@ -3644,11 +3790,13 @@ elsif ($mode == 3) {
 	push(@wantdoms, "virtualmin") if (@$vbs);
 	@wantdoms = (keys %$s3b) if (!@wantdoms);
 	&make_dir($temp, 0711);
+	my %done;
 	foreach my $dname (@wantdoms) {
 		local $si = $s3b->{$dname};
 		if (!$si) {
 			return &text('restore_es3info', $dname);
 			}
+		next if ($done{$si->{'file'}}++);
 		local $tempfile = $si->{'file'};
 		$tempfile =~ s/^(\S+)\///;
 		local $err = &s3_download($user, $pass, $server,
@@ -3734,7 +3882,7 @@ elsif ($mode == 6) {
 		return $err if ($err);
 		}
 	}
-elsif ($mode == 7 || $mode == 8 || $mode == 10 || $mode == 11) {
+elsif ($mode == 7 || $mode == 8 || $mode == 10 || $mode == 11 || $mode == 12) {
 	# Download from Google cloud storage, Dropbox or Backblaze
 	local $files;
 	local $func;
@@ -3751,6 +3899,13 @@ elsif ($mode == 7 || $mode == 8 || $mode == 10 || $mode == 11) {
 		return "Failed to list $server : $files" if (!ref($files));
 		$files = [ map { $_->{'name'} } @$files ];
 		$func = \&download_azure_file;
+		}
+	elsif ($mode == 12) {
+		# Get files under folder from Google drive
+		$files = &list_drive_files($server);
+		return "Failed to list $server : $files" if (!ref($files));
+		$files = [ map { $_->{'name'} } @$files ];
+		$func = \&download_drive_file;
 		}
 	elsif ($mode == 8 || $mode == 10) {
 		# Get files under dir from Dropbox or Backblaze. These have to
@@ -3959,11 +4114,13 @@ return $rv;
 # Converts a URL like ftp:// or a filename into its components. These will be
 # protocol (1 for FTP, 2 for SSH, 0 for local, 3 for S3, 4 for download,
 # 5 for upload, 6 for rackspace, 7 for GCS, 8 for Dropbox, 9 for Webmin,
-# 10 for Backblaze, 11 for Azure), login, password, host, path and port
+# 10 for Backblaze, 11 for Azure, 12 for Drive), login, password, host, path
+# and port
 sub parse_backup_url
 {
-local ($url) = @_;
-local @rv;
+my ($url) = @_;
+my @rv;
+my $defs3 = &get_default_s3_account();
 if ($url =~ /^ftp:\/\/([^:]*):(.*)\@\[([^\]]+)\](:\d+)?:?(\/.*)$/ ||
     $url =~ /^ftp:\/\/([^:]*):(.*)\@\[([^\]]+)\](:\d+)?:(.+)$/ ||
     $url =~ /^ftp:\/\/([^:]*):(.*)\@([^\/:\@]+)(:\d+)?:?(\/.*)$/ ||
@@ -3995,14 +4152,23 @@ elsif ($url =~ /^webmin:\/\/([^\/:\@]+)(:\d+)?:?(\/.*)$/ ||
 	@rv = (9, undef, undef, $1, $3, $2 ? substr($2, 1) : 10000);
 	}
 elsif ($url =~ /^(s3|s3rrs):\/\/([^:]*):([^\@]*)\@([^\/]+)(\/(.*))?$/) {
-	# S3 with a username and password
+	# S3 with an access key and secret key
 	@rv = (3, $2, $3, $4, $6, $1 eq "s3rrs" ? 1 : 0);
 	}
+elsif ($url =~ /^(s3|s3rrs):\/\/([^:]*)\@([^\/]+)(\/(.*))?$/) {
+	# S3 with an access key only
+	@rv = (3, $2, undef, $3, $5, $1 eq "s3rrs" ? 1 : 0);
+	}
 elsif ($url =~ /^(s3|s3rrs):\/\/([^\/]+)(\/(.*))?$/ &&
-       ($config{'s3_akey'} || &can_use_aws_s3_creds()) &&
+       $defs3 && &can_use_cloud("s3")) {
+	# S3 with the default account
+	return (3, $defs3->{'access'}, $defs3->{'secret'}, $2, $4,
+		$1 eq "s3rrs" ? 1 : 0);
+	}
+elsif ($url =~ /^(s3|s3rrs):\/\/([^\/]+)(\/(.*))?$/ &&
        &can_use_cloud("s3")) {
-	# S3 with the default login
-	return (3, $config{'s3_akey'}, $config{'s3_skey'}, $2, $4,
+	# S3 with default credentials
+	return (3, undef, undef, $2, $4,
 		$1 eq "s3rrs" ? 1 : 0);
 	}
 elsif ($url =~ /^rs:\/\/([^:]*):([^\@]*)\@([^\/]+)(\/(.*))?$/) {
@@ -4024,7 +4190,7 @@ elsif ($url =~ /^gcs:\/\/([^\/]+)(\/(\S+))?$/) {
 		@rv = (-1, "Google Cloud Storage has not been configured");
 		}
 	}
-elsif ($url =~ /^dropbox:\/\/([^\/]+\.(gz|zip|bz2))$/) {
+elsif ($url =~ /^dropbox:\/\/([^\/]+\.(gz|zip|bz2|tar))$/) {
 	# Dropbox file at the top level
 	@rv = (8, undef, undef, "", $1, undef);
 	}
@@ -4032,7 +4198,7 @@ elsif ($url =~ /^dropbox:\/\/([^\/]+)(\/(\S+))?$/) {
 	# Dropbox folder
 	@rv = (8, undef, undef, $1, $3, undef);
 	}
-elsif ($url =~ /^bb:\/\/([^\/]+)(\/(\S+))?$/) {
+elsif ($url =~ /^bb:\/\/([^\/]*)(\/(\S+))?$/) {
 	# Backblaze bucket and file
 	my $st = &cloud_bb_get_state();
 	if ($st->{'ok'}) {
@@ -4052,6 +4218,28 @@ elsif ($url =~ /^azure:\/\/([^\/]+)(\/(\S+))?$/) {
 		@rv = (-1, "Azure Blob Storage has not been configured");
 		}
 	}
+elsif ($url =~ /^drive:\/\/(.*\.(gz|zip|bz2|tar))$/) {
+	# Google drive folder and file
+	my @w = split(/\//, $1);
+	my $st = &cloud_drive_get_state();
+	if ($st->{'ok'}) {
+		my $f = pop(@w);
+		return (12, undef, undef, join("/", @w), $f, undef);
+		}
+	else {
+		@rv = (-1, "Google Drive has not been configured");
+		}
+	}
+elsif ($url =~ /^drive:\/\/(.*)$/) {
+	# Google drive folder
+	my $st = &cloud_drive_get_state();
+	if ($st->{'ok'}) {
+		@rv = (12, undef, undef, $1, undef, undef);
+		}
+	else {
+		@rv = (-1, "Google Drive has not been configured");
+		}
+	}
 elsif ($url eq "download:") {
 	@rv = (4, undef, undef, undef, undef, undef);
 	}
@@ -4068,11 +4256,123 @@ elsif (!$url || $url =~ /^\//) {
 	}
 else {
 	# Relative to current dir
-	local $pwd = &get_current_dir();
+	local $pwd = $ENV{'WRAPPER_ORIGINAL_PWD'} || &get_current_dir();
 	@rv = (0, undef, undef, undef, $pwd."/".$url, undef);
 	$rv[4] =~ s/\/+$//;
 	}
 return @rv;
+}
+
+# join_backup_url(mode, user, pass, host, path, port)
+# Convert the parts returned by parse_backup_url back into a backup URL
+sub join_backup_url
+{
+my ($mode, $user, $pass, $host, $path, $port) = @_;
+my $rv;
+if ($mode == 0) {
+	# Local file
+	$rv = $path;
+	}
+elsif ($mode == 1) {
+	# FTP server
+	$rv .= "ftp://".$user.":".$pass."\@";
+	if (&check_ip6address($host)) {
+		$rv .= "[".$host."]";
+		}
+	else {
+		$rv .= $host;
+		}
+	if ($port != 21) {
+		$rv .= ":".$port;
+		}
+	$rv .= $path;
+	}
+elsif ($mode == 2) {
+	# SSH server
+	$rv .= "ssh://".$user.":".$pass."\@";
+	if (&check_ip6address($host)) {
+		$rv .= "[".$host."]";
+		}
+	else {
+		$rv .= $host;
+		}
+	if ($port != 22) {
+		$rv .= ":".$port;
+		}
+	$rv .= $path;
+	}
+elsif ($mode == 9) {
+	# Webmin URL
+	$rv .= "webmin://";
+	if ($user) {
+		$rv .= $user.":".$pass."\@";
+		}
+	$rv .= $host.":".$port.$path;
+	}
+elsif ($mode == 3) {
+	# S3 URL
+	$rv .= ($port ? "s3rrs" : "s3")."://";
+	if ($user && $pass) {
+		$rv .= $user.":".$pass."\@";
+		}
+	elsif ($user) {
+		$rv .= $user."\@";
+		}
+	$rv .= $host;
+	$rv .= "/".$path if ($path);
+	}
+elsif ($mode == 6) {
+	# Rackspace URL
+	$rv .= "rs://";
+	if ($user) {
+		$rs .= $user.":".$pass."\@";
+		}
+	$rv .= $host;
+	$rv .= "/".$path if ($path);
+	}
+elsif ($mode == 7) {
+	# Google cloud URL
+	$rv .= "gcs://";
+	$rv .= $host;
+	$rv .= "/".$path if ($path);
+	}
+elsif ($mode == 8) {
+	# Dropbox URL
+	$rv .= "dropbox://";
+	$rv .= $host."/" if ($host);
+	$rv .= $path;
+	}
+elsif ($mode == 10) {
+	# Backblaze URL
+	$rv .= "bb://";
+	$rv .= $host;
+	$rv .= "/".$path if ($path);
+	}
+elsif ($mode == 11) {
+	# Azure URL
+	$rv .= "azure://";
+	$rv .= $host;
+	$rv .= "/".$path if ($path);
+	}
+elsif ($mode == 12) {
+	# Google Drive URL
+	$rv .= "drive://";
+	$rv .= $host."/" if ($host);
+	$rv .= $path;
+	}
+elsif ($mode == 4) {
+	# Download file
+	$rv .= "download:";
+	}
+elsif ($mode == 44) {
+	# Download via link
+	$rv .= "downloadlink:";
+	}
+elsif ($mode == 5) {
+	# Upload file
+	$rv .= "upload:";
+	}
+return $rv;
 }
 
 # nice_backup_url(string, [caps-first])
@@ -4089,9 +4389,16 @@ elsif ($proto == 2) {
 	$rv = &text('backup_nicescp', "<tt>$path</tt>", "<tt>$host</tt>");
 	}
 elsif ($proto == 3) {
+	my $s3 = $user ? &get_s3_account($user) : &get_default_s3_account();
+	my $desc = $s3 ? $s3->{'desc'} ||
+			 &text('backup_nices3akey',
+				substr($s3->{'access'}, 0, 3)."***") : undef;
+	$desc ||= &text('backup_nices3akey', $user) if ($user);
+	$desc ||= $text{'backup_nices3unknown'};
 	$rv = $path ?
-		&text('backup_nices3p', "<tt>$host</tt>", "<tt>$path</tt>") :
-		&text('backup_nices3', "<tt>$host</tt>");
+		&text('backup_nices3pa',
+		      "<tt>$host</tt>", "<tt>$path</tt>", $desc) :
+		&text('backup_nices3a', "<tt>$host</tt>", $desc);
 	}
 elsif ($proto == 0) {
 	$rv = &text('backup_nicefile', "<tt>$path</tt>");
@@ -4126,12 +4433,21 @@ elsif ($proto == 9) {
 elsif ($proto == 10) {
 	$rv = $path ?
 		&text('backup_nicebbp', "<tt>$host</tt>", "<tt>$path</tt>") :
-		&text('backup_nicebb', "<tt>$host</tt>");
+	      $host ?
+		&text('backup_nicebb', "<tt>$host</tt>") :
+		&text('backup_nicebbt');
 	}
 elsif ($proto == 11) {
 	$rv = $path ?
 		&text('backup_niceazp', "<tt>$host</tt>", "<tt>$path</tt>") :
 		&text('backup_niceaz', "<tt>$host</tt>");
+	}
+elsif ($proto == 12) {
+	$rv = $path ?
+		&text('backup_nicedrivep', "<tt>$host</tt>", "<tt>$path</tt>") :
+	      $host ?
+		&text('backup_nicedrive', "<tt>$host</tt>") :
+		&text('backup_nicedrivet');
 	}
 else {
 	$rv = $url;
@@ -4242,7 +4558,7 @@ $ft .= "<tr> <td>$text{'backup_ftpserver'}</td> <td>".
        &ui_textbox($name."_server", $mode == 1 ? $serverport :
                      undef, 20, undef, undef, "placeholder='example.com:21'").
        "</td> </tr>\n";
-$ft .= "<tr> <td>$text{'backup_path'}</td> <td>".
+$ft .= "<tr> <td data-backup-path data-backup-path-file=\"$text{'backup_path'}\" data-backup-path-dir=\"$text{'backup_path2'}\">$text{'backup_path'}</td> <td>".
        &ui_textbox($name."_path", $mode == 1 ? $path : undef, 50).
        "</td> </tr>\n";
 $ft .= "<tr> <td>$text{'backup_login'}</td> <td>".
@@ -4262,7 +4578,7 @@ $st .= "<tr> <td>$text{'backup_sshserver'}</td> <td>".
        &ui_textbox($name."_sserver", $mode == 2 ? $serverport :
                      undef, 20, undef, undef, "placeholder='example.com:22'").
        "</td> </tr>\n";
-$st .= "<tr> <td>$text{'backup_path'}</td> <td>".
+$st .= "<tr> <td data-backup-path data-backup-path-file=\"$text{'backup_path'}\" data-backup-path-dir=\"$text{'backup_path2'}\">$text{'backup_path'}</td> <td>".
        &ui_textbox($name."_spath", $mode == 2 ? $path : undef, 50).
        "</td> </tr>\n";
 $st .= "<tr> <td>$text{'backup_login'}</td> <td>".
@@ -4285,7 +4601,7 @@ $wt .= "<tr> <td>$text{'backup_webminserver'}</td> <td>".
        &ui_textbox($name."_wserver", $mode == 9 ? $serverport :
                      undef, 20, undef, undef, "placeholder='example.com:10000'").
        "</td> </tr>\n";
-$wt .= "<tr> <td>$text{'backup_path'}</td> <td>".
+$wt .= "<tr> <td data-backup-path data-backup-path-file=\"$text{'backup_path'}\" data-backup-path-dir=\"$text{'backup_path2'}\">$text{'backup_path'}</td> <td>".
        &ui_textbox($name."_wpath", $mode == 9 ? $path : undef, 50).
        "</td> </tr>\n";
 $wt .= "<tr> <td>$text{'backup_login'}</td> <td>".
@@ -4299,52 +4615,51 @@ $wt .= "<tr> <td>$text{'backup_pass'}</td> <td>".
 $wt .= "</table>\n";
 push(@opts, [ 9, $text{'backup_mode9'}, $wt ]);
 
-# S3 backup fields (bucket, access key ID, secret key and file)
-local $s3user = $mode == 3 ? $user : undef;
-local $s3pass = $mode == 3 ? $pass : undef;
-if (&can_use_cloud("s3")) {
-	$s3user ||= $config{'s3_akey'};
-	$s3pass ||= $config{'s3_skey'};
-	}
-local $st = &$tablestart('s3');
-if ($s3user || !&can_use_aws_s3_creds()) {
-	$st .= "<tr> <td>$text{'backup_akey'}</td> <td>".
-	       &ui_textbox($name."_akey", $s3user, 40, 0, undef, $noac).
+# S3 backup fields (bucket, account and file)
+my @s3s;
+if (&can_use_cloud("s3") && (@s3s = &list_s3_accounts())) {
+	local $s3user = $mode == 3 ? $user : undef;
+	local $s3pass = $mode == 3 ? $pass : undef;
+	local $st = &$tablestart('s3');
+	my ($s3) = grep { ($_->{'access'} eq $s3user ||
+			   $_->{'id'} eq $s3user) &&
+			 (!$s3pass || $_->{'secret'} eq $s3pass) } @s3s;
+	$st .= "<tr> <td>$text{'backup_as3'}</td> ";
+	$st .= "<td>".&ui_select($name."_as3",
+		$s3 ? $s3->{'id'} : undef,
+		[ map { [ $_->{'id'}, $_->{'desc'} || $_->{'access'} ] }
+		      @s3s ])."</td> </tr>\n";
+	$st .= "<tr> <td>$text{'backup_s3path'}</td> <td>".
+	       &ui_textbox($name."_s3path", $mode != 3 ? "" :
+			    $server.($path ? "/".$path : ""), 50).
 	       "</td> </tr>\n";
-	$st .= "<tr> <td>$text{'backup_skey'}</td> <td>".
-	       &ui_password($name."_skey", $s3pass, 40, 0, undef, $noac).
+	$st .= "<tr> <td></td> <td>".
+	       &ui_checkbox($name."_rrs", 1, $text{'backup_s3rrs'}, $port == 1).
 	       "</td> </tr>\n";
+	$st .= "</table>\n";
+	push(@opts, [ 3, $text{'backup_mode3'}, $st ]);
 	}
-$st .= "<tr> <td>$text{'backup_s3path'}</td> <td>".
-       &ui_textbox($name."_s3path", $mode != 3 ? "" :
-				    $server.($path ? "/".$path : ""), 50).
-       "</td> </tr>\n";
-$st .= "<tr> <td></td> <td>".
-       &ui_checkbox($name."_rrs", 1, $text{'backup_s3rrs'}, $port == 1).
-       "</td> </tr>\n";
-$st .= "</table>\n";
-push(@opts, [ 3, $text{'backup_mode3'}, $st ]);
 
 # Rackspace backup fields (username, API key and bucket/file)
-local $rsuser = $mode == 6 ? $user : undef;
-local $rspass = $mode == 6 ? $pass : undef;
 if (&can_use_cloud("rs")) {
+	local $rsuser = $mode == 6 ? $user : undef;
+	local $rspass = $mode == 6 ? $pass : undef;
 	$rsuser ||= $config{'rs_user'};
 	$rspass ||= $config{'rs_key'};
+	local $st = &$tablestart('rs');
+	$st .= "<tr> <td>$text{'backup_rsuser'}</td> <td>".
+	       &ui_textbox($name."_rsuser", $rsuser, 40, 0, undef, $noac).
+	       "</td> </tr>\n";
+	$st .= "<tr> <td>$text{'backup_rskey'}</td> <td>".
+	       &ui_password($name."_rskey", $rspass, 40, 0, undef, $noac).
+	       "</td> </tr>\n";
+	$st .= "<tr> <td>$text{'backup_rspath'}</td> <td>".
+	       &ui_textbox($name."_rspath", $mode != 6 ? undef :
+					    $server.($path ? "/".$path : ""), 50).
+	       "</td> </tr>\n";
+	$st .= "</table>\n";
+	push(@opts, [ 6, $text{'backup_mode6'}, $st ]);
 	}
-local $st = &$tablestart('rs');
-$st .= "<tr> <td>$text{'backup_rsuser'}</td> <td>".
-       &ui_textbox($name."_rsuser", $rsuser, 40, 0, undef, $noac).
-       "</td> </tr>\n";
-$st .= "<tr> <td>$text{'backup_rskey'}</td> <td>".
-       &ui_password($name."_rskey", $rspass, 40, 0, undef, $noac).
-       "</td> </tr>\n";
-$st .= "<tr> <td>$text{'backup_rspath'}</td> <td>".
-       &ui_textbox($name."_rspath", $mode != 6 ? undef :
-				    $server.($path ? "/".$path : ""), 50).
-       "</td> </tr>\n";
-$st .= "</table>\n";
-push(@opts, [ 6, $text{'backup_mode6'}, $st ]);
 
 # Google cloud files
 my $state = &cloud_google_get_state();
@@ -4394,6 +4709,18 @@ if ($state->{'ok'} && &can_use_cloud("azure")) {
 	push(@opts, [ 11, $text{'backup_mode11'}, $st ]);
 	}
 
+# Google drive storage
+my $state = &cloud_drive_get_state();
+if ($state->{'ok'} && &can_use_cloud("drive")) {
+	local $st = &$tablestart('dr');
+	$st .= "<tr> <td>$text{'backup_drpath'}</td> <td>".
+	       &ui_textbox($name."_drpath", $mode != 12 ? undef :
+			   $server.($path ? "/".$path : ""), 50).
+	       "</td> </tr>\n";
+	$st .= "</table>\n";
+	push(@opts, [ 12, $text{'backup_mode12'}, $st ]);
+	}
+
 if (!$nodownload) {
 	# Show mode to download in browser
 	push(@opts, [ 44, $text{'backup_mode44'},
@@ -4422,7 +4749,7 @@ if ($mode == -1) {
 	}
 if ($mode == 0 && defined($fmt) && $fmt == 0) {
 	# For a single-file backup, make sure the filename makes sense
-	$in{$name."_file"} =~ /\.(gz|zip|tar|bz2|Z)$/i ||
+	$in{$name."_file"} =~ /\.(gz|zip|tar|bz2|Z|tgz|tbz2)$/i ||
 		&error($text{'backup_edestext'});
 	}
 if ($mode == 0 && $d) {
@@ -4497,22 +4824,15 @@ elsif ($mode == 2) {
 	}
 elsif ($mode == 3) {
 	# Amazon S3 service
-	local ($cerr) = &check_s3();
-	$cerr && &error($cerr);
 	$in{$name.'_s3path'} =~ /^\S+$/ || &error($text{'backup_es3path'});
 	$in{$name.'_s3path'} =~ /\\/ && &error($text{'backup_es3pathslash'});
 	($in{$name.'_s3path'} =~ /^\// || $in{$name.'_s3path'} =~ /\/$/) &&
 		&error($text{'backup_es3path2'});
 	local $proto = $in{$name.'_rrs'} ? 's3rrs' : 's3';
-	if (!&can_use_aws_s3_creds()) {
-		$in{$name.'_akey'} =~ /^\S+$/i || &error($text{'backup_eakey'});
-		$in{$name.'_skey'} =~ /^\S+$/i || &error($text{'backup_eskey'});
-		return $proto."://".$in{$name.'_akey'}.":".$in{$name.'_skey'}.
-		       "\@".$in{$name.'_s3path'};
-		}
-	else {
-		return $proto."://".$in{$name.'_s3path'};
-		}
+	my @s3s = &list_s3_accounts();
+	my ($s3) = grep { $_->{'id'} eq $in{$name."_as3"} } @s3s;
+	$s3 || &error($text{'backup_eas3'});
+	return $proto."://".$s3->{'id'}."\@".$in{$name.'_s3path'};
 	}
 elsif ($mode == 4) {
 	# Just download
@@ -4564,6 +4884,13 @@ elsif ($mode == 11 && &can_use_cloud("azure")) {
 	($in{$name.'_azpath'} =~ /^\// || $in{$name.'_azpath'} =~ /\/$/) &&
 		&error($text{'backup_eazpath2'});
 	return "azure://".$in{$name.'_azpath'};
+	}
+elsif ($mode == 12 && &can_use_cloud("drive")) {
+	# Google Drive
+	$in{$name.'_drpath'} =~ /^\S+$/i || &error($text{'backup_edrpath'});
+	($in{$name.'_drpath'} =~ /^\// || $in{$name.'_drpath'} =~ /\/$/) &&
+		&error($text{'backup_edrpath2'});
+	return "drive://".$in{$name.'_drpath'};
 	}
 elsif ($mode == 9) {
 	# Webmin server
@@ -4668,7 +4995,7 @@ else {
 
 
 # has_incremental_format([compression])
-# Returns 1 if the configured backup format supports incremental backups
+# Returns 1 if the configured backup format supports differential backups
 sub has_incremental_format
 {
 my ($compression) = @_;
@@ -4677,7 +5004,7 @@ $compression = $config{'compression'}
 return $compression != 3;
 }
 
-# Returns 1 if tar supports incremental backups
+# Returns 1 if tar supports differential backups
 sub has_incremental_tar
 {
 return 0 if ($config{'tar_args'} =~ /--acls/);
@@ -4853,6 +5180,20 @@ else {
 	}
 }
 
+# get_zstd_command()
+# Returns the full path to the zstd command in compression mode
+sub get_zstd_command
+{
+return &has_command("zstd")." -c";
+}
+
+# get_unzstd_command()
+# Returns the full path to the zstd command in de-compression mode
+sub get_unzstd_command
+{
+return &has_command("zstd")." -c -d";
+}
+
 # get_backup_actions()
 # Returns a list of arrays for backup / restore actions that the current
 # user is allowed to do. The first is links, the second titles, the third
@@ -4907,6 +5248,12 @@ if (&can_cloud_providers()) {
 	push(@titles, $text{'index_clouds'});
 	push(@descs, $text{'index_cloudsdesc'});
 	push(@codes, 'clouds');
+
+	# Also Amazon S3 accounts
+	push(@links, "list_s3s.cgi");
+	push(@titles, $text{'index_s3s'});
+	push(@descs, $text{'index_s3sdesc'});
+	push(@codes, 's3s');
 	}
 if (&can_backup_buckets()) {
 	# Show list of S3 buckets
@@ -4940,6 +5287,7 @@ sub can_backup_domain
 {
 local ($d, $acluser) = @_;
 $acluser ||= $base_remote_user;
+local $base_remote_user = $acluser;
 local %access = &get_module_acl($acluser);	# Use local for scoping
 if (&master_admin()) {
 	# Master admin can do anything
@@ -5075,15 +5423,16 @@ elsif (($mode == 1 || $mode == 2 || $mode == 9) &&
 	$date =~ s/%[_\-0\^\#]*\d*[A-Za-z]/\.\*/g;
 	return ($base, $date);
 	}
-elsif (($mode == 3 || $mode == 6 || $mode == 7 || $mode == 10) &&
+elsif (($mode == 3 || $mode == 6 || $mode == 7 || $mode == 10 || $mode == 12) &&
        $host =~ /%/) {
-	# S3 / Rackspace / GCS bucket which is date-based
+	# S3 / Rackspace / GCS / Drive bucket which is date-based
 	$host =~ s/%[_\-0\^\#]*\d*[A-Za-z]/\.\*/g;
 	return (undef, $host);
 	}
-elsif (($mode == 3 || $mode == 6 || $mode == 7 || $mode == 10 || $mode == 11) &&
+elsif (($mode == 3 || $mode == 6 || $mode == 7 || $mode == 10 ||
+	$mode == 11 || $mode == 12) &&
        $path =~ /%/) {
-	# S3 / Rackspace / GCS / Azure filename which is date-based
+	# S3 / Rackspace / GCS / Azure / Drive filename which is date-based
 	$path =~ s/%[_\-0\^\#]*\d*[A-Za-z]/\.\*/g;
 	return ($host, $path);
 	}
@@ -5772,7 +6121,72 @@ elsif ($mode == 8) {
 		}
 	}
 
-elsif ($mode == 10) {
+elsif ($mode == 10 && $host =~ /\%/) {
+	# Search for Backblaze for buckets matching the date pattern
+	my $buckets = &list_bb_buckets();
+	if (!ref($buckets)) {
+		&$second_print(&text('backup_purgeebbbuckets', $buckets));
+		return 0;
+		}
+	foreach my $st (@$buckets) {
+		my $f = $st->{'name'};
+		my $info = &get_bb_bucket($f);
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs2a', $f));
+			}
+		if ($f =~ /^$re$/) {
+			# Found one with a name to delete .. check the age of
+			# the newest file
+			my $ctime = 0;
+			my $files = &list_bb_files($f);
+			next if (!ref($files));
+			my $totalsize = 0;
+			foreach my $bf (@$files) {
+				$ctime = $bf->{'time'}
+					if ($bf->{'time'} > $ctime);
+				$totalsize += $bf->{'size'};
+				}
+			$mcount++;
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
+			my $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
+			&$first_print(&text('backup_deletingbucket',
+					    "<tt>$f</tt>", $old));
+
+			# Delete all the files in the bucket, then itself
+			my $err;
+			foreach my $bf (@$files) {
+				$err = &delete_bb_file($f, $bf->{'name'});
+				next if ($err);
+				}
+			$err = &delete_bb_bucket($f) if (!$err);
+			if ($err) {
+				&$second_print(
+					&text('backup_edelbucket', $err));
+				$ok = 0;
+				}
+			else {
+				&$second_print(&text('backup_deleted',
+					&nice_size($totalsize)));
+				$pcount++;
+				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
+		}
+	}
+
+elsif ($mode == 10 && $path =~ /\%/) {
 	# Search for Backblaze for files matching the date pattern
 	my $dir;
 	if ($re =~ /^(.*)\//) {
@@ -5780,7 +6194,7 @@ elsif ($mode == 10) {
 		}
 	local $files = &list_bb_files($base, $dir);
 	if (!ref($files)) {
-		&$second_print(&text('backup_purgeefiles4', $files));
+		&$second_print(&text('backup_purgeefiles5', $files));
 		return 0;
 		}
 	foreach my $st (@$files) {
@@ -5902,6 +6316,119 @@ elsif ($mode == 11 && $path =~ /\%/) {
 		}
 	}
 
+elsif ($mode == 12 && $path =~ /\%/) {
+	# Search for Google drive files under the folder
+	local $files = &list_drive_files($host, 1);
+	if (!ref($files)) {
+		&$second_print(&text('backup_purgeefiles6', $files));
+		return 0;
+		}
+	foreach my $st (@$files) {
+		my $f = $st->{'name'};
+		my $info;
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs', $f,
+				$st->{'modifiedTime'}));
+			}
+		if ($f =~ /^$re($|\/)/ && $f !~ /\.(dom|info)$/ &&
+		    $f !~ /\.\d+$/) {
+			# Found one to delete
+			local $ctime = &google_timestamp(
+				$st->{'modifiedTime'});
+			$mcount++;
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
+			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
+			&$first_print(&text('backup_deletingfile',
+					    "<tt>$f</tt>", $old));
+			local $err = &delete_drive_file($host, $f);
+			if ($err) {
+				&$second_print(&text('backup_edelbucket',$err));
+				$ok = 0;
+				}
+			else {
+				&delete_drive_file($host, $f.".dom");
+				&delete_drive_file($host, $f.".info");
+				&$second_print(&text('backup_deleted',
+				     &nice_size($st->{'size'})));
+				$pcount++;
+				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
+		}
+	}
+
+elsif ($mode == 12 && $host =~ /\%/) {
+	# Search for Google drive folders
+	my $parent;
+	my $pfx = "";
+	if ($re =~ /^(.*)\/([^\/]+)$/) {        
+		my $pname = $1;
+		$re = $2;
+		$parent = &get_drive_folder($pname, 0);
+		return $parent if (!ref($parent));
+		$pfx = $pname."/";
+		}
+	local $folders = &list_drive_folders(1, $parent);
+	if (!ref($folders)) {
+		&$second_print(&text('backup_purgeefiles6', $folders));
+		return 0;
+		}
+	foreach my $st (@$folders) {
+		my $f = $st->{'name'};
+		my $info;
+		if ($detail) {
+			&$first_print(&text('backup_purgeposs4', $f,
+				$st->{'modifiedTime'}));
+			}
+		if ($f =~ /^$re$/) {
+			# Found one to delete
+			local $ctime = &google_timestamp(
+				$st->{'modifiedTime'});
+			$mcount++;
+			if (!$ctime || $ctime >= $cutoff) {
+				if ($detail) {
+					&$second_print(&text('backup_purgenew',
+						&make_date($cutoff)));
+					}
+				next;
+				}
+			local $old = int((time() - $ctime) / (24*60*60));
+			if ($detail) {
+				&$second_print(&text('backup_purgecan',
+						     $re, $old));
+				}
+			&$first_print(&text('backup_deletingdir',
+					    "<tt>$f</tt>", $old));
+			my $sz = &size_drive_folder($pfx.$f);
+			my $err = &delete_drive_folder($pfx.$f);
+			if ($err) {
+				&$second_print(&text('backup_edelbucket',$err));
+				$ok = 0;
+				}
+			else {
+				&$second_print(&text('backup_deleted',
+				     &nice_size($sz)));
+				$pcount++;
+				}
+			}
+		elsif ($detail) {
+			&$second_print(&text('backup_purgepat', $re));
+			}
+		}
+	}
+
 &$outdent_print();
 
 &$second_print($pcount ? &text('backup_purged', $pcount, $mcount - $pcount) :
@@ -5910,7 +6437,7 @@ elsif ($mode == 11 && $path =~ /\%/) {
 return $ok;
 }
 
-# write_backup_log(&domains, dest, incremental?, start, size, ok?,
+# write_backup_log(&domains, dest, differential?, start, size, ok?,
 # 		   "cgi"|"sched"|"api", output, &errordoms, [user], [&key],
 # 		   [schedule-id], [separate-format], [allow-owner-restore],
 # 		   [compression], [description])
@@ -6189,28 +6716,6 @@ if ($owner ne $oldowner) {
 	}
 }
 
-# list_all_s3_accounts()
-# Returns a list of S3 accounts from backups, as tuples
-sub list_all_s3_accounts
-{
-local @rv;
-if (&can_use_cloud("s3") && $config{'s3_akey'} && $config{'s3_skey'}) {
-	push(@rv, [ $config{'s3_akey'}, $config{'s3_skey'} ]);
-	}
-foreach my $sched (grep { &can_backup_sched($_) } &list_scheduled_backups()) {
-	local @dests = &get_scheduled_backup_dests($sched);
-	foreach my $dest (@dests) {
-		local ($mode, $user, $pass, $server, $path, $port) =
-			&parse_backup_url($dest);
-		if ($mode == 3) {
-			push(@rv, [ $user, $pass ]);
-			}
-		}
-	}
-local %done;
-return grep { !$done{$_->[0]}++ } @rv;
-}
-
 # merge_ipinfo_domain(&domain, &ipinfo)
 # Update the IP in a domain based on an ipinfo hash
 sub merge_ipinfo_domain
@@ -6243,7 +6748,7 @@ my %hash = %$sched;
 $hash{'pid'} = $$;
 $hash{'scripttype'} = $main::webmin_script_type;
 $hash{'started'} = time();
-if ($main::webmin_script_type eq 'cgi') {
+if ($main::webmin_script_type eq 'web') {
 	$hash{'webminuser'} = $remote_user;
 	}
 &write_file($file, \%hash);
@@ -6396,21 +6901,37 @@ return undef;
 }
 
 # compression_to_suffix(format)
-# Converts a compressioin format integer to a filename suffix
+# Converts a compression format integer to a filename suffix. Supported formats
+# are 0 (gzipped tar), 1 (bzipped tar), 2 (plain tar), 3 (ZIP), 4 (zstd tar)
 sub compression_to_suffix
 {
 my ($c) = @_;
 return $c == 0 ? "tar.gz" :
        $c == 1 ? "tar.bz2" :
-       $c == 3 ? "zip" : "tar";
+       $c == 2 ? "tar" :
+       $c == 3 ? "zip" :
+       $c == 4 ? "tar.zst" :
+		 "unknown";
+}
+
+# compression_to_suffix_inner(format)
+# Converts a compressioin format integer to a filename suffix for interal
+# archive files.
+sub compression_to_suffix_inner
+{
+my ($c) = @_;
+return $c == 3 ? "zip" : 'tar';
 }
 
 # suffix_to_compression(filename)
-# Use the suffix of a filename to determine the compression format number
+# Use the suffix of a filename to determine the compression format number.
+# Supported formats are 0 (gzipped tar), 1 (bzipped tar), 2 (plain tar),
+# 3 (ZIP), 4 (zstd tar)
 sub suffix_to_compression
 {
 my ($file) = @_;
 return $file =~ /\.zip$/i ? 3 :
+       $file =~ /\.tar\.zst$/i ? 4 :
        $file =~ /\.tar\.gz$/i ? 0 :
        $file =~ /\.tar\.bz2$/i ? 1 :
        $file =~ /\.tar$/i ? 2 : -1;
@@ -6492,6 +7013,95 @@ foreach my $f (@files) {
 	$f =~ s/^\Q$dir\E\///;
 	}
 return @files;
+}
+
+# sync_directories(source, target, [&rsync_flags], [$d])
+# Runs an rsync command to sync source to target with optional extra parameters.
+# If $d is provided, the command is run as the domain owner. The function
+# returns the output of the rsync command, and in list context, it also returns
+# the exit status and the command run.
+sub sync_directories
+{
+my ($source, $target, $rsync_flags, $d) = @_;
+my $rsync = &has_command("rsync");
+my $emsg = &text('restore_ersync', 'rsync');
+return (wantarray ? ($emsg, 1) : 1) if (!$rsync);
+my $cmd = "$rsync -av ";
+$cmd .= join(' ', @$rsync_flags) . " " if (ref($rsync_flags) && @$rsync_flags);
+$cmd .= quotemeta("$source/") . ' ' . quotemeta("$target/");
+my $out;
+if ($d) {
+	$out = &run_as_domain_user($d, "$cmd 2>&1");
+	}
+else {
+	$out = &backquote_command("$cmd 2>&1");
+	}
+return wantarray ? ($out, $?, $cmd) : $?;
+}
+
+# backup_fmt_javascript()
+# Returns JS for use inside backup_form.cgi to update the recommended path
+sub backup_fmt_javascript
+{
+return <<EOF;
+<script>
+setTimeout(function() {
+	let extension;
+	const modes = document.querySelectorAll('[name="fmt"]'),
+		nameFields = document.querySelectorAll('[data-backup-path]'),
+		compressions = document.querySelectorAll('[name="compression"]'),
+		inputFields = document.querySelectorAll('[name\$="path"], [name\$="file"]'),
+		strfTime = document.querySelectorAll('[name="strftime"]'),
+		strfTimeFn = function() { return strfTime && strfTime[0] && strfTime[0].checked },
+		modes_check = function() {
+			Array.from(modes).find(radio => radio.checked).dispatchEvent(new Event('input'));
+		},
+		compressions_check = function() {
+			Array.from(compressions).find(radio => radio.checked).dispatchEvent(new Event('input'));
+		},
+		updateNameFields = function(directory) {
+			if (nameFields && nameFields.length) {
+				nameFields.forEach(function(td) {
+					const filetext = td.dataset.backupPathFile,
+					      dirtext = td.dataset.backupPathDir;
+					if (directory) {
+						td.innerHTML = dirtext;
+					} else {
+						td.innerHTML = filetext;
+					}
+				});
+			}
+		};
+	modes.forEach(function(radio) {
+		radio.addEventListener('input', function() {
+			const placeholdertype = this.value,
+				filename = strfTimeFn() ? 'domains-%Y-%m-%d-%H-%M' : 'domains';
+				inputFields.forEach(function(input) {
+				if (placeholdertype == '0') {
+					input.placeholder = \`e.g. /backups/\$\{filename\}.\$\{extension\}\`;
+					updateNameFields();
+				} else {
+					const backupPlaceHolder = strfTimeFn() ? 'backups/backup-%Y-%m-%d' : 'backups';
+					input.placeholder = \`e.g. /\$\{backupPlaceHolder\}/\`;
+					updateNameFields('dir');
+				}
+			});
+		});
+	});
+	(strfTime && strfTime[0]) && strfTime[0].addEventListener('input', modes_check);
+	compressions.forEach(function(compression) {
+		compression.addEventListener('input', function() {
+			const v = parseInt(this.value || $config{'compression'}),
+				a = {3: 'zip', 2: 'tar', 1: 'tar.bz2', 0: 'tar.gz'};
+			extension = a[v];
+			modes_check();
+		});
+	});
+	compressions_check();
+	modes_check();
+});
+</script>
+EOF
 }
 
 1;

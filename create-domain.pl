@@ -7,12 +7,16 @@ Create a virtual server
 This program can be used to create a new top-level, child or alias virtual
 server. It is typically called with parameters something like :
 
-   virtualmin create-domain --domain foo.com --pass smeg --desc "The server for foo" --unix --dir --webmin --web --dns --mail --limits-from-plan
+   virtualmin create-domain \
+   	--domain foo.com --pass smeg --desc "The server for foo" \
+	--unix --dir --webmin --web --dns --mail --limits-from-plan
 
-This would create a server called foo.com , with the Unix login, home directory, Webmin login, website, DNS domain and email features enabled, and disk quotas
-based on those set in the default plan. If you run this program with the --help option, you can see all of the
-other command-line options that it supports. The most commonly used are those
-for enabling features for the new server, such as --mysql and --logrotate.
+This would create a server called foo.com , with the Unix login, home directory,
+Webmin login, website, DNS domain and email features enabled, and disk quotas
+based on those set in the default plan. If you run this program with the --help
+option, you can see all of the other command-line options that it supports. The
+most commonly used are those for enabling features for the new server, such as
+--mysql and --logrotate.
 
 To create a virtual server with a private IP address, you can use the --ip
 option to specify it explicitly. If your Virtualmin is configured to
@@ -21,20 +25,33 @@ have a free address chosen from the allocation ranges. If you want to
 use a virtual IP that is already active on the system, you must add the
 --ip-already command-line option.
 
-If your system supports IPv6, Virtualmin can also add a v6 address for a
+If your system supports IPv6, Virtualmin can also add a IPv6 address for a
 new virtual server with the C<--ip6> flag followed by an address in the correct
 format. If you have IPv6 allocation enabled in the server templates, instead
 use the C<--allocate-ip6> flag to have Virtualmin select a free address
 automatically.
 
 To create a server that is owned by an existing user, use the --parent option,
-followed by the name of the virtual server to create under. In this case, the --pass , --unix , --webmin and --quota options are not needed, as a user for the new server already exists.
+followed by the name of the virtual server to create under. In this case,
+the --pass , --unix , --webmin and --quota options are not needed, as a
+user for the new server already exists.
 
 To create an alias of an existing virtual server, use the --alias option,
 followed by the domain name of the target server. For alias servers, the
 --pass , --unix , --webmin , --dir and --quota options are not needed.
 A variation is the --alias-with-mail option, which creates an alias virtual
-server that can still have mailboxes and email aliases. 
+server that can still have mailboxes and email aliases. Or you can use
+C<--alias-with-dns> to create an alias that has it's own independently editable
+DNS records.
+
+To create a sub-domain, use the C<--subdom> flag followed by the parent
+domain, which the domain being created must be under. The optional
+C<--subprefix> flag can be used to set the directory under public_html
+of the parent domain for the sub-domains's HTML files.
+
+To create a website's initial page, use the C<--content> parameter, followed by
+the path to a file containing the HTML content or the content itself. If no
+content is provided, a Virtualmin default website page will be created.
 
 You can specify limits on the number of aliases, sub-servers, mailboxes and
 databases for the new domain owner using the --max-aliases, --max-doms,
@@ -67,9 +84,15 @@ used. However, you can override this with the C<--cloud-dns> flag followed by
 either C<local> to host locally, C<services> to use Cloudmin services, or
 the ID of one of the supported providers like C<route53> or C<google>.
 
-Use the C<--letsencrypt> flag to request an auto-renewable Let's Encrypt
-certificate. To do the same but skip connectivity checks, use 
-C<--letsencrypt-always> flag instead.
+Use the C<--acme> flag to request an auto-renewable SSL certificate from
+the provider set in the server template, which defaults to Let's
+Encrypt. To do the same but skip connectivity checks, use 
+C<--acme-always> flag instead.
+
+The C<--proxy> parameter can be used to have the website proxy all requests
+to another URL, which must follow C<--proxy>. Alternately, the C<--framefwd>
+parameter similarly can be used to forward requests to the virtual server to
+another URL, using a hidden frame rather than proxying.
 
 =cut
 
@@ -88,6 +111,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "create-domain.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 &set_all_text_print();
 
@@ -174,13 +198,8 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--ip") {
 		$ip = shift(@ARGV);
-		if (!$config{'all_namevirtual'}) {
-			$feature{'virt'} = 1;	# for dependency checks
-			$virt = 1;
-			}
-		else {
-			$virtalready = 1;
-			}
+		$feature{'virt'} = 1;	# for dependency checks
+		$virt = 1;
 		$name = 0;
 		}
 	elsif ($a eq "--allocate-ip") {
@@ -316,10 +335,14 @@ while(@ARGV > 0) {
 	elsif ($a eq "--parent") {
 		$parentdomain = lc(shift(@ARGV));
 		}
-	elsif ($a eq "--alias" || $a eq "--alias-with-mail") {
+	elsif ($a eq "--alias" || $a eq "--alias-with-mail" ||
+	       $a eq "--alias-with-dns") {
 		$aliasdomain = $parentdomain = lc(shift(@ARGV));
 		if ($a eq "--alias-with-mail") {
 			$aliasmail = 1;
+			}
+		if ($a eq "--alias-with-dns") {
+			$aliasdns = 1;
 			}
 		}
 	elsif ($a eq "--subdom" || $a eq "--superdom") {
@@ -349,10 +372,10 @@ while(@ARGV > 0) {
 	elsif ($a eq "--skip-warnings") {
 		$skipwarnings = 1;
 		}
-	elsif ($a eq "--letsencrypt") {
+	elsif ($a eq "--letsencrypt" || $a eq "--acme") {
 		$letsencrypt = 1;
 		}
-	elsif ($a eq "--letsencrypt-always") {
+	elsif ($a eq "--letsencrypt-always" || $a eq "--acme-always") {
 		$letsencrypt = 2;
 		}
 	elsif ($a eq "--enable-jail") {
@@ -425,6 +448,20 @@ while(@ARGV > 0) {
 	elsif ($a eq "--shell") {
 		$defaultshell = shift(@ARGV);
 		}
+	elsif ($a eq "--subprefix") {
+		$subprefix = shift(@ARGV);
+		}
+	elsif ($a eq "--proxy") {
+		$proxy_pass_mode = 1;
+		$proxy_pass = shift(@ARGV);
+		}
+	elsif ($a eq "--framefwd") {
+		$proxy_pass_mode = 2;
+		$proxy_pass = shift(@ARGV);
+		}
+	elsif ($a eq "--default-cert-owner") {
+		$default_cert_owner = 1;
+		}
 	elsif ($a =~ /^\-\-(.*)$/ && $plugin_args{$1}) {
 		# Plugin-specific arg
 		if ($plugin_args{$1}->{'novalue'}) {
@@ -488,7 +525,7 @@ if ($ip eq "allocate") {
 	}
 elsif ($virt) {
 	# Make sure manual IP specification is allowed
-	$tmpl->{'ranges'} eq "none" || $config{'all_namevirtual'} || &usage("The --ip option cannot be used when automatic IP allocation is enabled - use --allocate-ip instead");
+	$tmpl->{'ranges'} eq "none" || &usage("The --ip option cannot be used when automatic IP allocation is enabled - use --allocate-ip instead");
 	}
 
 if ($ip6 eq "allocate") {
@@ -587,7 +624,7 @@ if ($parentdomain) {
 	if ($subdomain) {
 		$domain =~ /^(\S+)\.\Q$subdomain\E$/ ||
 			&usage("Sub-domain $domain must be under the parent domain $subdomain");
-		$subprefix = $1;
+		$subprefix ||= $1;
 		}
 	}
 
@@ -607,7 +644,7 @@ if (!$parent) {
 	if (!$group) {
 		# Select group automatically
 		($group, $gtry1, $gtry2) = &unixgroup_name($domain, $user);
-		$group || &usage(&text('setup_eauto2', $try1, $try2));
+		$group || &usage(&text('setup_eauto2', $gtry1, $gtry2));
 		}
 	else {
 		# Use specified group name
@@ -704,14 +741,7 @@ elsif ($parent) {
 	}
 
 if (!$alias) {
-	if ($config{'all_namevirtual'}) {
-		# Make sure the IP *is* assigned
-		&check_ipaddress($ip) || &usage($text{'setup_eip'});
-		if (!&check_virt_clash($ip)) {
-			&usage(&text('setup_evirtclash2'));
-			}
-		}
-	elsif ($virt) {
+	if ($virt) {
 		# Validate virtual IP address
 		&check_ipaddress($ip) || &usage($text{'setup_eip'});
 		$clash = &check_virt_clash($ip);
@@ -816,7 +846,7 @@ if ($remotedns) {
 if ($phpmode) {
 	my @supp = &supported_php_modes();
 	&indexof($phpmode, @supp) >= 0 ||
-		&usage("The selected PHP exection mode cannot be used");
+		&usage("The selected PHP execution mode cannot be used");
 	}
 
 # Work out prefix if needed, and check it
@@ -838,16 +868,14 @@ $pclash && &usage(&text('setup_eprefix3', $prefix, $pclash->{'dom'}));
          'email', $parent ? $parent->{'email'} : $email,
          'name', $name,
          'name6', $name6,
-         'ip', $config{'all_namevirtual'} ? $ip :
-	       $virt ? $ip :
+         'ip', $virt ? $ip :
 	       $alias ? $ip :
 	       $parentip ? $parent->{'ip'} :
 	       $sharedip ? $sharedip : $defip,
 	 'netmask', $netmask,
 	 'dns_ip', defined($dns_ip) ? $dns_ip :
 		   $alias ? $alias->{'dns_ip'} :
-		   $virt || $config{'all_namevirtual'} ? undef
-						       : &get_dns_ip($resel),
+		   $virt ? undef : &get_dns_ip($resel),
          'virt', $virt,
          'virtalready', $virtalready,
 	 'ip6', $parentip ? $parent->{'ip6'} : $ip6,
@@ -860,6 +888,7 @@ $pclash && &usage(&text('setup_eprefix3', $prefix, $pclash->{'dom'}));
 		     'uquota', $uquota ),
 	 'alias', $alias ? $alias->{'id'} : undef,
 	 'aliasmail', $aliasmail,
+	 'aliasdns', $aliasdns,
 	 'subdom', $subdom ? $subdom->{'id'} : undef,
 	 'source', 'create-domain.pl',
 	 'template', $template,
@@ -878,6 +907,7 @@ $pclash && &usage(&text('setup_eprefix3', $prefix, $pclash->{'dom'}));
 	 'nocreationmail', $nocreationmail,
 	 'noslaves', $noslaves,
 	 'nosecondaries', $nosecondaries,
+	 'default_cert_owner', $default_cert_owner,
 	 'subprefix', $subprefix,
 	 'hashpass', $hashpass,
 	 'auto_letsencrypt', $letsencrypt,
@@ -888,6 +918,8 @@ $pclash && &usage(&text('setup_eprefix3', $prefix, $pclash->{'dom'}));
 	 'dns_cloud', $clouddns,
 	 'dns_cloud_import', $clouddns_import,
 	 'dns_remote', $remotedns,
+	 'proxy_pass_mode', $proxy_pass_mode,
+	 'proxy_pass', $proxy_pass,
         );
 $dom{'dns_submode'} = $dns_submode if (defined($dns_submode));
 $dom{'dns_subany'} = $dns_subany if (defined($dns_subany));
@@ -955,6 +987,13 @@ $derr = &virtual_server_depends(\%dom);
 $cerr = &virtual_server_clashes(\%dom);
 &usage($cerr) if ($cerr);
 
+# Check if features are not forbidden
+if (!$skipwarnings) {
+	foreach my $ff (&forbidden_domain_features(\%dom, 1)) {
+		$dom{$ff} && &usage("The feature $ff is not allowed for virtual server matching the hostname unless the --skip-warnings flag is given.");
+		}
+	}
+
 # Check for warnings, unless overriding
 @warns = &virtual_server_warnings(\%dom);
 if (@warns) {
@@ -982,13 +1021,30 @@ if ($parent) {
 		}
 	}
 
+# Content can come from template
+if (!defined($content)) {
+	my $content_web_tmpl = $tmpl->{'content_web'};
+	my $content_web_tmpl_html_file = $tmpl->{'content_web_html'};
+	# Default HTML page
+	if ($content_web_tmpl == 2) {
+		$content = "";
+		}
+	# Want to set content to the given from file
+	elsif (!$content_web_tmpl && $virtualmin_pro &&
+		-r $content_web_tmpl_html_file) {
+		$content = &read_file_contents($content_web_tmpl_html_file);
+		}
+	}
+
 # Do it
 print "Beginning server creation ..\n\n";
+&lock_domain(\%dom);
 $config{'pre_command'} = $precommand if ($precommand);
 $config{'post_command'} = $postcommand if ($postcommand);
 $err = &create_virtual_server(\%dom, $parent,
 			      $parent ? $parent->{'user'} : undef,
-			      0, 0, $parent ? undef : $pass, $content);
+			      0, 1, $parent ? undef : $pass, $content);
+&unlock_domain(\%dom);
 if ($err) {
 	print "$err\n";
 	exit(1);
@@ -1044,6 +1100,7 @@ print "                         --passfile password-file\n";
 print "                        [--hashpass]\n";
 print "                        [--parent domain.name | --alias domain.name |\n";
 print "                         --alias-with-mail domain.name |\n";
+print "                         --alias-with-dns domain.name |\n";
 print "                         --superdom domain.name]\n";
 print "                        [--desc description-for-domain]\n";
 print "                        [--email contact-email]\n";
@@ -1108,8 +1165,8 @@ foreach $f (&list_feature_plugins()) {
 		}
 	}
 print "                        [--skip-warnings]\n";
-print "                        [--letsencrypt]\n";
-print "                        [--letsencrypt-always]\n";
+print "                        [--acme]\n";
+print "                        [--acme-always]\n";
 print "                        [--field-name value]*\n";
 print "                        [--enable-jail | --disable-jail]\n";
 print "                        [--mysql-server hostname]\n";
@@ -1123,6 +1180,8 @@ print "                        [--generate-ssl-cert]\n";
 print "                        [--generate-ssh-key | --use-ssh-key file|data]\n";
 print "                        [--append-style format]\n";
 print "                        [--shell command]\n";
+print "                        [--subprefix directory]\n";
+print "                        [--proxy url | --framefwd url]\n";
 exit(1);
 }
 

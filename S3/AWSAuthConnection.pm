@@ -25,6 +25,7 @@ use S3::GetResponse;
 use S3::ListBucketResponse;
 use S3::ListAllMyBucketsResponse;
 use S3::S3Object;
+use Net::Amazon::Signature::V4;
 
 sub new {
     my $proto = shift;
@@ -36,6 +37,7 @@ sub new {
     $self->{IS_SECURE} = 1 if (not defined $self->{IS_SECURE});
     $self->{SERVER} = shift || $DEFAULT_HOST;
     $self->{PORT} = shift || $PORTS_BY_SECURITY->{$self->{IS_SECURE}};
+    $self->{REGION} = shift;
     $self->{AGENT} = LWP::UserAgent->new();
     bless ($self, $class);
     return $self;
@@ -71,8 +73,14 @@ sub list_bucket {
 		$path .= "?".join('&', map { "$_=".urlencode($o{$_}) } keys %o)
 	    }
 
+	    my $oldserver = $self->{SERVER};
+	    if ($self->{REGION} && $self->{SERVER} eq $DEFAULT_HOST) {
+		$self->{SERVER} = $bucket.".s3-".$self->{REGION}.".amazonaws.com";
+		$path = "";
+	    }
 	    my $r = S3::ListBucketResponse->new(
 		$self->_make_request('GET', $path, $headers));
+	    $self->{SERVER} = $oldserver;
 	    if ($r->http_response->code != 200) {
 		return $r;
 	    }
@@ -105,8 +113,6 @@ sub put {
     croak 'must specify key' unless $key;
     $headers ||= {};
 
-    $key = urlencode($key);
-
     if (ref($object) ne 'S3::S3Object') {
         $object = S3::S3Object->new($object);
     }
@@ -120,8 +126,6 @@ sub get {
     croak 'must specify key' unless $key;
     $headers ||= {};
 
-    $key = urlencode($key);
-
     return S3::GetResponse->new($self->_make_request('GET', "$bucket/$key", $headers));
 }
 
@@ -130,8 +134,6 @@ sub delete {
     croak 'must specify bucket' unless $bucket;
     croak 'must specify key' unless $key;
     $headers ||= {};
-
-    $key = urlencode($key);
 
     return S3::Response->new($self->_make_request('DELETE', "$bucket/$key", $headers));
 }
@@ -296,11 +298,11 @@ sub _make_request {
 
     my $http_headers = merge_meta($headers, $metadata);
 
-    $self->_add_auth_header($http_headers, $method, $authpath);
     my $protocol = $self->{IS_SECURE} ? 'https' : 'http';
     my $url = "$protocol://$self->{SERVER}:$self->{PORT}/$path";
     my $request = HTTP::Request->new($method, $url, $http_headers);
     $request->content($data);
+    $request = $self->_add_auth_sig($request);
     my $response = $self->{AGENT}->request($request);
     if ($response->code >= 300 && $response->code < 400) {
       # S3 redirect .. read the new endpoint from the content
@@ -309,6 +311,7 @@ sub _make_request {
 	$self->{SERVER} = $1;
 	$self->{SERVER_REDIRECTS} ||= 0;
 	$self->{SERVER_REDIRECTS}++;
+	print STDERR "location=$1\n";
 	my $newpath = $path;
 	if ($self->{'SERVER_REDIRECTS'} == 1) {
 		# Redirecting from default to new endpoint. Remove the leading
@@ -342,18 +345,11 @@ sub _make_request {
     return $response;
 }
 
-sub _add_auth_header {
-    my ($self, $headers, $method, $path) = @_;
-
-    if (not $headers->header('Date')) {
-        $headers->header(Date => time2str(time));
-    }
-    if (not $headers->header('Host')) {
-        $headers->header(Host => $self->{SERVER});
-    }
-    my $canonical_string = S3::canonical_string($method, $path, $headers);
-    my $encoded_canonical = S3::encode($self->{AWS_SECRET_ACCESS_KEY}, $canonical_string);
-    $headers->header(Authorization => "AWS $self->{AWS_ACCESS_KEY_ID}:$encoded_canonical");
+sub _add_auth_sig
+{
+    my ($self, $request) = @_;
+    my $sig = Net::Amazon::Signature::V4->new( $self->{AWS_ACCESS_KEY_ID}, $self->{AWS_SECRET_ACCESS_KEY}, $self->{REGION} || 'us-east-1', 's3' );
+    return $sig->sign($request);
 }
 
 1;

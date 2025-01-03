@@ -44,6 +44,7 @@ if (!$module_name) {
 
 # Parse command line to get domains
 @alltypes = ( "cert", "key", "ca", "csr", "newkey" );
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -58,12 +59,6 @@ while(@ARGV > 0) {
 	elsif ($a eq "--cert" || $a eq "--key" || $a eq "--ca" ||
 	       $a eq "--csr" || $a eq "--newkey") {
 		push(@types, substr($a, 2));
-		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");

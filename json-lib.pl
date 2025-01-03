@@ -23,11 +23,11 @@ else {
 return undef;
 }
 
-# convert_remote_format(&output, exit-status, command, &in, [format])
+# convert_remote_format(&output, exit-status, command, &in, [format], [config])
 # Converts output from some API command to JSON or XML format
 sub convert_remote_format
 {
-my ($out, $ex, $cmd, $in, $format) = @_;
+my ($out, $ex, $cmd, $in, $format, $config) = @_;
 
 # Parse into a data structure
 my $data = { 'command' => $cmd,
@@ -168,7 +168,13 @@ else {
 if ($format) {
 	# Call formatting function
 	my $ffunc = "create_".$format."_format";
-	return &$ffunc($data);
+	# JSON output can be minified or pretty
+	my $pretty;
+	if ($format eq 'json') {
+		$pretty = $in->{'json'} eq 'minified' ? 0 :
+			  ($config->{'json_pretty'} // 1);
+		}
+	return &$ffunc($data, $pretty);
 	}
 else {
 	# Just return perl hash (for internal use)
@@ -185,13 +191,14 @@ eval "use XML::Simple";
 return XMLout($data, RootName => 'api');
 }
 
-# create_json_format(&hash)
+# create_json_format(&hash, [pretty])
 # Convert a hash into JSON
 sub create_json_format
 {
-my ($data) = @_;
+my ($data, $pretty) = @_;
 eval "use JSON::PP";
-my $coder = JSON::PP->new->pretty;
+$pretty //= 1;
+my $coder = JSON::PP->new->pretty($pretty);
 return $coder->encode($data)."\n";
 }
 
@@ -219,6 +226,7 @@ if (!$pid) {
 	# Make this process have its own list of temp files to clean up
 	$main::initial_process_id = undef;
 	@main::temporary_files = undef;
+	$main::webmin_script_type = 'cmd';
 
 	untie(*STDOUT);
 	close(STDOUT);

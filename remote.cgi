@@ -8,7 +8,7 @@ use Socket;
 $trust_unknown_referers = 1;
 require './virtual-server-lib.pl';
 &ReadParse();
-&can_remote() || &api_error($text{'remote_ecannot'});
+&can_remote($in{'program'}) || &api_error($text{'remote_ecannot'});
 
 if (!$in{'program'}) {
 	# Tell the user what needs to be done
@@ -31,9 +31,9 @@ if (!$in{'program'}) {
 	}
 
 # Get output format
-$format = defined($in{'json'}) ? 'json' :
-          defined($in{'xml'}) ? 'xml' :
-          defined($in{'perl'}) ? 'perl' :
+$format = exists($in{'json'}) ? 'json' :
+          exists($in{'xml'}) ? 'xml' :
+          exists($in{'perl'}) ? 'perl' :
                 undef;
 
 # Build the arg list
@@ -69,7 +69,7 @@ foreach $iv (@in) {
 		push(@args, "--$i");
 		}
 	else {
-		push(@args, "--$i", $v);
+		push(@args, "--$i", split(/\n/, $v));
 		}
 	}
 
@@ -100,7 +100,7 @@ if ($format) {
 		}
 	waitpid($pid, 0);
 	print &convert_remote_format($out, $?, $in{'program'},
-				     \%in, $format);
+				     \%in, $format, \%config);
 	}
 else {
 	# Stream output

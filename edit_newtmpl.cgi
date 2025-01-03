@@ -7,34 +7,31 @@ require './virtual-server-lib.pl';
 
 # Build list of templates
 @tmpls = &list_templates();
+@doms = &list_domains();
 foreach $t (@tmpls) {
 	next if ($t->{'deleted'});
-	local @fcs;
-	foreach $w ('web', 'dns', 'ftp', 'logrotate', 'mail_on') {
-		($sw = $w) =~ s/_on$//;
-		push(@fcs, $t->{$w} eq "none" ? $text{'newtmpl_none'} :
-			   $t->{$w} eq "" ? $text{'default'} :
-			   ui_link("edit_tmpl.cgi?id=$t->{'id'}&editmode=$sw",
-			           $text{'newtmpl_cust'}));
+
+	# Find domains on the template
+	my @tdoms = grep { $_->{'template'} eq $t->{'id'} } @doms;
+
+	my @uses;
+	foreach my $f ("parent", "sub", "alias") {
+		if ($t->{"for_".$f}) {
+			push(@uses, $text{'tmpl_for_'.$f});
+			}
 		}
-	$scripts = &list_template_scripts($t);
-	$smesg = $scripts eq "none" ? $text{'newtmpl_none'} :
-		 @$scripts ? scalar(@$scripts) :
-	         $t->{'default'} ? $text{'newtmpl_none'} :
-			     $text{'default'};
-	if ($virtualmin_pro) {
-		push(@fcs, ui_link("edit_tmpl.cgi?id=$t->{'id'}&".
-			               "editmode=scripts", $smesg));
-		}
+
 	push(@table, [
 		{ 'type' => 'checkbox', 'name' => 'd',
-		  'value' => $t->{'id'}, 'disabled' => $t->{'standard'} },
+		  'value' => $t->{'id'} },
 		ui_link("edit_tmpl.cgi?id=$t->{'id'}",
-			&html_escape($t->{'name'})),
-		$t->{'skel'} eq "none" ? $text{'newtmpl_none'} :
-		$t->{'skel'} eq "" ? $text{'default'} :
-				     "<tt>$t->{'skel'}</tt>",
-		@fcs,
+			&html_escape($t->{'name'})) . (
+				$t->{'id'} == &get_init_template(0) ||
+		  		$t->{'id'} == &get_init_template(1) ?
+				    &vui_inline_label('newtmpl_def', 1) : ""),
+		join(", ", @uses),
+		&ui_link("search.cgi?field=template&what=$t->{'id'}",
+			 scalar(@tdoms)),
 	        $t->{'created'} ? &make_date($t->{'created'}, 1)
 				: "<i>$text{'newtmpl_init'}</i>" ]);
 	$deletable++ if (!$t->{'standard'});
@@ -43,16 +40,18 @@ foreach $t (@tmpls) {
 # Show the table of templates
 print &ui_form_columns_table(
 	"delete_tmpls.cgi",
-	$deletable ? [ [ "delete", $text{'newtmpl_delete'} ] ] : [ ],
+	[ $deletable ? ( [ "delete", $text{'newtmpl_delete'} ] ) : ( ),
+	  [ 'default', $text{'newtmpl_setdef'} ],
+	  [ 'defaultsub', $text{'newtmpl_setdefsub'} ],
+	],
 	0,
 	[ [ "edit_tmpl.cgi?new=1&cp=1", $text{'newtmpl_add2'} ],
 	  [ "edit_tmpl.cgi?new=1", $text{'newtmpl_add1'} ] ],
 	undef,
-	[ "", $text{'newtmpl_name'}, $text{'newtmpl_skel'},
-	  $text{'newtmpl_web'}, $text{'newtmpl_dns'},
-	  $text{'newtmpl_ftp'}, $text{'newtmpl_logrotate'},
-	  $text{'newtmpl_mail'},
-	  $virtualmin_pro ? ( $text{'newtmpl_scripts'} ) : ( ),
+	[ "",
+	  $text{'newtmpl_name'},
+	  $text{'newtmpl_useby'},
+	  $text{'newtmpl_tdoms'},
 	  $text{'newtmpl_created'} ],
 	100,
 	\@table);

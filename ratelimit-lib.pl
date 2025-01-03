@@ -44,6 +44,9 @@ return $type eq 'redhat' ? 'grmilter' :
 sub check_ratelimit
 {
 &foreign_require("init");
+if (!$config{'mail'}) {
+	return $text{'ratelimit_email'};
+	}
 if (!&get_ratelimit_type()) {
 	# Not supported on this OS
 	return $text{'ratelimit_eos'};
@@ -62,12 +65,12 @@ if (!&get_milter_greylist_path()) {
 
 # Check mail server
 &require_mail();
-if ($config{'mail_system'} > 1) {
-	return $text{'ratelimit_emailsystem'};
-	}
-elsif ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	-r $sendmail::config{'sendmail_mc'} ||
 		return $text{'ratelimit_esendmailmc'};
+	}
+elsif ($mail_system != 0) {
+	return $text{'ratelimit_emailsystem'};
 	}
 return undef;
 }
@@ -239,7 +242,7 @@ return $out =~ /milter-greylist-([0-9\.]+)/ ? $1 : undef;
 # milter-greylist socket file must be relative to this.
 sub get_mailserver_chroot
 {
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	&foreign_require("postfix");
 	my $postfix_conf = &postfix::get_master_config();
 	my ($postsmtpchroot) = grep { $_->{'name'} = 'smtp' && $_->{'chroot'} eq 'y' } @{$postfix_conf};		
@@ -270,7 +273,7 @@ if ($chroot) {
 	}
 my $wantmilter = "local:$socketfile";
 &require_mail();
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Check Postfix config
 	my $milters = &postfix::get_real_value("smtpd_milters");
 	if ($milters !~ /\Q$wantmilter\E/) {
@@ -278,7 +281,7 @@ if ($config{'mail_system'} == 0) {
 		return 0;
 		}
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Check Sendmail config
 	my @feats = &sendmail::list_features();
 	my ($milter) = grep { $_->{'text'} =~ /INPUT_MAIL_FILTER/ &&
@@ -415,7 +418,7 @@ else {
 &$first_print($text{'ratelimit_mailserver'});
 &require_mail();
 my $newmilter = "local:$socketfile";
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Configure Postfix to use filter
 	&lock_file($postfix::config{'postfix_config_file'});
 	&postfix::set_current_value("milter_default_action", "accept");
@@ -433,7 +436,7 @@ if ($config{'mail_system'} == 0) {
 	# Apply Postfix config
 	&postfix::reload_postfix();
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Configure Sendmail to use filter
 	&lock_file($sendmail::config{'sendmail_mc'});
 	my $changed = 0;
@@ -520,7 +523,7 @@ if ($chroot) {
 	}
 my $oldmilter = "local:".$socketfile;
 &require_mail();
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Configure Postfix to not use filter
 	&lock_file($postfix::config{'postfix_config_file'});
 	my $milters = &postfix::get_current_value("smtpd_milters");
@@ -535,7 +538,7 @@ if ($config{'mail_system'} == 0) {
 	# Apply Postfix config
 	&postfix::reload_postfix();
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Configure Sendmail to not use filter
 	&lock_file($sendmail::config{'sendmail_mc'});
 	my @feats = &sendmail::list_features();

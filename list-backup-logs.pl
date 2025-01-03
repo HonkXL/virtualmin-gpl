@@ -45,6 +45,7 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -70,12 +71,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--end") {
 		$end = &date_to_time(shift(@ARGV));
-		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -122,17 +117,17 @@ foreach $l (@alllogs) {
 	push(@logs, $l);
 	}
 
-if ($multi) {
+if ($multiline) {
 	# Show all details
 	%schedmap = map { $_->{'id'}, $_ } &list_scheduled_backups();
 	foreach my $l (@logs) {
-		print "$l->{'id'}:\n";
+		print "$l->{'id'}\n";
 		print "    Domains: $l->{'doms'}\n";
 		if ($l->{'errdoms'}) {
 			print "    Failed domains: $l->{'errdoms'}\n";
 			}
 		print "    Destination: $l->{'dest'}\n";
-		print "    Incremental: ",
+		print "    Differential: ",
 		      ($l->{'increment'} == 1 ? "Yes" :
 		       $l->{'increment'} == 2 ? "Disabled" : "No"),"\n";
 		if (defined($l->{'compression'})) {
@@ -220,6 +215,6 @@ print "                            [--failed | --succeeded]\n";
 print "                            [--mode \"cgi\"|\"sched\"|\"api\"]\n";
 print "                            [--start yyyy-mm-dd]\n";
 print "                            [--end yyyy-mm-dd]\n";
-print "                            [--multiline]\n";
+print "                            [--multiline | --json | --xml]\n";
 exit(1);
 }

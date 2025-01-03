@@ -61,22 +61,32 @@ if (&need_config_check() && &can_check_config()) {
 # Suggest to GPL user to get Virtualmin Pro
 if (!$virtualmin_pro &&
     &should_show_pro_tip('dashboard', 'force')) {
-	# Do not show dashboard alert within first three days, until things settle down
-	&foreign_require("webmin");
-	my $uptime = &webmin::get_system_uptime();
-	$uptime = (!$uptime || $uptime > 60*60*24 * 4);
+	# Do not show Pro advertisement on the dashboard within first three days
+	my $goodtime;
+	my $lastpost = $config{'lastpost'};
+	if ($lastpost) {
+		# Use last update time instead, i.e. don't nag potentially right
+		# after first installation
+		$goodtime = (time() - $lastpost > 60*60*24 * 3);
+		}
+	else {
+		# Use system uptime as a fallback
+		&foreign_require("webmin");
+		my $uptime = &webmin::get_system_uptime();
+		$goodtime = (!$uptime || $uptime > 60*60*24 * 3);
+		}
 	# Show alert in another five days if reminder been set
 	my ($remind) = &should_show_pro_tip('dashboard_reminder', 'force');
-	my $futureremind = (int($remind) + (60*60*24 * 5));
+	my $futureremind = (int($remind) + (60*60*24 * 7));
 	my $doremind = ($remind && $futureremind < time());
-	if (($uptime && !$remind) || ($uptime && $doremind)) {
+	if (($goodtime && !$remind) || ($goodtime && $doremind)) {
 		push(@rv, { 'type' => 'warning',
 			    'level' => 'info',
 			    'warning' => { 'alert' => &alert_pro_tip('dashboard', {
 			        'alert_title' => $text{'scripts_gpl_pro_tip_title_dashboard'},
 			        'alert_body1' => $text{'scripts_gpl_pro_tip_dashboard'} . " ",
 			        'alert_body2' => &text('scripts_gpl_pro_tip_enroll_dashboard',
-			                               'https://www.virtualmin.com/product-category/virtualmin/'),
+			                               $virtualmin_shop_link_cat),
 			        'button_text' => $text{'scripts_gpl_pro_tip_hide2'},
 			        'button_icon' => 'fa fa-fw fa-heartbeat',
 			        'button_text2' => $text{'scripts_gpl_pro_tip_open'},
@@ -292,14 +302,12 @@ if (!$data->{'nostatus'} && $info->{'startstop'} &&
 		     "<img src='$idir/reload.png'".
 		     "alt='$status->{'restartdesc'}'></a>\n";
 
-		push(@table, { 'desc' => $label,
-			       'value' =>
-			(!$status->{'status'} ?
-			      "<img src='$idir/down.gif' alt='Stopped'>" :
-			      "<img src='$idir/up.gif' alt='Running'>").
-			    ("&nbsp;" x 10).
-			    $action_link.
-			    "&nbsp;".$restart_link });
+		push(@table, { 'desc' => "&nbsp;".
+				  (!$status->{'status'} ?
+				  "<img src='$idir/down.gif' alt='Stopped'>" :
+				  "<img src='$idir/up.gif' alt='Running'>").
+					"&nbsp;&nbsp;$label",
+			       'value' => $action_link."&nbsp;".$restart_link });
 		}
 	push(@rv, { 'type' => 'table',
 		    'id' => 'status',
@@ -668,13 +676,9 @@ return @rv;
 }
 
 sub get_virtualmin_docs
-{               
-return &master_admin() ?
-		"https://www.virtualmin.com/documentation" :
-       &reseller_admin() ?
-		"https://www.virtualmin.com/documentation/users/reseller" :
-       		"https://www.virtualmin.com/documentation/users/server-owner";
-}      
+{
+return "https://www.virtualmin.com/docs/";
+}
 
 sub parse_license_date
 {

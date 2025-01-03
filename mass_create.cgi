@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParseMime();
+&licence_status();
 &error_setup($text{'cmass_err'});
 &can_create_master_servers() || &can_create_sub_servers() ||
 	&error($text{'form_ecannot'});
@@ -135,12 +136,7 @@ foreach $line (@lines) {
 			&line_error($text{'cmass_evirt'});
 			next;
 			}
-		if ($config{'all_namevirtual'}) {
-			# Name-based, but with different IP
-			$virt = 1;
-			$virtalready = 1;
-			}
-		elsif ($ip eq 'allocate') {
+		if ($ip eq 'allocate') {
 			# Need to allocate
 			%racl = $resel ? &get_reseller_acl($resel) : ();
 			if ($racl{'ranges'}) {
@@ -169,8 +165,7 @@ foreach $line (@lines) {
 			}
 		else {
 			# IP specified manually
-			if ($tmpl->{'ranges'} ne "none" &&
-			    !$config{'all_namevirtual'}) {
+			if ($tmpl->{'ranges'} ne "none") {
 				&line_error($text{'cmass_eipmust'});
 				next;
 				}
@@ -270,7 +265,7 @@ foreach $line (@lines) {
 		&count_domains($aliasdom ? "aliasdoms" :
 			       $parentdom ? "realdoms" : "topdoms");
 	if ($dleft == 0) {
-		&line_error(&text('setup_emax', $dmax, $virtualmin_shop_link));
+		&line_error(&text('setup_emax', $dmax, $virtualmin_account_subscriptions));
 		next;
 		}
 
@@ -335,8 +330,7 @@ foreach $line (@lines) {
 		 'netmask', $netmask,
 		 'netmask6', $netmask6,
 		 'dns_ip', $alias ? $alias->{'dns_ip'} :
-			   $virt || $config{'all_namevirtual'} ? undef :
-			   &get_dns_ip($resel),
+			   $virt ? undef : &get_dns_ip($resel),
 		 'virt', $virt,
 		 'virt6', $virt6,
 		 'virtalready', $virtalready,
@@ -405,19 +399,39 @@ foreach $line (@lines) {
 		}
 
 	# Actually do it!
-	&set_all_null_print();
+	if ($in{'detail'}) {
+		&$first_print(&text('cmass_creating', $dom{'dom'}));
+		&$indent_print();
+		}
+	else {
+		&set_all_null_print();
+		}
 	local $err = &create_virtual_server(\%dom, $parentdom,
 			      $parentdom ? $parentdom->{'user'} : undef, 0, 1,
 			      $parentdom ? undef : $pass);
-	if ($err) {
-		&line_error($err);
-		next;
+
+	# Show the results
+	if ($in{'detail'}) {
+		&$outdent_print();
+		if ($err) {
+			&$second_print(&text('cmass_failed', $err));
+			next;
+			}
+		else {
+			&$second_print($text{'setup_done'});
+			}
 		}
 	else {
-		print "<font color=#00aa00>",
-		      &text('cmass_done', "<tt>$dname</tt>"),"</font><br>\n";
-		$count++;
+		if ($err) {
+			&line_error($err);
+			next;
+			}
+		else {
+			print "<font color=#00aa00>",
+			      &text('cmass_done', "<tt>$dname</tt>"),"</font><br>\n";
+			}
 		}
+	$count++ if (!$err);
 
 	# Call any theme post command
 	if (defined(&theme_post_save_domain) &&

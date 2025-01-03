@@ -12,7 +12,8 @@ C<--full-version> flag.
 
 By default all versions available on the system will be shown, but you can
 limit the list to those available for one virtual server with the C<--domain>
-flag.
+flag. Alternately you can force display of only versions for a particular PHP
+execution mode with the C<--mode> flag followed by C<fpm>, C<fcgid> or C<cgi>.
 
 =cut
 
@@ -34,34 +35,30 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--domain") {
+	if ($a eq "--domain") {
 		$dname = shift(@ARGV);
 		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
+	elsif ($a eq "--mode") {
+		$forcemode = shift(@ARGV);
 		}
 	elsif ($a eq "--full-version") {
 		$fullver = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
 		}
 	}
 
+$dname && $forcemode && &usage("Only one of --domain or --mode can be set");
 if ($dname) {
 	$d = &get_domain_by("dom", $dname);
 	$d || &usage("Virtual server $dname does not exist");
 	}
 
-@vers = &list_available_php_versions($d);
+@vers = &list_available_php_versions($d, $forcemode);
 $fmt = "%-15.15s %-60.60s\n";
 if ($nameonly) {
 	# Just show version numbers
@@ -77,7 +74,7 @@ elsif ($multiline) {
 		if ($s->[1]) {
 			print "    Command: $s->[1]\n";
 			}
-		$cli = &get_php_cli_command($s->[0]);
+		$cli = &get_php_cli_command($s->[1] || $s->[0], $d);
 		if ($cli) {
 			print "    CLI: $cli\n";
 			}
@@ -88,7 +85,7 @@ elsif ($multiline) {
 			print "    PHP modes: ",join(" ", &unique(@modes)),"\n";
 			}
 		print "    FPM support: ",($fpm ? "Yes" : "No"),"\n";
-		$fv = &get_php_version($s->[0]);
+		$fv = &get_php_version($s->[1] || $s->[0]);
 		print "    Full version: ",$fv,"\n";
 		}
 	}
@@ -107,8 +104,9 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the available PHP versions on this system.\n";
 print "\n";
-print "virtualmin list-php-versions [--name-only | --multiline]\n";
+print "virtualmin list-php-versions [--multiline | --json | --xml]\n";
 print "                             [--domain name]\n";
+print "                             [--mode fpm|fcgid|cgi]\n";
 print "                             [--full-version]\n";
 exit(1);
 }

@@ -34,6 +34,7 @@ return if (!should_show_pro_tip('dnsclouds'));
 my @pro_dnsclouds_list = (
 	"<em>Cloudflare DNS</em>",
 	"<em>Google Cloud DNS</em>",
+	"<em>Namecheap DNS</em>",
 	);
 my $pro_dnsclouds = join(', ', @pro_dnsclouds_list);
 $pro_dnsclouds =~ s/(.+)(,)(.+)$/$1 $text{'scripts_gpl_pro_tip_and'}$3/;
@@ -49,6 +50,7 @@ sub list_clouds_pro_tip
 {
 return if (!should_show_pro_tip('list_clouds'));
 my @pro_list_clouds_list = (
+	"<em>Google Drive</em>",
 	"<em>Google Cloud Storage</em>",
 	"<em>Azure Blob Storage</em>",
 	"<em>Dropbox</em>",
@@ -60,11 +62,24 @@ $text{"scripts_gpl_pro_tip_list_clouds"} = &text('scripts_gpl_pro_tip_clouds', $
 print &alert_pro_tip('list_clouds');
 }
 
+# list_extra_user_pro_tip(type, return-url)
+# Displays an alert for Create Database User and
+# Create Webserver User page explaining the feature
+sub list_extra_user_pro_tip
+{
+my ($etype, $return_url) = @_;
+$etype = "extra_${etype}_users";
+return if (!should_show_pro_tip($etype, 1));
+print &alert_pro_tip($etype,
+	{ return_url => $return_url,
+	  button_text => $text{'scripts_gpl_pro_tip_extra_user_dismiss'}} );
+}
+
 ############################################################
 # API general subs
 ############################################################
 
-# should_show_pro_tip(tipid)
+# should_show_pro_tip(tipid, [ignore])
 # If the current user should see Pro tip for the given page
 sub should_show_pro_tip
 {
@@ -107,7 +122,7 @@ my $alert_body2 =
 my $hide_button_text = ($text{"scripts_gpl_pro_tip_${tipid}_hide"} ||
                         $text{"scripts_gpl_pro_tip_hide"});
 my $hide_button_icon = 'fa2 fa-fw fa2-eye-off';
-
+my $return_url;
 if ($opts) {
 	$alert_title = $opts->{'alert_title'}
 		if ($opts->{'alert_title'});
@@ -127,6 +142,8 @@ if ($opts) {
 		if ($opts->{'button_text'});
 	$hide_button_icon3 = $opts->{'button_icon3'}
 		if ($opts->{'button_icon'});
+	$return_url = $opts->{'return_url'}
+		if ($opts->{'return_url'});
 	}
 my %tinfo = &get_theme_info($current_theme);
 my ($ptitle, $btncls, $alertcls);
@@ -144,6 +161,7 @@ my $form = $ptitle .
         $alert_body1 .
         $alert_body2 . "<p>\n" . 
         &ui_hidden("tipid", $tipid) .
+        ($return_url ? &ui_hidden("return_url", $return_url) : "") .
         &ui_form_end([
             $hide_button_text2 ? [ undef, $hide_button_text2, undef, undef,
                 "onclick=\"window.open('$virtualmin_shop_link_cat','_blank');event.preventDefault();event.stopPropagation();\"",
@@ -165,56 +183,70 @@ foreach my $pro_demo_feature
 	{ 'name' => 'newresels',
 	  'title' => $text{'newresels_title'},
 	  'cat' => 'setting',
-	  'url' => "https://virtualmin.com/professional/#newresels",
+	  'url' => "$virtualmin_docs_pro/#newresels",
 	},
 
 	# Add demo Cloud Mail Delivery Providers link for GPL users 
 	{ 'name' => 'smtpclouds',
 	  'title' => $text{'smtpclouds_title'},
 	  'cat' => 'email',
-	  'url' => "https://virtualmin.com/professional/#smtpclouds",
+	  'url' => "$virtualmin_docs_pro/#smtpclouds",
 	},
 
 	# Add demo Email Server Owners link for GPL users 
 	{ 'name' => 'newnotify',
 	  'title' => $text{'newnotify_title'},
 	  'cat' => 'email',
-	  'url' => "https://virtualmin.com/professional/#newnotify",
+	  'url' => "$virtualmin_docs_pro/#newnotify",
 	},
 
 	# Add demo Email Server Owners link for GPL users 
 	{ 'name' => 'newretention',
 	  'title' => $text{'newretention_title'},
 	  'cat' => 'email',
-	  'url' => "https://virtualmin.com/professional/#newretention",
+	  'url' => "$virtualmin_docs_pro/#newretention",
 	},
 
 	# Add demo New Reseller Email link for GPL users 
 	{ 'name' => 'newreseller',
 	  'title' => $text{'newreseller_title'},
 	  'cat' => 'email',
-	  'url' => "https://virtualmin.com/professional/#newreseller",
+	  'url' => "$virtualmin_docs_pro/#newreseller",
 	},
 
 	# Add demo Custom Links link for GPL users 
 	{ 'name' => 'newlinks',
 	  'title' => $text{'newlinks_title'},
 	  'cat' => 'custom',
-	  'url' => "https://virtualmin.com/professional/#newlinks",
+	  'url' => "$virtualmin_docs_pro/#newlinks",
+	},
+
+	# Add demo Remote DNS
+	{ 'name' => 'remotedns',
+	  'title' => $text{'remotedns_title'},
+	  'cat' => 'ip',
+	  'url' => "$virtualmin_docs_pro/#remotedns",
+	},
+
+	# Add demo SSL Providers
+	{ 'name' => 'newacmes',
+	  'title' => $text{'newacmes_title'},
+	  'cat' => 'ip',
+	  'url' => "$virtualmin_docs_pro/#newacmes",
 	},
 
 	# Add demo Secondary Mail Servers link for GPL users 
 	{ 'name' => 'newmxs',
 	  'title' => $text{'newmxs_title'},
 	  'cat' => 'email',
-	  'url' => "https://virtualmin.com/professional/#newmxs",
+	  'url' => "$virtualmin_docs_pro/#newmxs",
 	},
 
 	# Add demo Disk Quota Monitoring link for GPL users 
 	{ 'name' => 'newquotas',
 	  'title' => $text{'newquotas_title'},
 	  'cat' => 'check',
-	  'url' => "https://virtualmin.com/professional/#newquotas",
+	  'url' => "$virtualmin_docs_pro/#newquotas",
 	  'skip' => !&has_home_quotas()
 	},
 
@@ -222,21 +254,21 @@ foreach my $pro_demo_feature
 	{ 'name' => 'newcmass',
 	  'title' => $text{'cmass_title'},
 	  'cat' => 'add',
-	  'url' => "https://virtualmin.com/professional/#newcmass",
+	  'url' => "$virtualmin_docs_pro/#newcmass",
 	},
 
 	# Add demo Backup Encryption Keys link for GPL users 
 	{ 'name' => 'bkeys',
 	  'title' => $text{'bkeys_title'},
 	  'cat' => 'backup',
-	  'url' => "https://virtualmin.com/professional/#bkeys",
+	  'url' => "$virtualmin_docs_pro/#bkeys",
 	},
 
 	# Add demo System Statistics link for GPL users 
 	{ 'name' => 'history',
 	  'icon' => 'graph',
 	  'title' => $text{'edit_history'},
-	  'url' => "https://virtualmin.com/professional/#demo_history",
+	  'url' => "$virtualmin_docs_pro/#demo_history",
 	},
 )
 {
@@ -258,26 +290,18 @@ foreach my $pro_demo_feature
 	# Add demo Edit Resource Limits link for GPL users 
 	{ 'name' => 'edit_res',
 	  'title' => $text{'edit_res'},
-	  'cat' => 'admin',
-	  'url' => "https://virtualmin.com/professional/#edit_res",
-	  'skip' => !($d->{'unix'} && &can_edit_res($d))
-	},
-
-	# Add demo Proxy Paths link for GPL users 
-	{ 'name' => 'list_balancers',
-	  'title' => $text{'edit_balancer'},
 	  'cat' => 'server',
-	  'url' => "https://virtualmin.com/professional/#list_balancers",
-	  'skip' => !(&can_edit_forward()),
+	  'url' => "$virtualmin_docs_pro/#edit_res",
+	  'skip' => !($d->{'unix'} && &can_edit_res($d))
 	},
 
 	# Add demo Search Mail Logs link for GPL users 
 	{ 'name' => 'edit_maillog',
 	  'title' => $text{'edit_maillog'},
 	  'cat' => 'logs',
-	  'url' => "https://virtualmin.com/professional/#edit_maillog",
+	  'url' => "$virtualmin_docs_pro/#edit_maillog",
 	  'skip' => !($config{'mail'} &&
-	              $config{'mail_system'} <= 1 &&
+	              $mail_system <= 1 &&
 	              $d->{'mail'}),
 	},
 
@@ -285,14 +309,14 @@ foreach my $pro_demo_feature
 	{ 'name' => 'edit_connect',
 	  'title' => $text{'edit_connect'},
 	  'cat' => 'logs',
-	  'url' => "https://virtualmin.com/professional/#edit_connect",
+	  'url' => "$virtualmin_docs_pro/#edit_connect",
 	},
 
 	# Add demo Edit Web Pages link for GPL users 
 	{ 'name' => 'edit_html',
 	  'title' => $text{'edit_html'},
-	  'cat' => 'services',
-	  'url' => "https://virtualmin.com/professional/#edit_html",
+	  'cat' => 'web',
+	  'url' => "$virtualmin_docs_pro/#edit_html",
 	  'skip' => !(&domain_has_website($d) &&
 	              $d->{'dir'} &&
 	              !$d->{'alias'} &&
@@ -330,6 +354,37 @@ elsif (!$virtualmin_pro) {
 	}
 }
 
+# inline_html_pro_tip(html, name, always-show)
+# Modifies passed HTML element to advertise GPL user Pro features, if allowed
+sub inline_html_pro_tip
+{
+my ($h, $n, $a) = @_;
+my $f = sub {
+	my ($h) = @_;
+	map { $h =~ /<input/ &&
+	      $h =~ s/(<input[^>]*?)\s?(name|value|id|size)=["'][^"']*["'](.*?>)/$1$3/ }
+	      	(0..3);
+	      $h =~ s/(<input[^>]*?)>/$1 disabled>/g;
+	return $h;
+	};
+my $d = sub {
+	my ($h, $n) = @_;
+	return "<span data-pro-disabled='$n'>$h</span>";
+	};
+if (!$virtualmin_pro) {
+	if ($config{'hide_pro_tips'} != 1 || $a) {
+		$h = &$d(&$f($h), "$n-elem");
+		$h .= &$d("&nbsp;&nbsp;<small><a target='_blank' ".
+		            "href='$virtualmin_docs_pro/#${n}' ".
+			    "data-pro='$n'>&#128274;&nbsp;&nbsp;".
+			    	"<span>Pro</span></a></small>", "$n-link");
+		return $h;
+		}
+	return undef;
+	}
+return $h;
+}
+
 # build_pro_scripts_list_for_pro_tip()
 # Builds a list of Virtualmin Pro scripts for inclusion to GPL package
 sub build_pro_scripts_list_for_pro_tip
@@ -345,7 +400,7 @@ foreach my $script (@scripts) {
 	next if ($script->{'dir'} !~ /$scripts_directories[3]/ &&
 	        !$script->{'migrated'});
 	push(@scripts_pro_list,
-	    { 'version' => $vers[0],
+	    { 'version' => 'latest',
 	      'name' => $script->{'name'},
 	      'desc' => $script->{'desc'},
 	      'longdesc' => $script->{'longdesc'},
@@ -361,3 +416,22 @@ my $fh = "SCRIPTS";
 &close_tempfile($fh);
 }
 
+# proshow()
+# Returns 1 or 0 depending on whether Pro features should be shown at all in GPL
+sub proshow
+{
+return 1 if ($virtualmin_pro);
+return ($config{'hide_pro_tips'} == 1 && !$virtualmin_pro) ? 0 : 1
+}
+
+# procell([col-size], [tds-ref])
+# Returns a reference to an array of table cells attributes
+sub procell {
+	my ($colsize, @tds) = @_;
+	$colsize ||= 1;
+	@tds = (("") x $colsize) if (!@tds);
+	@tds = map { "data-pro-disabled='cell' $_" } @tds;
+	return $virtualmin_pro ? undef : \@tds;
+};
+
+1;

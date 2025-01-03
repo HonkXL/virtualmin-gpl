@@ -223,7 +223,7 @@ sub feature_always_links
 {
 }
 
-# feature_backup(&domain, file, &opts, homeformat?, incremental?, as-owner,
+# feature_backup(&domain, file, &opts, homeformat?, differential?, as-owner,
 #                &all-opts)
 # Called to backup this feature for the domain to the given file. Must return 1
 # on success or 0 on failure
@@ -325,6 +325,20 @@ sub feature_web_supports_cgi
 {
 }
 
+# feature_web_get_domain_cgi_mode(&domain)
+# Returns the current CGI mode for a domain ('suexec' or 'fcgiwrap'), or undef
+# if none are enabled
+sub feature_web_get_domain_cgi_mode
+{
+}
+
+# feature_web_save_domain_cgi_mode(&domain, mode)
+# Updates the current CGI mode for a domain to either 'suexec' or 'fcgiwrap',
+# or disable CGI scripts if the mode is set to undef
+sub feature_save_get_domain_cgi_mode
+{
+}
+
 # feature_web_supported_php_modes([&domain])
 # If a feature provides a website, this function must return the list of 
 # possible PHP execution modes
@@ -422,13 +436,6 @@ sub feature_restart_web
 # Returns a command to restart the webserver, typically used after log file
 # rotation
 sub feature_restart_web_command
-{
-}
-
-# feature_setup_web_for_php(&domain, &script, php-version)
-# Called to set any PHP variables needed by a script that are set in the 
-# webserver config.
-sub feature_setup_web_for_php
 {
 }
 
@@ -846,6 +853,12 @@ sub theme_sections
 # For each, the directory must contain a .pl file with the same name in standard
 # script format.
 sub scripts_list
+{
+}
+
+# feature_sysinfo
+# If defined returns a hash ref of system information for this feature
+sub feature_sysinfo
 {
 }
 

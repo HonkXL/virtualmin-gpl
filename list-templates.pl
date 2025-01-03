@@ -6,12 +6,12 @@ List available templates for new domains
 
 The command simply outputs a list of available templates for use when
 creating new virtual servers. For each the ID number and description
-are diplayed.
+are displayed.
 
 To just display the template names, you can give the C<--name-only> parameter.
 This is useful when iterating through them in other scripts.
 
-By default, deleted templates are not incluced in the list unless you
+By default, deleted templates are not included in the list unless you
 add the C<--deleted> flag.
 
 =cut
@@ -35,19 +35,11 @@ if (!$module_name) {
 # Parse command-line args
 $owner = 1;
 $deleted = 0;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
-		}
-	elsif ($a eq "--deleted") {
+	if ($a eq "--deleted") {
 		$deleted = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -94,7 +86,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the available templates for new virtual servers.\n";
 print "\n";
-print "virtualmin list-templates [--name-only | --multiline]\n";
+print "virtualmin list-templates [--multiline | --json | --xml]\n";
 print "                          [--deleted]\n";
 exit(1);
 }

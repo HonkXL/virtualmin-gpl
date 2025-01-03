@@ -36,7 +36,8 @@ if ($can < 3) {
 	# Password, if needed
 	print &ui_table_row($text{'migrate_pass'},
 		    &ui_opt_textbox("pass", undef, 20, $text{'migrate_auto2'},
-				    undef, 0, undef, 0, "autocomplete=new-password"));
+				    undef, 0, undef, 0,
+				    "autocomplete=new-password", 'password'));
 
 	# Create Webmin user?
 	print &ui_table_row($text{'migrate_webmin'},
@@ -51,6 +52,13 @@ print &ui_table_row($text{'migrate_template'},
 		    &ui_select("template", &get_init_template(0), 
 			[ map { [ $_->{'id'}, $_->{'name'} ] } @tmpls ]));
 
+# Plan to use
+@availplans = sort { $a->{'name'} cmp $b->{'name'} } &list_available_plans();
+$defplan = &get_default_plan();
+print &ui_table_row($text{'migrate_plan'},
+	&ui_select("plan", $defplan ? $defplan->{'id'} : undef,
+		   [ map { [ $_->{'id'}, $_->{'name'} ] } @availplans ]));
+
 # IP to assign
 print &ui_table_row($text{'migrate_ip'}, &virtual_ip_input(\@tmpls));
 
@@ -62,7 +70,7 @@ if (&supports_ip6()) {
 
 # Parent user
 @doms = sort { $a->{'user'} cmp $b->{'user'} }
-	     grep { $_->{'unix'} && &can_config_domain($_) } &list_domains();
+	     grep { $_->{'unix'} && &can_config_domain($_) } &list_visible_domains();
 if (@doms && $can < 3) {
 	print &ui_table_row($text{'migrate_parent'},
 			    &ui_radio("parent_def", 1,

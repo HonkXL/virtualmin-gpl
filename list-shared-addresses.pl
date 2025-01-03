@@ -5,8 +5,7 @@
 Lists shared IP addresses for virtual servers
 
 This command outputs a list of shared IP addresses that can be used by new
-or existing virtual servers. You can use the --shared-ip flag to
-C<create-domain> to add the virtual server on one of the listed IPs.
+or existing virtual servers.
 
 Output is in table format by default, but you can switch to a more detailed
 and easily parsed list with the C<--multiline> flag. Or to just get a list
@@ -32,20 +31,10 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
-		}
-	else {
-		&usage("Unknown parameter $a");
-		}
+	&usage("Unknown parameter $a");
 	}
 
 # Get the IPs
@@ -63,7 +52,7 @@ foreach $ip (&list_shared_ips()) {
 	push(@ips, { 'ip' => $ip, 'type' => 'shared' });
 	}
 
-if ($multi) {
+if ($multiline) {
 	# Several lines each
 	foreach $ip (@ips) {
 		print "$ip->{'ip'}\n";
@@ -103,7 +92,8 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the available shared IP addresses for new virtual servers.\n";
 print "\n";
-print "virtualmin list-shared-addresses [--multiline | --name-only]\n";
+print "virtualmin list-shared-addresses [--multiline | --json | --xml |\n";
+print "                                  --name-only]\n";
 exit(1);
 }
 

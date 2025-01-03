@@ -7,6 +7,7 @@ require './virtual-server-lib.pl';
 &require_useradmin();
 &require_mail() if ($config{'mail'});
 &ReadParse();
+&licence_status();
 $d = &get_domain($in{'dom'});
 $d || &error($text{'edit_egone'});
 &can_config_domain($d) || &error($text{'edit_ecannot'});
@@ -94,9 +95,14 @@ if (&has_home_quotas() && !$d->{'parent'} && &can_edit_quotas($d)) {
 	$newdom{'quota'} = $in{'quota_def'} ? undef :
 				&quota_parse('quota', "home");
 	}
+my @forbidden_domain_features = &forbidden_domain_features($d);
 if (!$d->{'disabled'}) {
 	foreach $f (@dom_features, &list_feature_plugins()) {
 		if ($in{$f}) {
+			if (grep {$_ eq $f} @forbidden_domain_features) {
+				&error(&text('setup_efeatforbidhostdef',
+					"<tt>@{[&html_escape($f)]}</tt>"));
+				}
 			$newdom{$f} = 1;
 			if (!$d->{$f}) {
 				$check{$f}++;
@@ -178,7 +184,9 @@ if (!$in{'confirm'} && !$d->{'disabled'}) {
 		foreach $f (@losing) {
 			my $msg = $d->{'parent'} ? $text{"sublosing_$f"}
 						 : undef;
-			$msg ||= $text{"losing_$f"};
+			my $msuf = $f eq 'dir' && $d->{'alias'} ? 4 : 
+				   $f eq 'dir' && $d->{'parent'} ? 2 : "";
+			$msg ||= $text{"losing_$f$msuf"};
 			print "<li>",$text{'feature_'.$f}," - ",$msg,"<br>\n";
 			}
 		features_sort(\@plosing, \@plosing) if (@plosing);
@@ -257,6 +265,18 @@ else {
 if (!$d->{'parent'}) {
 	$d->{'email'} = $in{'email_def'} ? undef : $in{'email'};
 	&compute_emailto($d);
+	}
+
+# Set domain protection if allowed
+if (&master_admin() || (&reseller_admin() && !$access{'nodelete'}) ||
+    $access{'edit_delete'} || $access{'edit_disable'}) {
+	my $protected_status = $in{'protected'} ? 1 : 0;
+	if (defined($d->{'protected'}) &&
+	    $d->{'protected'} ne $in{'protected'}) {
+		&$first_print($text{"save_protected$protected_status"});
+		&$second_print($text{'setup_done'});
+		}
+	$d->{'protected'} = $protected_status;
 	}
 
 # Update quotas in domain object

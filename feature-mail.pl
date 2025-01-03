@@ -4,7 +4,7 @@ sub require_mail
 return if ($require_mail++);
 $can_alias_types{12} = 0;	# this autoreponder for vpopmail only
 $supports_bcc = 0;
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Using sendmail for email
 	&foreign_require("sendmail", "sendmail-lib.pl");
 	&foreign_require("sendmail", "virtusers-lib.pl");
@@ -26,11 +26,12 @@ if ($config{'mail_system'} == 1) {
 	$can_alias_comments = $virtualmin_pro;
 	$supports_aliascopy = 1;
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Using postfix for email
 	&foreign_require("postfix", "postfix-lib.pl");
 	&foreign_require("postfix", "boxes-lib.pl");
 	%pconfig = &foreign_config("postfix");
+	return if (!&has_command($pconfig{'postfix_config_command'}));
 	$virtual_type = $postfix::virtual_maps || "virtual_maps";
 	$virtual_maps = &postfix::get_real_value($virtual_type);
 	@virtual_map_files = &postfix::get_maps_files($virtual_maps);
@@ -54,7 +55,7 @@ elsif ($config{'mail_system'} == 0) {
 	$can_alias_types{9} = 0;	# bounce not yet supported for postfix
 	$can_alias_comments = $virtualmin_pro;
 	if ($can_alias_comments &&
-	    $virtual_maps !~ /^hash:/ &&
+	    $virtual_maps !~ /^(hash|dbm|lmdb):/ &&
 	    !&postfix::can_map_comments($virtual_type)) {
 		# Comments not supported by map backend, such as MySQL
 		$can_alias_comments = 0;
@@ -90,43 +91,16 @@ elsif ($config{'mail_system'} == 0) {
 
 	$supports_aliascopy = 1;
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Using qmail for email
 	&foreign_require("qmailadmin");
 	%qmconfig = &foreign_config("qmailadmin");
 	$can_alias_types{2} = 0;	# cannot use addresses in file
 	$can_alias_types{8} = 0;	# cannot use same in other domain
-	if ($config{'mail_system'} == 5) {
-		$vpopbin = "$config{'vpopmail_dir'}/bin";
-		}
-	if ($config{'mail_system'} == 4) {
-		# Qmail+LDAP can only alias to email addresses
-		foreach my $t (3, 4, 5, 6, 7, 9, 10, 11) {
-			$can_alias_types{$t} = 0;
-			}
-		}
-	elsif ($config{'mail_system'} == 5) {
-		# VPOPMail can use local addresses, files, mailbox, bouncer,
-		# deleter and autoresponder
-		foreach my $t (5, 6, 7, 8) {
-			$can_alias_types{$t} = 0;
-			}
-		$can_alias_types{12} = 1
-			if (&has_command($config{'vpopmail_auto'}));
-		}
-	else {
-		# Plain Qmail cannot use the bouncer
-		$can_alias_types{7} = 0;
-		$can_alias_types{9} = 0;
-		$can_alias_types{10} = 0;
-		}
-	$can_alias_comments = 0;
-	$supports_aliascopy = 0;
-	}
-elsif ($config{'mail_system'} == 6) {
-	# Using sendmail for email
-	&foreign_require("exim");
-	%xconfig = &foreign_config("exim");
+	# Qmail cannot use the bouncer
+	$can_alias_types{7} = 0;
+	$can_alias_types{9} = 0;
+	$can_alias_types{10} = 0;
 	$can_alias_comments = 0;
 	$supports_aliascopy = 0;
 	}
@@ -139,20 +113,18 @@ sub list_domain_aliases
 local ($d, $ignore_plugins) = @_;
 &require_mail();
 local ($u, %foruser);
-if ($config{'mail_system'} != 4) {
-	# Filter out aliases that point to users
-	foreach $u (&list_domain_users($d, 0, 1, 1, 1)) {
-		local $pop3 = &remove_userdom($u->{'user'}, $d);
-		$foruser{$pop3."\@".$d->{'dom'}} = $u->{'user'};
-		if ($config{'mail_system'} == 0 && $u->{'user'} =~ /\@/) {
-			# Special case for Postfix @ users
-			$foruser{$pop3."\@".$d->{'dom'}} =
-				&escape_replace_atsign_if_exists($u->{'user'});
-			}
+# Filter out aliases that point to users
+foreach $u (&list_domain_users($d, 0, 1, 1, 1)) {
+	local $pop3 = &remove_userdom($u->{'user'}, $d);
+	$foruser{$pop3."\@".$d->{'dom'}} = $u->{'user'};
+	if ($mail_system == 0 && $u->{'user'} =~ /\@/) {
+		# Special case for Postfix @ users
+		$foruser{$pop3."\@".$d->{'dom'}} =
+			&escape_replace_atsign_if_exists($u->{'user'});
 		}
-	if ($d->{'mail'}) {
-		$foruser{$d->{'user'}."\@".$d->{'dom'}} = $d->{'user'};
-		}
+	}
+if ($d->{'mail'}) {
+	$foruser{$d->{'user'}."\@".$d->{'dom'}} = $d->{'user'};
 	}
 local @virts = &list_virtusers();
 local %ignore;
@@ -194,7 +166,7 @@ local ($d, $noaliases, $leave_dns) = @_;
 &complete_domain($d);
 &require_mail();
 local $tmpl = &get_template($d->{'template'});
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Just add to sendmail local domains file
 	local $conf = &sendmail::get_sendmailcf();
 	local $cwfile;
@@ -210,12 +182,12 @@ if ($config{'mail_system'} == 1) {
 		&sendmail::restart_sendmail();
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Add a special postfix virtual entry just for the domain
 	&create_virtuser({ 'from' => $d->{'dom'},
 			   'to' => [ $d->{'dom'} ] });
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Add to qmail rcpthosts file and virtualdomains file
 	local $rlist = &qmailadmin::list_control_file("rcpthosts");
 	push(@$rlist, $d->{'dom'});
@@ -227,46 +199,6 @@ elsif ($config{'mail_system'} == 2) {
 	if (!$no_restart_mail) {
 		&qmailadmin::restart_qmail();
 		}
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Call vpopmail domain creation program
-	local $qdom = quotemeta($d->{'dom'});
-	local $qpass = quotemeta($d->{'pass'});
-	local $qowner = '';
-	local $qdir = '';
-	if ($config{'vpopmail_owner'}) {
-		local $quid = quotemeta($d->{'uid'});
-		local $qgid = quotemeta($d->{'gid'});
-		$qowner = "-i $quid -g $qgid"
-	}
-	if ($config{'vpopmail_maildir'}) {
-		local $qmdir = quotemeta($d->{'home'}.'/'.$config{'vpopmail_maildir'});
-		$qdir = "-d $qmdir";
-		if (!-e $qmdir) {
-			mkdir($d->{'home'}.'/'.$config{'vpopmail_maildir'});
-			chown($d->{'uid'},$d->{'gid'},$d->{'home'}.'/'.$config{'vpopmail_maildir'})
-		}
-	}
-	local $out;
-	local $errorlabel;
-	if ($d->{'alias'} && !$d->{'aliasmail'}) {
-		local $aliasdom = &get_domain($d->{'alias'});
-		$out = &backquote_command(
-		    "$vpopbin/vaddaliasdomain $qdom $aliasdom->{'dom'} 2>&1");
-		$errorlabel = 'setup_evaddaliasdomain';
-		}
-	else {
-		$errorlabel = 'setup_evadddomain';
-		$out = &backquote_command(
-		    "$vpopbin/vadddomain $qdir $qowner $qdom $qpass 2>&1");
-		}
-	if ($?) {
-		&$second_print(&text($label, "<tt>$out</tt>"));
-		return;
-		}
-	}
-elsif ($config{'mail_system'} == 6) {
-	&exim::add_local_domain( $d->{'dom'} );
 	}
 
 &$second_print($text{'setup_done'});
@@ -308,12 +240,6 @@ if (!$noaliases && !$d->{'no_tmpl_aliases'}) {
 		local ($a, %acreate);
 		foreach $a (@aliases) {
 			local ($from, $to) = split(/=/, $a, 2);
-			if ($config{'mail_system'} == 5 &&
-			    lc($from) eq 'postmaster') {
-				# Postmaster is created automatically
-				# on vpopmail systems
-				next;
-				}
 			$to = &substitute_domain_template($to, $d);
 			$from = $from eq "*" ? "\@$d->{'dom'}" : "$from\@$d->{'dom'}";
 			if ($acreate{$from}) {
@@ -330,7 +256,7 @@ if (!$noaliases && !$d->{'no_tmpl_aliases'}) {
 		if ($tmpl->{'dom_aliases_bounce'} &&
 		    !$acreate{"\@$d->{'dom'}"} &&
 		    !$gotvirt{'@'.$d->{'dom'}} &&
-		    $config{'mail_system'} != 0) {
+		    $mail_system != 0) {
 			# Add bounce alias, if there isn't one yet, and if
 			# we are not running Postfix.
 			local $v = { 'from' => "\@$d->{'dom'}",
@@ -431,7 +357,7 @@ elsif ($isalias && $d->{'aliascopy'}) {
 	&delete_alias_virtuals($d);
 	}
 
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Delete domain from sendmail local domains file
 	local $conf = &sendmail::get_sendmailcf();
 	local $cwfile;
@@ -462,7 +388,7 @@ if ($config{'mail_system'} == 1) {
 		&sendmail::restart_sendmail();
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Delete the special postfix virtuser
 	local @virts = &list_virtusers();
 	local ($lv) = grep { lc($_->{'from'}) eq $d->{'dom'} } @virts;
@@ -489,7 +415,7 @@ elsif ($config{'mail_system'} == 0) {
 			}
 		}
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Delete domain from qmail locals file, rcpthosts file and virtuals
 	local $dlist = &qmailadmin::list_control_file("locals");
 	$dlist = [ grep { lc($_) ne $d->{'dom'} } @$dlist ];
@@ -502,24 +428,9 @@ elsif ($config{'mail_system'} == 2) {
 	local ($virtmap) = grep { lc($_->{'domain'}) eq $d->{'dom'} &&
 				  !$_->{'user'} } &qmailadmin::list_virts();
 	&qmailadmin::delete_virt($virtmap) if ($virtmap);
-        if ($config{'mail_system'} == 4) {
-                &execute_command("cd /etc/qmail && make");
-                }
 	if (!$no_restart_mail) {
 		&qmailadmin::restart_qmail();
 		}
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Call vpopmail domain deletion program
-	local $qdom = quotemeta($d->{'dom'});
-	local $out = &backquote_logged("$vpopbin/vdeldomain $qdom 2>&1");
-	if ($?) {
-		&$second_print(&text('delete_evdeldomain', "<tt>$out</tt>"));
-		return;
-		}
-	}
-elsif ($config{'mail_system'} == 6) {
-	&exim::remove_domain( $d->{'dom'} );
 	}
 
 &$second_print($text{'setup_done'});
@@ -578,7 +489,7 @@ if ($supports_dependent) {
 
 # Remove cloud mail provider
 my $c = $d->{'smtp_cloud'};
-if ($c && defined(&list_smtp_clouds)) {
+if ($c && defined(&list_smtp_clouds) && !$preserve) {
 	my ($cloud) = grep { $_->{'name'} eq $c } &list_smtp_clouds();
 	&$first_print(&text('delete_mail_smtpcloud',
 			    $cloud ? $cloud->{'desc'} : $c));
@@ -772,42 +683,44 @@ return $t;
 # just update users.
 sub modify_mail
 {
-local $tmpl = &get_template($_[0]->{'template'});
+my ($d, $oldd) = @_;
+my $tmpl = &get_template($d->{'template'});
 &require_useradmin();
-local $our_mail_locks = 0;
-local $our_unix_locks = 0;
+my $our_mail_locks = 0;
+my $our_unix_locks = 0;
 
 # Special case - conversion of an alias domain to non-alias
-local $isalias = $_[0]->{'alias'} && !$_[0]->{'aliasmail'};
-local $wasalias = $_[1]->{'alias'} && !$_[1]->{'aliasmail'};
+my $isalias = $d->{'alias'} && !$d->{'aliasmail'};
+my $wasalias = $oldd->{'alias'} && !$oldd->{'aliasmail'};
 if ($wasalias && !$isalias) {
-	&obtain_lock_mail($_[0]);
-	if ($_[0]->{'aliascopy'}) {
+	&obtain_lock_mail($d);
+	if ($d->{'aliascopy'}) {
 		# Stop copying mail aliases
 		&$first_print($text{'save_mailunalias1'});
-		$_[0]->{'aliascopy'} = 0;
-		&delete_alias_virtuals($_[0]);
+		$d->{'aliascopy'} = 0;
+		&delete_alias_virtuals($d);
 		}
 	else {
 		# Remove catchall
 		&$first_print($text{'save_mailunalias2'});
-		local ($catchall) = grep { $_->{'from'} eq '@'.$_[0]->{'dom'} }
+		my ($catchall) = grep { $_->{'from'} eq '@'.$d->{'dom'} }
 					 &list_virtusers();
 		if ($catchall) {
 			&delete_virtuser($catchall);
 			}
 		}
 	&$second_print($text{'setup_done'});
-	&release_lock_mail($_[0]);
+	&release_lock_mail($d);
 	return 1;
 	}
 
 # Second special case - changing of alias target (for a real alias domain)
-if ($_[0]->{'alias'} && $_[1]->{'alias'} &&
-    $_[0]->{'alias'} != $_[1]->{'alias'} &&
-    !$_[0]->{'aliasmail'}) {
-	&delete_mail($_[1]);
-	&setup_mail($_[0]);
+if ($d->{'alias'} && $oldd->{'alias'} &&
+    $d->{'alias'} != $oldd->{'alias'} &&
+    !$d->{'aliasmail'} &&
+    $d->{'mail'}) {
+	&delete_mail($oldd);
+	&setup_mail($d);
 	return 1;
 	}
 
@@ -816,78 +729,77 @@ if ($_[0]->{'alias'} && $_[1]->{'alias'} &&
 # as part of the domain's directory.
 # No need to do this for VPOPMail users.
 # Also, any users in the user@domain name format need to be renamed
-local %renamed = ( $_[1]->{'user'} => $_[0]->{'user'} );
-if (($_[0]->{'home'} ne $_[1]->{'home'} ||
-     $_[0]->{'dom'} ne $_[1]->{'dom'} ||
-     $_[0]->{'gid'} != $_[1]->{'gid'} ||
-     $_[0]->{'prefix'} ne $_[1]->{'prefix'}) && !$isalias) {
-	&obtain_lock_mail($_[0]); $our_mail_locks++;
-	&obtain_lock_unix($_[0]); $our_unix_locks++;
+my %renamed = ( $oldd->{'user'} => $d->{'user'} );
+if (($d->{'home'} ne $oldd->{'home'} ||
+     $d->{'dom'} ne $oldd->{'dom'} ||
+     $d->{'gid'} != $oldd->{'gid'} ||
+     $d->{'prefix'} ne $oldd->{'prefix'}) && !$isalias) {
+	&obtain_lock_mail($d); $our_mail_locks++;
+	&obtain_lock_unix($d); $our_unix_locks++;
 	&$first_print($text{'save_mailrename'});
-	local $u;
-	local $domhack = { %{$_[0]} };		# This hack is needed to find
-	$domhack->{'home'} = $_[1]->{'home'};	# users under the old home dir
-	$domhack->{'gid'} = $_[1]->{'gid'};	# and GID and parent
-	$domhack->{'parent'} = $_[1]->{'parent'};
+	my $u;
+	my $domhack = { %{$d} };		# This hack is needed to find
+	$domhack->{'home'} = $oldd->{'home'};	# users under the old home dir
+	$domhack->{'gid'} = $oldd->{'gid'};	# and GID and parent
+	$domhack->{'parent'} = $oldd->{'parent'};
 	foreach $u (&list_domain_users($domhack, 1)) {
-		local %oldu = %$u;
-		if ($_[0]->{'home'} ne $_[1]->{'home'} &&
-		    $config{'mail_system'} != 5) {
+		my %oldu = %$u;
+		if ($d->{'home'} ne $oldd->{'home'}) {
 			# Change home directory
-			$u->{'home'} =~ s/$_[1]->{'home'}/$_[0]->{'home'}/;
+			$u->{'home'} =~ s/$oldd->{'home'}/$d->{'home'}/;
 			}
-		local $olddom = $_[1]->{'dom'};
-		if ($_[0]->{'dom'} ne $_[1]->{'dom'} &&
+		my $olddom = $oldd->{'dom'};
+		if ($d->{'dom'} ne $oldd->{'dom'} &&
 		    $tmpl->{'append_style'} == 6 &&
 		    $u->{'user'} =~ /^(.*)\@\Q$olddom\E$/) {
 			# Rename this guy, as he is using an @domain name
-			local $pop3 = $1;
-			$u->{'user'} = &userdom_name($pop3, $_[0]);
+			my $pop3 = $1;
+			$u->{'user'} = &userdom_name($pop3, $d);
 			if ($u->{'email'}) {
-				$u->{'email'} = "$pop3\@$_[0]->{'dom'}";
+				$u->{'email'} = "$pop3\@$d->{'dom'}";
 				}
 			}
-		elsif ($_[0]->{'prefix'} ne $_[1]->{'prefix'}) {
+		elsif ($d->{'prefix'} ne $oldd->{'prefix'}) {
 			# Username prefix has changed, so user may need to be
 			# renamed.
-			$u->{'user'} =~ s/^\Q$_[1]->{'prefix'}\E([\.\-])/$_[0]->{'prefix'}$1/ ||
-				$u->{'user'} =~ s/([\.\-])\Q$_[1]->{'prefix'}\E$/$1$_[0]->{'prefix'}/;
+			$u->{'user'} =~ s/^\Q$oldd->{'prefix'}\E([\.\-])/$d->{'prefix'}$1/ ||
+				$u->{'user'} =~ s/([\.\-])\Q$oldd->{'prefix'}\E$/$1$d->{'prefix'}/;
 			}
-		if ($_[0]->{'gid'} != $_[1]->{'gid'}) {
+		if ($d->{'gid'} != $oldd->{'gid'}) {
 			# Domain owner has changed, so user's GID must too ..
 			# and so must the GID on his files
-			$u->{'gid'} = $_[0]->{'gid'};
+			$u->{'gid'} = $d->{'gid'};
 			&useradmin::recursive_change($u->{'home'},
-				$u->{'uid'}, $_[1]->{'gid'},
-				$u->{'uid'}, $_[0]->{'gid'});
+				$u->{'uid'}, $oldd->{'gid'},
+				$u->{'uid'}, $d->{'gid'});
 			}
-		if ($_[0]->{'uid'} != $_[1]->{'uid'} &&
- 		    $u->{'uid'} == $_[1]->{'uid'}) {
+		if ($d->{'uid'} != $oldd->{'uid'} &&
+ 		    $u->{'uid'} == $oldd->{'uid'}) {
 			# Website FTP access user's UID and GID needs to change
-			$u->{'uid'} = $_[0]->{'uid'};
-			$u->{'gid'} = $_[0]->{'gid'};
+			$u->{'uid'} = $d->{'uid'};
+			$u->{'gid'} = $d->{'gid'};
 			}
 
-		if ($_[0]->{'mail'}) {
+		if ($d->{'mail'}) {
 			# Update email address attributes for the user, as these
 			# are used in LDAP
 			if ($u->{'email'}) {
 				$u->{'email'} =~
-				    s/\@\Q$_[1]->{'dom'}\E$/\@$_[0]->{'dom'}/;
+				    s/\@\Q$oldd->{'dom'}\E$/\@$d->{'dom'}/;
 				}
-			local @newextra;
+			my @newextra;
 			foreach my $extra (@{$u->{'extraemail'}}) {
 				my $newextra = $extra;
 				$newextra =~
-				    s/\@\Q$_[1]->{'dom'}\E$/\@$_[0]->{'dom'}/;
+				    s/\@\Q$oldd->{'dom'}\E$/\@$d->{'dom'}/;
 				push(@newextra, $newextra);
 				}
 			$u->{'extraemail'} = \@newextra;
 			}
 
 		# Save the user
-		&modify_user($u, \%oldu, $_[0], 1);
-		if (!$u->{'nomailfile'} && $_[0]->{'mail'}) {
+		&modify_user($u, \%oldu, $d, 1);
+		if (!$u->{'nomailfile'} && $d->{'mail'}) {
 			&rename_mail_file($u, \%oldu);
 			}
 		if ($oldu{'user'} ne $u->{'user'}) {
@@ -900,11 +812,11 @@ if (($_[0]->{'home'} ne $_[1]->{'home'} ||
 if ($isalias && $_[2] && $_[2]->{'dom'} ne $_[3]->{'dom'}) {
 	# This is an alias, and the domain it is aliased to has changed ..
 	# update the catchall alias or virtuser copies
-	&obtain_lock_mail($_[0]); $our_mail_locks++;
-	if (!$_[0]->{'aliascopy'}) {
+	&obtain_lock_mail($d); $our_mail_locks++;
+	if (!$d->{'aliascopy'}) {
 		# Fixup dest in catchall
-		local @virts = &list_virtusers();
-		local ($catchall) = grep {
+		my @virts = &list_virtusers();
+		my ($catchall) = grep {
 			$_->{'to'}->[0] eq '%1@'.$_[3]->{'dom'} } @virts;
 		if ($catchall) {
 			&$first_print($text{'save_mailalias'});
@@ -915,69 +827,69 @@ if ($isalias && $_[2] && $_[2]->{'dom'} ne $_[3]->{'dom'}) {
 		}
 	else {
 		# Re-write all copied virtuals
-		&copy_alias_virtuals($_[0], $_[2]);
+		&copy_alias_virtuals($d, $_[2]);
 		}
 	}
-elsif ($isalias && $_[0]->{'dom'} ne $_[1]->{'dom'} &&
-       $_[0]->{'aliascopy'}) {
+elsif ($isalias && $d->{'dom'} ne $oldd->{'dom'} &&
+       $d->{'aliascopy'}) {
 	# This is an alias and the domain name has changed - fix all virtuals
-	&obtain_lock_mail($_[0]); $our_mail_locks++;
-	&delete_alias_virtuals($_[1]);
-	local $alias = &get_domain($_[0]->{'alias'});
-	&copy_alias_virtuals($_[0], $alias);
+	&obtain_lock_mail($d); $our_mail_locks++;
+	&delete_alias_virtuals($oldd);
+	my $alias = &get_domain($d->{'alias'});
+	&copy_alias_virtuals($d, $alias);
 	}
 
-if ($_[0]->{'dom'} ne $_[1]->{'dom'} && $_[0]->{'mail'}) {
+if ($d->{'dom'} ne $oldd->{'dom'} && $d->{'mail'}) {
 	# Delete the old mail domain and add the new
-	local $no_restart_mail = 1;
-	local ($oldbcc, $oldrbcc);
+	my $no_restart_mail = 1;
+	my ($oldbcc, $oldrbcc);
 	if ($supports_bcc) {
-		$oldbcc = &get_domain_sender_bcc($_[1]);
+		$oldbcc = &get_domain_sender_bcc($oldd);
 		}
 	if ($supports_bcc == 2) {
-		$oldrbcc = &get_domain_recipient_bcc($_[1]);
+		$oldrbcc = &get_domain_recipient_bcc($oldd);
 		}
-	&delete_mail($_[1], 0, 1, 1);
-	&setup_mail($_[0], 1, 1);
+	&delete_mail($oldd, 0, 1, 1);
+	&setup_mail($d, 1, 1);
 	if ($supports_bcc) {
-		$oldbcc =~ s/\Q$_[1]->{'dom'}\E/$_[0]->{'dom'}/g;
-		&save_domain_sender_bcc($_[0], $oldbcc);
+		$oldbcc =~ s/\Q$oldd->{'dom'}\E/$d->{'dom'}/g;
+		&save_domain_sender_bcc($d, $oldbcc);
 		}
 	if ($supports_bcc == 2) {
-		$oldrbcc =~ s/\Q$_[1]->{'dom'}\E/$_[0]->{'dom'}/g;
-		&save_domain_recipient_bcc($_[0], $oldrbcc);
+		$oldrbcc =~ s/\Q$oldd->{'dom'}\E/$d->{'dom'}/g;
+		&save_domain_recipient_bcc($d, $oldrbcc);
 		}
 	&require_mail();
 	if (&is_mail_running()) {
-		if ($config{'mail_system'} == 1) {
+		if ($mail_system == 1) {
 			&sendmail::restart_sendmail();
 			}
-		elsif ($config{'mail_system'} == 0) {
+		elsif ($mail_system == 0) {
 			&shutdown_mail_server();
 			&startup_mail_server();
 			}
-		elsif ($config{'mail_system'} == 2) {
+		elsif ($mail_system == 2) {
 			&qmailadmin::restart_qmail();
 			}
-		elsif ($config{'mail_system'} == 6) {
+		elsif ($mail_system == 6) {
 			&exim::restart_exim();
 			}
 		}
 
-	if (!$_[0]->{'aliascopy'}) {
+	if (!$d->{'aliascopy'}) {
 		# Update any virtusers with addresses in the old domain
 		&$first_print($text{'save_fixvirts'});
 		foreach $v (&list_virtusers()) {
 			if ($v->{'from'} =~ /^(\S*)\@(\S+)$/ &&
-			    lc($2) eq $_[1]->{'dom'}) {
-				local $oldv = { %$v };
-				local $u = $1;
-				if ($u eq $_[1]->{'user'}) {
+			    lc($2) eq $oldd->{'dom'}) {
+				my $oldv = { %$v };
+				my $u = $1;
+				if ($u eq $oldd->{'user'}) {
 					# For admin user, who has changed
-					$u = $_[0]->{'user'};
+					$u = $d->{'user'};
 					}
-				$v->{'from'} = "$u\@$_[0]->{'dom'}";
-				&fix_alias_when_renaming($v, $_[0], $_[1]);
+				$v->{'from'} = "$u\@$d->{'dom'}";
+				&fix_alias_when_renaming($v, $d, $oldd);
 				&modify_virtuser($oldv, $v);
 				}
 			}
@@ -986,16 +898,16 @@ if ($_[0]->{'dom'} ne $_[1]->{'dom'} && $_[0]->{'mail'}) {
 	if (!$isalias) {
 		# Update any generics/sender canonical entries in the old domain
 		if ($config{'generics'}) {
-			local %ghash = &get_generics_hash();
+			my %ghash = &get_generics_hash();
 			foreach my $g (values %ghash) {
 				if ($g->{'to'} =~ /^(.*)\@(\S+)$/ &&
-				    $2 eq $_[1]->{'dom'}) {
-					local $oldg = { %$g };
-					local $u = $1;
-					if ($u eq $_[1]->{'user'}) {
+				    $2 eq $oldd->{'dom'}) {
+					my $oldg = { %$g };
+					my $u = $1;
+					if ($u eq $oldd->{'user'}) {
 						# For admin user, who has
 						# changed name
-						$u = $_[0]->{'user'};
+						$u = $d->{'user'};
 						}
 					if ($renamed{$g->{'from'}}) {
 						# Username has been changed by
@@ -1003,7 +915,7 @@ if ($_[0]->{'dom'} ne $_[1]->{'dom'} && $_[0]->{'mail'}) {
 						$g->{'from'} =
 						  $renamed{$g->{'from'}};
 						}
-					$g->{'to'} = "$u\@$_[0]->{'dom'}";
+					$g->{'to'} = "$u\@$d->{'dom'}";
 					&modify_generic($g, $oldg);
 					}
 				}
@@ -1011,10 +923,10 @@ if ($_[0]->{'dom'} ne $_[1]->{'dom'} && $_[0]->{'mail'}) {
 
 		# Make a second pass through users to fix aliases
 		#&flush_virtualmin_caches();
-		foreach my $u (&list_domain_users($_[0])) {
-			local $oldu = { %$u };
-			if (&fix_alias_when_renaming($u, $_[0], $_[1])) {
-				&modify_user($u, $oldu, $_[0]);
+		foreach my $u (&list_domain_users($d)) {
+			my $oldu = { %$u };
+			if (&fix_alias_when_renaming($u, $d, $oldd)) {
+				&modify_user($u, $oldu, $d);
 				}
 			}
 		}
@@ -1024,74 +936,89 @@ if ($_[0]->{'dom'} ne $_[1]->{'dom'} && $_[0]->{'mail'}) {
 
 # Re-write the file containing all users' addresses, in case the domain changed 
 if (!$isalias) {
-	&create_everyone_file($_[0]);
+	&create_everyone_file($d);
 	}
 
 # If domain was re-named and had a private DKIM key, update it
-if (!$_[0]->{'alias'} && $config{'dkim_enabled'} &&
-    $_[0]->{'dom'} ne $_[1]->{'dom'}) {
-	my $keyfile = &get_domain_dkim_key($_[1]);
+if (!$d->{'alias'} && $config{'dkim_enabled'} &&
+    $d->{'dom'} ne $oldd->{'dom'}) {
+	my $keyfile = &get_domain_dkim_key($oldd);
 	if ($keyfile) {
 		my $key = &read_file_contents($keyfile);
 		if ($key) {
-			&save_domain_dkim_key($_[0], $key);
+			&save_domain_dkim_key($d, $key);
 			}
 		}
 	}
 
 # Update domain in DKIM list, if DNS was enabled or disabled
-if ($_[0]->{'dns'} && !$_[1]->{'dns'}) {
-	&update_dkim_domains($_[0], 'setup');
+if ($d->{'dns'} && !$oldd->{'dns'}) {
+	&update_dkim_domains($d, 'setup');
 	}
-elsif (!$_[0]->{'dns'} && $_[1]->{'dns'}) {
-	&update_dkim_domains($_[0], 'delete');
+elsif (!$d->{'dns'} && $oldd->{'dns'}) {
+	&update_dkim_domains($d, 'delete');
 	}
 
 # Add autoconfig DNS entry if re-enabling DNS
 if ($config{'mail_autoconfig'} &&
-    &domain_has_website($_[0]) && !$_[0]->{'alias'} &&
-    $_[0]->{'dns'} && !$_[1]->{'dns'}) {
-	foreach my $autoconfig (&get_autoconfig_hostname($_[0])) {
-		&enable_dns_autoconfig($_[0], $autoconfig);
+    &domain_has_website($d) && !$d->{'alias'} &&
+    $d->{'dns'} && !$oldd->{'dns'}) {
+	foreach my $autoconfig (&get_autoconfig_hostname($d)) {
+		&enable_dns_autoconfig($d, $autoconfig);
 		}
 	}
 
 # Update any outgoing IP mapping
-if (($_[0]->{'dom'} ne $_[1]->{'dom'} ||
-     $_[0]->{'ip'} ne $_[1]->{'ip'} ||
-     $_[0]->{'ip6'} ne $_[1]->{'ip6'}) && $supports_dependent) {
-	local $old_dependent = &get_domain_dependent($_[1]);
+if (($d->{'dom'} ne $oldd->{'dom'} ||
+     $d->{'ip'} ne $oldd->{'ip'} ||
+     $d->{'ip6'} ne $oldd->{'ip6'}) && $supports_dependent) {
+	my $old_dependent = &get_domain_dependent($oldd);
 	if ($old_dependent) {
-		&save_domain_dependent($_[1], 0);
-		&save_domain_dependent($_[0], 1);
+		&save_domain_dependent($oldd, 0);
+		&save_domain_dependent($d, 1);
 		}
 	}
 
 # If contact email changed, update aliases to it
-if ($_[0]->{'emailto'} ne $_[1]->{'emailto'}) {
+if ($d->{'emailto'} ne $oldd->{'emailto'}) {
 	&$first_print($text{'save_mailto'});
-	local @tmplaliases = split(/\t+/, $tmpl->{'dom_aliases'});
-	local @aliases = &list_domain_aliases($_[0]);
+	my @tmplaliases = split(/\t+/, $tmpl->{'dom_aliases'});
+	my @aliases = &list_domain_aliases($d);
 	foreach $a (@tmplaliases) {
-                local ($from, $to) = split(/=/, $a, 2);
-		local ($virt) = grep { $_->{'from'} eq
-				       $from."\@".$_[0]->{'dom'} } @aliases;
+                my ($from, $to) = split(/=/, $a, 2);
+		my ($virt) = grep { $_->{'from'} eq
+				       $from."\@".$d->{'dom'} } @aliases;
 		next if (!$virt);
-		next if ($virt->{'to'}->[0] ne $_[1]->{'emailto'});
-		local $oldvirt = { %$virt };
-		$virt->{'to'}->[0] = $_[0]->{'emailto'};
+		next if ($virt->{'to'}->[0] ne $oldd->{'emailto'});
+		my $oldvirt = { %$virt };
+		$virt->{'to'}->[0] = $d->{'emailto'};
 		&modify_virtuser($oldvirt, $virt);
 		}
-	&sync_alias_virtuals($_[0]);
+	&sync_alias_virtuals($d);
 	&$second_print($text{'setup_done'});
+	}
+
+# If the domain changed and rate limiting is enabled, update any domains
+# in the config
+if ($d->{'dom'} ne $oldd->{'dom'} && !&check_ratelimit()) {
+	&lock_file(&get_ratelimit_config_file());
+	my $conf = &get_ratelimit_config();
+	foreach my $racl (grep { $_->{'name'} eq 'racl' } @$conf) {
+		if ($racl->{'values'}->[2] =~ /\@\Q$oldd->{'dom'}\E/) {
+			$racl->{'values'}->[2] =~ s/\@$oldd->{'dom'}/\@$d->{'dom'}/;
+			&save_ratelimit_directive($conf, $racl, $racl);
+			}
+		}
+	&flush_file_lines();
+	&unlock_file(&get_ratelimit_config_file());
 	}
 
 # Unlock mail and unix DBs the same number of times we locked them
 while($our_mail_locks--) {
-	&release_lock_mail($_[0]);
+	&release_lock_mail($d);
 	}
 while($our_unix_locks--) {
-	&release_lock_unix($_[0]);
+	&release_lock_unix($d);
 	}
 }
 
@@ -1162,28 +1089,26 @@ foreach my $s (@servers) {
 	}
 
 # Check mailbox permissions
-if ($config{'mail_system'} != 5) {	# skip for vpopmail
-	local %doneuid;
-	foreach my $user (&list_domain_users($d, 1)) {
-		if (!$user->{'webowner'} && $doneuid{$user->{'uid'}}++) {
-			return &text('validate_emailuid', $user->{'user'},
-							  $user->{'uid'});
-			}
-		local @st = stat($user->{'home'});
-		if (!@st) {
-			return &text('validate_emailhome', $user->{'user'},
-							   $user->{'home'});
-			}
-		if ($st[4] != $user->{'uid'}) {
-			local $ru = getpwuid($st[4]) || $user->{'uid'};
-			return &text('validate_emailhomeu',
-				$user->{'user'}, $user->{'home'}, $ru);
-			}
-		if ($st[5] != $user->{'gid'}) {
-			local $rg = getgrgid($st[5]) || $user->{'gid'};
-			return &text('validate_emailhomeg',
-				$user->{'user'}, $user->{'home'}, $rg);
-			}
+local %doneuid;
+foreach my $user (&list_domain_users($d, 1)) {
+	if (!$user->{'webowner'} && $doneuid{$user->{'uid'}}++) {
+		return &text('validate_emailuid', $user->{'user'},
+						  $user->{'uid'});
+		}
+	local @st = stat($user->{'home'});
+	if (!@st) {
+		return &text('validate_emailhome', $user->{'user'},
+						   $user->{'home'});
+		}
+	if ($st[4] != $user->{'uid'}) {
+		local $ru = getpwuid($st[4]) || $user->{'uid'};
+		return &text('validate_emailhomeu',
+			$user->{'user'}, $user->{'home'}, $ru);
+		}
+	if ($st[5] != $user->{'gid'}) {
+		local $rg = getgrgid($st[5]) || $user->{'gid'};
+		return &text('validate_emailhomeg',
+			$user->{'user'}, $user->{'home'}, $rg);
 		}
 	}
 
@@ -1211,15 +1136,8 @@ sub disable_mail
 &obtain_lock_unix($_[0]);
 
 if (!$config{'disable_mail'}) {
-	if ($config{'mail_system'} == 5) {
-		# Just call vpopmail's disable function
-		local $qdom = quotemeta($_[0]->{'dom'});
-		&system_logged("$vpopbin/vmoduser -p $qdom 2>&1");
-		}
-	else {
-		# Delete mail access for the domain
-		&delete_mail($_[0], 0, 1);
-		}
+	# Delete mail access for the domain
+	&delete_mail($_[0], 0, 1);
 	}
 
 &$first_print($text{'disable_users'});
@@ -1228,9 +1146,7 @@ foreach my $user (&list_domain_users($_[0], 1)) {
 		&set_pass_disable($user, 1);
 		&modify_user($user, $user, $_[0]);
 		}
-	if ($user->{'unix'}) {
-		&disable_unix_cron_jobs($user->{'user'});
-		}
+	&disable_unix_cron_jobs($user->{'user'});
 	}
 &$second_print($text{'setup_done'});
 &release_lock_mail($_[0]);
@@ -1246,19 +1162,12 @@ sub enable_mail
 &obtain_lock_unix($_[0]);
 
 if (!$config{'disable_mail'}) {
-	if ($config{'mail_system'} == 5) {
-		# Just call vpopmail's enable function
-		local $qdom = quotemeta($_[0]->{'dom'});
-		&system_logged("$vpopbin/vmoduser -x $qdom 2>&1");
-		}
-	else {
-		# Re-enable mail, and re-copy aliases from target domain
-		&setup_mail($_[0], 1);
-		if ($_[0]->{'alias'} && !$_[0]->{'aliasmail'} &&
-		    $_[0]->{'aliascopy'}) {
-			my $target = &get_domain($_[0]->{'alias'});
-			&copy_alias_virtuals($_[0], $target);
-			}
+	# Re-enable mail, and re-copy aliases from target domain
+	&setup_mail($_[0], 1);
+	if ($_[0]->{'alias'} && !$_[0]->{'aliasmail'} &&
+	    $_[0]->{'aliascopy'}) {
+		my $target = &get_domain($_[0]->{'alias'});
+		&copy_alias_virtuals($_[0], $target);
 		}
 	}
 
@@ -1268,9 +1177,7 @@ foreach my $user (&list_domain_users($_[0], 1)) {
 		&set_pass_disable($user, 0);
 		&modify_user($user, $user, $_[0]);
 		}
-	if ($user->{'unix'}) {
-		&enable_unix_cron_jobs($user->{'user'});
-		}
+	&enable_unix_cron_jobs($user->{'user'});
 	}
 &$second_print($text{'setup_done'});
 &release_lock_mail($_[0]);
@@ -1284,7 +1191,7 @@ return 1;
 sub check_mail_clash
 {
 local ($dname) = @_;
-if ($config{'mail_system'} == 2) {
+if ($mail_system == 2) {
 	# Qmail virtualdomains don't work if the domain name is the same
 	# as the hostname
 	&require_mail();
@@ -1303,7 +1210,7 @@ sub is_local_domain
 {
 local $found = 0;
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Check Sendmail local domains file
 	local $conf = &sendmail::get_sendmailcf();
         local @dlist = &sendmail::get_file_or_config($conf, "w");
@@ -1311,7 +1218,7 @@ if ($config{'mail_system'} == 1) {
 		$found++ if (lc($d) eq lc($_[0]));
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Check Postfix virtusers and mydestination
 	local @virts = &list_virtusers();
 	local ($lv) = grep { lc($_->{'from'}) eq $_[0] } @virts;
@@ -1323,24 +1230,13 @@ elsif ($config{'mail_system'} == 0) {
 			     $md eq '$myhostname' && lc($_[0]) eq $hostname);
 		}
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Check qmail rcpthosts and virtualdomains files
 	local $rlist = &qmailadmin::list_control_file("rcpthosts");
 	@$rlist = map { lc($_) } @$rlist;
 	local ($virtmap) = grep { lc($_->{'domain'}) eq $_[0]->{'dom'} &&
 				  !$_->{'user'} } &qmailadmin::list_virts();
 	$found++ if (&indexof($_[0], @$rlist) >= 0 && $virtmap);
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Check active vpopmail domains
-	$found = -e "$config{'vpopmail_dir'}/domains/$_[0]";
-	}
-elsif ($config{'mail_system'} == 6) {
-	# Look in Exim domains list
-	local @dlist = &exim::list_domains();
-	foreach my $d (@dlist) {
-		$found++ if (lc($d) eq lc($_[0]));
-		}
 	}
 return $found;
 }
@@ -1352,6 +1248,7 @@ return $found;
 sub list_virtusers
 {
 local ($incall) = @_;
+return () if (!$config{'mail'});
 
 # Build list of unix users, to exclude aliases with same name as users
 # (which are picked up by list_domain_users instead).
@@ -1374,7 +1271,7 @@ if ($supports_aliascopy && !$incall) {
 		}
 	}
 
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Get from sendmail
 	local @svirts = &sendmail::list_virtusers($sendmail_vfile);
 	local %aliases = map { lc($_->{'name'}), $_ }
@@ -1413,7 +1310,7 @@ if ($config{'mail_system'} == 1) {
 		}
 	return @virts;
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Get from postfix
 	local $svirts = &postfix::get_maps($virtual_type);
 	local %aliases = map { lc($_->{'name'}), $_ }
@@ -1444,7 +1341,7 @@ elsif ($config{'mail_system'} == 0) {
 		}
 	return @virts;
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Find all qmail aliases like .qmail-group-user
 	local @virtmaps = grep { !$_->{'user'} } &qmailadmin::list_virts();
 	local @aliases = &qmailadmin::list_aliases();
@@ -1465,79 +1362,6 @@ elsif ($config{'mail_system'} == 2) {
 					       @{$a->{'values'}} ] });
 		}
 	return @virts;
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Use the valias program to get aliases for all domains
-	if (!@vpopmail_aliases_cache) {
-		@vpopmail_aliases_cache = ( );
-
-		# Build up list of all domains
-		opendir(DDIR, "$config{'vpopmail_dir'}/domains");
-		local @df = readdir(DDIR);
-		local @doms = grep { $_ !~ /^\./ && length($_) > 1 } @df;
-		local @letters = grep { $_ !~ /^\./ && length($_) == 1 } @df;
-		closedir(DDIR);
-		foreach my $l (@letters) {
-			opendir(DDIR, "$config{'vpopmail_dir'}/domains/$l");
-			push(@doms, grep { $_ !~ /^\./ } readdir(DDIR));
-			closedir(DDIR);
-			}
-
-		local $dname;
-		foreach $dname (@doms) {
-			# Get aliases from .qmail files
-			local %already;
-			local $ddir = &domain_vpopmail_dir($dname);
-			opendir(DDIR, $ddir);
-			while($qf = readdir(DDIR)) {
-				next if ($qf !~ /^.qmail-(.*)$/);
-				local $alias = { 'from' => $1 eq "default" ?
-						    "\@$dname" : "$1\@$dname",
-						 'to' => [ ] };
-				local $_;
-				open(QMAIL, "<$ddir/$qf");
-				while(<QMAIL>) {
-					s/\r|\n//g;
-					push(@{$alias->{'to'}},
-					     &qmail_to_vpopmail($_, $dname));
-					}
-				close(QMAIL);
-				$already{$alias->{'from'}} = $alias;
-				push(@vpopmail_aliases_cache, $alias);
-				}
-			closedir(DDIR);
-
-			# Add those from valias command (for sites using MySQL
-			# or some other backend)
-			local %aliases;
-			local $_;
-			open(ALIASES, "$vpopbin/valias -s $dname |");
-			while(<ALIASES>) {
-				s/\r|\n//g;
-				if (/^(\S+)\s+\->\s+(.*)/) {
-					local ($from, $to) = ($1, $2);
-					next if ($already{$from});	# already above
-					local $alias;
-					$to = &qmail_to_vpopmail($to, $dname);
-					if ($alias = $aliases{$from}) {
-						push(@{$alias->{'to'}}, $to);
-						}
-					else {
-						$alias = { 'from' => $from,
-							   'to' => [ $to ] };
-						$aliases{$from} = $alias;
-						push(@vpopmail_aliases_cache,
-						     $alias);
-						}
-					}
-				}
-			close(ALIASES);
-			}
-		}
-	return @vpopmail_aliases_cache;
-	}
-elsif ($config{'mail_system'} == 6) {
-	return &exim::list_virtusers();
 	}
 }
 
@@ -1601,7 +1425,7 @@ sub delete_virtuser
 {
 &require_mail();
 &execute_before_virtuser($_[0], 'DELETE_ALIAS');
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Delete from sendmail
 	if ($_[0]->{'alias'} && !$_[0]->{'alias'}->{'deleted'}) {
 		# Delete alias too
@@ -1614,7 +1438,7 @@ if ($config{'mail_system'} == 1) {
 		$_[0]->{'virt'}->{'deleted'} = 1;
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Delete from postfix file
 	if ($_[0]->{'alias'} && !$_[0]->{'alias'}->{'deleted'}) {
 		# Delete alias too
@@ -1628,33 +1452,11 @@ elsif ($config{'mail_system'} == 0) {
 		$_[0]->{'virt'}->{'deleted'} = 1;
 		}
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Just delete the qmail alias
 	return if ($_[0]->{'alias'}->{'deleted'});
 	&qmailadmin::delete_alias($_[0]->{'alias'});
 	$_[0]->{'alias'}->{'deleted'} = 1;
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Remove all vpopmail aliases
-	$_[0]->{'from'} =~ /^(\S*)\@(\S+)$/;
-	local ($box, $dom) = ($1 || "default", $2);
-	local $qfrom = quotemeta("$box\@$dom");
-	local $cmd = "$vpopbin/valias -d $qfrom";
-	local $out = &backquote_logged("$cmd 2>&1");
-	if ($?) {
-		&error("<tt>$cmd</tt> failed : <pre>$out</pre>");
-		}
-	}
-elsif ($config{'mail_system'} == 6) {
-	# Delete Exim alias
-	if (!$_[0]->{'deleted'}) {
-		$_[0]->{'from'} =~ /^(\S*)\@(\S+)$/;
-		local ($box, $dom) = ($1 || "default", $2);
-		local $alias = { 'name' => "$box",
-				 'dom' => $dom };
-		&exim::delete_alias($alias);
-		$_[0]->{'deleted'} = 1;
-		}
 	}
 &execute_after_virtuser($_[0], 'DELETE_ALIAS');
 &register_sync_secondary_virtuser($_[0]);
@@ -1668,7 +1470,7 @@ sub modify_virtuser
 &require_mail();
 &execute_before_virtuser($_[0], 'MODIFY_ALIAS');
 local @to = @{$_[1]->{'to'}};
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Modify in sendmail
 	local $alias = $_[0]->{'alias'};
 	local $oldalias = $alias ? { %$alias } : undef;
@@ -1727,7 +1529,7 @@ if ($config{'mail_system'} == 1) {
 		$_[1]->{'virt'} = $virt;
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Modify in postfix file
 	local $alias = $_[0]->{'alias'};
 	local $oldalias = $alias ? { %$alias } : undef;
@@ -1785,7 +1587,7 @@ elsif ($config{'mail_system'} == 0) {
 		&postfix::regenerate_virtual_table();
 		}
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Just update the qmail alias
 	$_[1]->{'from'} =~ /^(\S*)\@(\S+)$/;
 	local ($box, $dom) = ($1 || "default", $2);
@@ -1794,25 +1596,6 @@ elsif ($config{'mail_system'} == 2) {
 	local $alias = { 'name' => "$virtmap->{'prepend'}-$box",
 			 'values' => \@to };
 	&qmailadmin::modify_alias($_[0]->{'alias'}, $alias);
-	$_[1]->{'alias'} = $alias;
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Just delete the old vpopmail alias, and re-add!
-	&delete_virtuser($_[0]);
-	&create_virtuser($_[1]);
-	}
-elsif ($config{'mail_system'} == 6) {
-	$_[1]->{'from'} =~ /^(\S*)\@(\S+)$/;
-	local ($box, $dom) = ($1 || "default", $2);
-	local $alias = { 'name' => "$box",
-			 'dom' => "$dom",
-			 'values' => $_[1]->{'to'} };
-	$_[0]->{'from'} =~ /^(\S*)\@(\S+)$/;
-	local ($box, $dom) = ($1 || "default", $2);
-	local $old = { 'name' => "$box",
-			 'dom' => "$dom",
-			 'values' => $_[0]->{'to'} };
-	&exim::modify_alias($old,$alias);
 	$_[1]->{'alias'} = $alias;
 	}
 &execute_after_virtuser($_[1], 'MODIFY_ALIAS');
@@ -1827,7 +1610,7 @@ sub create_virtuser
 &require_mail();
 local @to = @{$_[0]->{'to'}};
 &execute_before_virtuser($_[0], 'CREATE_ALIAS');
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Create in sendmail
 	local $virt;
 	local @smto = map { $_ eq "BOUNCE" ? "error:nouser User unknown" :
@@ -1870,7 +1653,7 @@ if ($config{'mail_system'} == 1) {
 				   $sendmail_vdbmtype);
 	$_[0]->{'virt'} = $virt;
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Create in postfix file
 	local @psto = map { $_ =~ /^BOUNCE\s+(.*)$/ ? "BOUNCE" : $_ } @to;
 	local $virt;
@@ -1906,7 +1689,7 @@ elsif ($config{'mail_system'} == 0) {
 	&postfix::regenerate_virtual_table();
 	$_[0]->{'virt'} = $virt;
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Create a single Qmail alias
 	$_[0]->{'from'} =~ /^(\S*)\@(\S+)$/;
 	local ($box, $dom) = ($1 || "default", $2);
@@ -1915,52 +1698,6 @@ elsif ($config{'mail_system'} == 2) {
 	local $alias = { 'name' => "$virtmap->{'prepend'}-$box",
 			 'values' => \@to };
 	&qmailadmin::create_alias($alias);
-	$_[0]->{'alias'} = $alias;
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Add one vpopmail alias for each destination
-	local $t;
-	$_[0]->{'from'} =~ /^(\S*)\@(\S+)$/;
-	local ($box, $dom) = ($1 || "default", $2);
-	local $maxlen = 0;
-	foreach $t (@{$_[0]->{'to'}}) {
-		$maxlen = length($t) if (length($t) > $maxlen);
-		}
-	if ($box eq "default" || $maxlen > 160) {
-		# Create .qmail file directly
-		local $ddir = &domain_vpopmail_dir($dom);
-		local $qmf = "$ddir/.qmail-$box";
-		&lock_file($qmf);
-		&open_tempfile(QMAIL, ">$qmf");
-		foreach $t (@{$_[0]->{'to'}}) {
-			&print_tempfile(QMAIL, &vpopmail_to_qmail($t, $dom),"\n");
-			}
-		&close_tempfile(QMAIL);
-		local @uinfo = getpwnam($config{'vpopmail_user'});
-		local @ginfo = getgrnam($config{'vpopmail_group'});
-		&set_ownership_permissions($uinfo[2], $ginfo[2], 0600, $qmf);
-		&unlock_file($qmf);
-		}
-	else {
-		# Create with valias command
-		local $qfrom = quotemeta("$box\@$dom");
-		foreach $t (@{$_[0]->{'to'}}) {
-			local $qto = quotemeta(&vpopmail_to_qmail($t, $dom));
-			local $cmd = "$vpopbin/valias -i $qto $qfrom";
-			local $out = &backquote_logged("$cmd 2>&1");
-			if ($?) {
-				&error("<tt>$cmd</tt> failed: <pre>$out</pre>");
-				}
-			}
-		}
-	}
-elsif ($config{'mail_system'} == 6) {
-	$_[0]->{'from'} =~ /^(\S*)\@(\S+)$/;
-	local ($box, $dom) = ($1 || "default", $2);
-	local $alias = { 'name' => "$box",
-			 'dom' => $dom,
-			 'values' => \@to };
-	&exim::create_alias($alias);
 	$_[0]->{'alias'} = $alias;
 	}
 &execute_after_virtuser($_[0], 'CREATE_ALIAS');
@@ -2020,7 +1757,7 @@ foreach my $s (@servers) {
 return @rv;
 }
 
-# update_secondary_mx_virtusers(domain, &mailbox-names)
+# update_secondary_mx_virtusers(&domain, &mailbox-names)
 # Update the list of mailboxes allowed to relay for some domain.
 # This is called on the secondary MX Virtualmins.
 sub update_secondary_mx_virtusers
@@ -2030,7 +1767,7 @@ local %mailboxes_map = map { $_, 1 } @$mailboxes;
 local $rv;
 &obtain_lock_mail($dom);
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Update Sendmail access list
 	&foreign_require("sendmail", "access-lib.pl");
 	local $conf = &sendmail::get_sendmailcf();
@@ -2107,7 +1844,7 @@ if ($config{'mail_system'} == 1) {
 	&unlock_file($afile);
 	$rv = undef;
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Update Postfix relay_recipient_maps
 	local $rrm = &postfix::get_current_value("relay_recipient_maps");
 	if (!$rrm) {
@@ -2186,22 +1923,17 @@ return join(',', map { /\s/ ? "\"$_\"" : $_ } @_);
 sub is_mail_running
 {
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Call the sendmail module
 	return &sendmail::is_sendmail_running();
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Call the postfix module 
 	return &postfix::is_postfix_running();
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Just look for qmail-send
 	local ($pid) = &find_byname("qmail-send");
-	return $pid ? 1 : 0;
-	}
-elsif ($config{'mail_system'} == 6) {
-	# Call the postfix module 
-	local ($pid) = &find_byname("exim4");
 	return $pid ? 1 : 0;
 	}
 }
@@ -2212,21 +1944,17 @@ sub shutdown_mail_server
 {
 &require_mail();
 local $err;
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Kill or stop sendmail
 	$err = &sendmail::stop_sendmail();
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Run the postfix stop command
 	$err = &postfix::stop_postfix();
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Call the qmail stop function
 	$err = &qmailadmin::stop_qmail();
-	}
-elsif ($config{'mail_system'} == 6) {
-	# Run the sendmail start command
-	$err = &backquote_command("/etc/init.d/exim4 stop", 1);
 	}
 if ($_[0]) {
 	return $err;
@@ -2242,21 +1970,17 @@ sub startup_mail_server
 {
 &require_mail();
 local $err;
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Run the sendmail start command
 	$err = &sendmail::start_sendmail();
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Run the postfix start command
 	$err = &postfix::start_postfix();
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Call the qmail start function
 	$err = &qmailadmin::start_qmail();
-	}
-elsif ($config{'mail_system'} == 6) {
-	# Run the sendmail start command
-	$err = &backquote_command("/etc/init.d/exim4 start", 1);
 	}
 if ($_[0]) {
 	return $err;
@@ -2294,7 +2018,7 @@ local $mf;
 local $md;
 local ($uid, $gid) = ($user->{'uid'}, $user->{'gid'});
 local @rv;
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Sendmail normally uses a mail file
 	$mf = &sendmail::user_mail_file($user->{'user'});
 	if ($sendmail::config{'mail_type'} == 1) {
@@ -2303,7 +2027,7 @@ if ($config{'mail_system'} == 1) {
 		$mf = undef;
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Postfix user
 	local ($s, $d) = &postfix::postfix_mail_system();
 	if ($s == 0 || $s == 1) {
@@ -2329,26 +2053,13 @@ elsif ($config{'mail_system'} == 0) {
 		$md = &postfix::postfix_mail_file(@uinfo);
 		}
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Normal Qmail user
 	if ($qmailadmin::config{'mail_system'} == 0) {
 		$mf = &qmailadmin::user_mail_file($user->{'user'});
 		}
 	elsif ($qmailadmin::config{'mail_system'} == 1) {
 		$md = &qmailadmin::user_mail_dir($user->{'user'});
-		}
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Nothing to do for VPOPMail, because it gets created automatically
-	# by vadduser
-	@rv = ( &user_mail_file($user), 1 );
-	}
-elsif ($config{'mail_system'} == 6) {
-	if ($exim::config{'mail_system'} == 0) {
-		$mf = &exim::user_mail_file($user);
-		}
-	elsif ($exim::config{'mail_system'} == 1) {
-		$md = &exim::user_mail_file($user);
 		}
 	}
 
@@ -2386,7 +2097,7 @@ elsif ($md) {
 	@rv = ( $md, 1 );
 	}
 
-if (-d $user->{'home'} && $user->{'unix'}) {
+if (-d $user->{'home'}) {
 	# Create Usermin ~/mail directory (if installed)
 	if (&foreign_installed("usermin")) {
 		local %uminiserv;
@@ -2500,7 +2211,7 @@ if ($umf) {
 	&system_logged("rm -rf ".quotemeta($umf));
 	}
 local $noat;
-if ($config{'mail_system'} == 0 && $_[0]->{'user'} =~ /\@/) {
+if ($mail_system == 0 && $_[0]->{'user'} =~ /\@/) {
 	# Remove real file as well as link, if any
 	local $fakeuser = { %{$_[0]} };
 	$fakeuser->{'user'} = $noat = &replace_atsign_if_exists($_[0]->{'user'});
@@ -2571,19 +2282,19 @@ sub rename_mail_file
 {
 &require_mail();
 if (!&mail_under_home()) {
-	if ($config{'mail_system'} == 1) {
+	if ($mail_system == 1) {
 		# Just rename the Sendmail mail file (if necessary)
 		local $of = &sendmail::user_mail_file($_[1]->{'user'});
 		local $nf = &sendmail::user_mail_file($_[0]->{'user'});
 		&rename_logged($of, $nf) if ($of ne $nf);
 		}
-	elsif ($config{'mail_system'} == 0) {
+	elsif ($mail_system == 0) {
 		# Find out from Postfix which file to rename (if necessary)
 		local $nf = &postfix::postfix_mail_file($_[0]->{'user'});
 		local $of = &postfix::postfix_mail_file($_[1]->{'user'});
 		&rename_logged($of, $nf) if ($of ne $nf);
 		}
-	elsif ($config{'mail_system'} == 2) {
+	elsif ($mail_system == 2) {
 		# Just rename the Qmail mail file (if necessary)
 		local $of = &qmailadmin::user_mail_file($_[1]->{'user'});
 		local $nf = &qmailadmin::user_mail_file($_[0]->{'user'});
@@ -2618,23 +2329,17 @@ if (&foreign_check("dovecot")) {
 sub mail_under_home
 {
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	return !$sconfig{'mail_dir'};
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	local $s = &postfix::postfix_mail_system();
 	return $s != 0;
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	return $qmconfig{'mail_system'} != 0 || !$qmconfig{'mail_dir'};
 	}
-elsif ($config{'mail_system'} == 4) {
-	return $config{'ldap_mailstore'} =~ /^(\$HOME|\$\{HOME\})/;
-	}
-elsif ($config{'mail_system'} == 5) {
-	# VPOPMail users always have it under their homes
-	return 1;
-	}
+return 0;
 }
 
 # user_mail_file(&user)
@@ -2647,44 +2352,21 @@ if (!$_[0]->{'user'} || !$_[0]->{'home'}) {
 	# User doesn't exist!
 	@rv = ( );
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Just look at the Sendmail mail file
 	@rv = ( &sendmail::user_mail_file($_[0]->{'user'}),
 		$sendmail::config{'mail_type'} );
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Find out from Postfix which file to check
 	local @pms = &postfix::postfix_mail_system();
 	@rv = ( &postfix::postfix_mail_file($_[0]->{'user'}),
 		$pms[0] == 2 ? 1 : 0 );
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Find out from Qmail which file or dir to check
 	@rv = ( &qmailadmin::user_mail_dir($_[0]->{'user'}),
 		$qmailadmin::config{'mail_system'} == 1 ? 1 : 0 );
-	}
-elsif ($config{'mail_system'} == 4) {
-	# Mail file is an LDAP property
-	local $rv = &add_ldapmessagestore($_[0]->{'mailstore'});
-	if (-d "$rv/Maildir") {
-		@rv = ( "$rv/Maildir", 1 );
-		}
-	else {
-		@rv = ( $rv, 1 );
-		}
-	}
-elsif ($config{'mail_system'} == 5) {
-	# Mail dir is under VPOPMail home
-	local $md = $config{'vpopmail_md'} || "Maildir";
-	@rv = ( "$_[0]->{'home'}/$md", 1 );
-	}
-elsif ($config{'mail_system'} == 6) { 
-	if (-d "$_[0]->{'home'}/Maildir") {
-		@rv = ( "$_[0]->{'home'}/Maildir", 1 );
-	} 
-	else {
-		@rv = ( "/var/mail/$_[0]->{'user'}", 1 );
-		}
 	}
 return wantarray ? @rv : $rv[0];
 }
@@ -2695,7 +2377,7 @@ return wantarray ? @rv : $rv[0];
 sub get_mail_style
 {
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Can get paths from Sendmail module config
 	if ($sendmail::config{'mail_dir'}) {
 		# File under /var/mail
@@ -2713,7 +2395,7 @@ if ($config{'mail_system'} == 1) {
 			$sendmail::config{'mail_file'}, undef);
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Need to query Postfix module for paths
 	local @s = &postfix::postfix_mail_system();
 	$s[1] =~ s/\/$//;	# Remove / from Maildir/
@@ -2727,7 +2409,7 @@ elsif ($config{'mail_system'} == 0) {
 		return (undef, 0, undef, $s[1]);
 		}
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Need to check qmail module config for paths
 	if ($qmailadmin::config{'mail_system'} == 1) {
 		return (undef, 0, undef,
@@ -2823,24 +2505,26 @@ else {
 # Returns the base directory under which user mail files can be found
 sub mail_system_base
 {
-&require_mail();
-if ($config{'mail_system'} == 1) {
-	# Find out from sendmail module config
-	if ($sconfig{'mail_dir'}) {
-		return $sconfig{'mail_dir'};
+if ($config{'mail'}) {
+	&require_mail();
+	if ($mail_system == 1) {
+		# Find out from sendmail module config
+		if ($sconfig{'mail_dir'}) {
+			return $sconfig{'mail_dir'};
+			}
 		}
-	}
-elsif ($config{'mail_system'} == 0) {
-	# Find out from postfix
-	local @s = &postfix::postfix_mail_system();
-	if ($s[0] == 0) {
-		return $s[1];
+	elsif ($mail_system == 0) {
+		# Find out from postfix
+		local @s = &postfix::postfix_mail_system();
+		if ($s[0] == 0) {
+			return $s[1];
+			}
 		}
-	}
-elsif ($config{'mail_system'} == 2) {
-	# Find out from qmail module config
-	if ($qmconfig{'mail_system'} == 0 && $qmconfig{'mail_dir'}) {
-		return $qmconfig{'mail_dir'};
+	elsif ($mail_system == 2) {
+		# Find out from qmail module config
+		if ($qmconfig{'mail_system'} == 0 && $qmconfig{'mail_dir'}) {
+			return $qmconfig{'mail_dir'};
+			}
 		}
 	}
 
@@ -2854,22 +2538,7 @@ return $home_base;
 # domain, or undef
 sub mail_domain_base
 {
-if ($config{'mail_system'} == 4) {
-	# Guess base for domain from mailstore pattern
-	local $guess = { 'user' => 'USER', 'home' => 'HOME' };
-	&userdom_substitutions($guess, $_[0]);
-	local $dir = &add_ldapmessagestore(
-		&substitute_domain_template($config{'ldap_mailstore'}, $guess));
-	if ($dir =~ /^(.*)\/\Q$_[0]->{'dom'}\E/) {
-		return $1;
-		}
-	return undef;
-	}
-elsif ($config{'mail_system'} == 5) {
-	# All mail for VPOPmail is under the domain's directory
-	return &domain_vpopmail_dir($_[0]);
-	}
-elsif (&mail_under_home()) {
+if (&mail_under_home()) {
 	return "$_[0]->{'home'}/homes";
 	}
 else {
@@ -2885,17 +2554,10 @@ if (&foreign_available("mailboxes")) {
 	# Use mailboxes module if possible
 	local %mconfig = &foreign_config("mailboxes");
 	local %minfo = &get_module_info("mailboxes");
-	if ($mconfig{'mail_system'} == $config{'mail_system'}) {
+	if ($mconfig{'mail_system'} == $mail_system) {
 		# Read a Unix user's mail
-		if ($config{'mail_system'} == 5) {
-			return "../mailboxes/list_mail.cgi?user=".
-			       $_[0]->{'user'}."\@".$_[1]->{'dom'}.
-			       "&dom=".$_[1]->{'id'};
-			}
-		else {
-			return "../mailboxes/list_mail.cgi?user=".
-			       $_[0]->{'user'}."&dom=".$_[1]->{'id'};
-			}
+		return "../mailboxes/list_mail.cgi?user=".
+		       $_[0]->{'user'}."&dom=".$_[1]->{'id'};
 		}
 	else {
 		# Access mail file directly
@@ -2951,13 +2613,13 @@ return -x "$config{'vpopmail_dir'}/bin/vadddomain";
 sub check_alias_clash
 {
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	local @aliases = &sendmail::list_aliases($sendmail_afiles);
 	local ($clash) = grep { lc($_->{'name'}) eq lc($_[0]) &&
 				$_->{'enabled'} } @aliases;
 	return $clash;
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	local @aliases = &$postfix_list_aliases($postfix_afiles);
 	local ($clash) = grep { lc($_->{'name'}) eq lc($_[0]) &&
 				$_->{'enabled'} } @aliases;
@@ -3008,7 +2670,7 @@ foreach $u (&list_domain_users($d)) {
 			      $u->{'email'}));
 
 	# Add home and mail quotas
-	if (&has_home_quotas() && $u->{'unix'}) {
+	if (&has_home_quotas()) {
 		&print_tempfile(UFILE, ":$u->{'quota'}");
 		if (&has_mail_quotas()) {
 			&print_tempfile(UFILE, ":$u->{'mquota'}");
@@ -3016,10 +2678,6 @@ foreach $u (&list_domain_users($d)) {
 		else {
 			&print_tempfile(UFILE, ":-");
 			}
-		}
-	elsif ($u->{'mailquota'}) {
-		&print_tempfile(UFILE, ":$u->{'qquota'}");
-		&print_tempfile(UFILE, ":-");
 		}
 	else {
 		&print_tempfile(UFILE, ":-:-");
@@ -3042,6 +2700,10 @@ foreach $u (&list_domain_users($d)) {
 
 	# Add secondary groups
 	&print_tempfile(UFILE, ":".(join(";", @{$u->{'secs'}}) || "-"));
+
+	# Add firstname and surname
+	&print_tempfile(UFILE, ":".($u->{'firstname'} || "-"));
+	&print_tempfile(UFILE, ":".($u->{'surname'} || "-"));
 
 	&print_tempfile(UFILE, "\n");
 	&print_tempfile(UFILE, join(",", @{$u->{'to'}}),"\n");
@@ -3203,7 +2865,7 @@ if (&foreign_check("dovecot") && &foreign_installed("dovecot")) {
 # If any user's homes are outside the domain root, back them up separately
 local @homeless;
 foreach $u (&list_domain_users($d, 1)) {
-	if ($u->{'unix'} && -d $u->{'home'} &&
+	if (-d $u->{'home'} &&
 	    !&is_under_directory($d->{'home'}, $u->{'home'})) {
 		push(@homeless, $u);
 		}
@@ -3235,7 +2897,7 @@ return 1;
 # Restore all mail aliases and mailbox users for this domain
 sub restore_mail
 {
-local ($d, $file, $opts, $allopts) = @_;
+local ($d, $file, $opts, $allopts, $homefmt, $oldd) = @_;
 local ($u, %olduid, @errs);
 
 # Check if users are being stored in the same remote storage, if replicating
@@ -3254,14 +2916,14 @@ if ($url && $burl && $url eq $burl && $allopts->{'repl'} &&
 
 # Restore plain-text password file first
 if (-r $file."_plainpass") {
-	if ($_[2]->{'mailuser'}) {
+	if ($opts->{'mailuser'}) {
 		# Just copy one plain password
 		local (%oldplain, %newplain);
 		&read_file($file."_plainpass", \%oldplain);
 		&read_file("$plainpass_dir/$d->{'id'}", \%newplain);
-		$newplain{$_[2]->{'mailuser'}} = $oldplain{$_[2]->{'mailuser'}};
-		$newplain{$_[2]->{'mailuser'}." encrypted"} =
-			$oldplain{$_[2]->{'mailuser'}." encrypted"};
+		$newplain{$opts->{'mailuser'}} = $oldplain{$opts->{'mailuser'}};
+		$newplain{$opts->{'mailuser'}." encrypted"} =
+			$oldplain{$opts->{'mailuser'}." encrypted"};
 		&write_file("$plainpass_dir/$d->{'id'}", \%newplain);
 		}
 	else {
@@ -3300,12 +2962,13 @@ else {
 	}
 local %exists;
 foreach $u (&list_all_users()) {
-	$exists{$u->{'name'},$u->{'unix'}} = $u;
+	$exists{$u->{'name'}} = $u;
 	}
 local $foundmailuser;
 local $_;
 local @users = &list_domain_users($d);
 open(UFILE, "<".$file."_users");
+local %renamedusers;
 while(<UFILE>) {
 	s/\r|\n//g;
 	local @user = split(/:/, $_);
@@ -3322,7 +2985,8 @@ while(<UFILE>) {
 			}
 		}
 	local @to = split(/,/, $_);
-	if ($user[0] eq $d->{'user'}) {
+	if ($user[0] eq $d->{'user'} ||
+	    $d->{'restoreolduser'} && $user[0] eq $d->{'restoreolduser'}) {
 		# Domain owner, just update alias list
 		local ($uinfo) = grep { $_->{'user'} eq $d->{'user'} } @users;
 		if ($uinfo) {
@@ -3345,11 +3009,23 @@ while(<UFILE>) {
 	else {
 		# Need to re-create user
 		local $uinfo = &create_initial_user($d, 0, $user[2] eq 'w');
-		if ($exists{$user[0],$uinfo->{'unix'}}) {
+		if ($exists{$user[0]}) {
 			push(@errs, &text('restore_mailexists', $user[0]));
 			next;
 			}
-		$uinfo->{'user'} = $user[0];
+		if ($opts->{'reuser'}) {
+			# Re-generate full username based on template
+			my $short = &remove_userdom($user[0], $d);
+			$uinfo->{'user'} = &userdom_name($short, $d);
+			$renamedusers{$user[0]} = $uinfo->{'user'};
+			$renamedusers{&escape_user($user[0])} = $uinfo->{'user'};
+			$renamedusers{&replace_atsign($user[0])} = $uinfo->{'user'};
+			$renamedusers{&add_atsign($user[0])} = $uinfo->{'user'};
+			}
+		else {
+			# Keep original full username
+			$uinfo->{'user'} = $user[0];
+			}
 		$uinfo->{'pass'} = $user[1];
 		$uinfo->{'plainpass'} = $plainpass{$uinfo->{'user'}};
 		if ($user[2] eq 'w') {
@@ -3360,7 +3036,7 @@ while(<UFILE>) {
 			# Use old UID
 			$uinfo->{'uid'} = $olduid{$user[0]};
 			}
-		elsif ($_[3]->{'reuid'}) {
+		elsif ($allopts->{'reuid'}) {
 			# Re-allocate UID
 			local %taken;
 			&build_taken(\%taken);
@@ -3375,11 +3051,11 @@ while(<UFILE>) {
 		if ($uinfo->{'fixedhome'}) {
 			# Home directory is fixed, so don't set
 			}
-		elsif ($_[5]->{'home'} && $_[5]->{'home'} ne $d->{'home'}) {
+		elsif ($old->{'home'} && $oldd->{'home'} ne $d->{'home'}) {
 			# Restoring under different domain home, so need to fix
 			# user's home
 			$uinfo->{'home'} = $user[5];
-			$uinfo->{'home'} =~s/^$_[5]->{'home'}/$d->{'home'}/g;
+			$uinfo->{'home'} =~s/^$oldd->{'home'}/$d->{'home'}/g;
 			}
 		else {
 			# Use home from original
@@ -3388,10 +3064,7 @@ while(<UFILE>) {
 		$uinfo->{'shell'} = $user[6];
 		$uinfo->{'email'} = $user[7];
 		$uinfo->{'to'} = \@to;
-		if ($uinfo->{'mailquota'}) {
-			$uinfo->{'qquota'} = $user[8];
-			}
-		elsif ($uinfo->{'unix'} && !$uinfo->{'noquota'}) {
+		if (!$uinfo->{'noquota'}) {
 			$uinfo->{'quota'} = $user[8];
 			$uinfo->{'mquota'} = $user[9];
 			}
@@ -3420,6 +3093,14 @@ while(<UFILE>) {
 			$uinfo->{'secs'} = [ split(/;/, $user[12]) ];
 			}
 
+		# Restore firstname and surname
+		if (&supports_firstname() && $user[13] && $user[13] ne "-") {
+			$uinfo->{'firsrtname'} = $user[13];
+			}
+		if (&supports_firstname() && $user[14] && $user[14] ne "-") {
+			$uinfo->{'surname'} = $user[14];
+			}
+
 		# Check for possible DB username clashes
 		#foreach my $dt (&unique(map { $_->{'type'} }
 		#			&domain_databases($d))) {
@@ -3446,8 +3127,7 @@ while(<UFILE>) {
 
 		# If the user's home is outside the domain's home, re-extract
 		# it from the backup
-		if ($uinfo->{'unix'} &&
-		    !&is_under_directory($d->{'home'}, $uinfo->{'home'})) {
+		if (!&is_under_directory($d->{'home'}, $uinfo->{'home'})) {
 			local $file = $file."_homes_".$uinfo->{'user'};
 			if (!-d $uinfo->{'home'}) {
 				&create_user_home($uinfo, $d);
@@ -3461,14 +3141,14 @@ close(UFILE);
 
 # Restore hashed password file too
 if (-r $file."_hashpass") {
-	if ($_[2]->{'mailuser'}) {
+	if ($opts->{'mailuser'}) {
 		# Just copy one hash password
 		local (%oldhash, %newhash);
 		&read_file($file."_hashpass", \%oldhash);
 		&read_file("$hashpass_dir/$d->{'id'}", \%newhash);
 		foreach my $s (@hashpass_types) {
-			$newhash{$_[2]->{'mailuser'}.' '.$s} =
-				$oldhash{$_[2]->{'mailuser'}.' '.$s};
+			$newhash{$opts->{'mailuser'}.' '.$s} =
+				$oldhash{$opts->{'mailuser'}.' '.$s};
 			}
 		&write_file("$hashpass_dir/$d->{'id'}", \%newhash);
 		}
@@ -3481,15 +3161,15 @@ if (-r $file."_hashpass") {
 
 # Restore quota cache
 if (-r $file."_quota_cache") {
-	if ($_[2]->{'mailuser'}) {
+	if ($opts->{'mailuser'}) {
 		# Just copy for one user
 		my (%oldqc, %newqc);
 		&read_file($file."_quota_cache", \%oldqc);
 		&read_file("$quota_cache_dir/$d->{'id'}", \%newqc);
-		$newqc{$_[2]->{'mailuser'}."_quota"} =
-			$oldqc{$_[2]->{'mailuser'}."_quota"};
-		$newqc{$_[2]->{'mailuser'}."_mquota"} =
-			$oldqc{$_[2]->{'mailuser'}."_mquota"};
+		$newqc{$opts->{'mailuser'}."_quota"} =
+			$oldqc{$opts->{'mailuser'}."_quota"};
+		$newqc{$opts->{'mailuser'}."_mquota"} =
+			$oldqc{$opts->{'mailuser'}."_mquota"};
 		&write_file("$quota_cache_dir/$d->{'id'}", \%newqc);
 		}
 	else {
@@ -3501,12 +3181,12 @@ if (-r $file."_quota_cache") {
 
 # Restore no-spam flags file too
 if (-r $file."_nospam") {
-	if ($_[2]->{'mailuser'}) {
+	if ($opts->{'mailuser'}) {
 		# Just copy one flag
 		local (%oldspam, %newspam);
 		&read_file($file."_nospam", \%oldspam);
 		&read_file("$nospam_dir/$d->{'id'}", \%newspam);
-		$newspam{$_[2]->{'mailuser'}} = $oldspam{$_[2]->{'mailuser'}};
+		$newspam{$opts->{'mailuser'}} = $oldspam{$opts->{'mailuser'}};
 		&write_file("$nospam_dir/$d->{'id'}", \%newspam);
 		}
 	else {
@@ -3555,14 +3235,14 @@ if ($restore_eusersql) {
 elsif (@errs) {
 	&$second_print(&text('restore_mailerrs', join(" ", @errs)));
 	}
-elsif ($_[2]->{'mailuser'} && !$foundmailuser) {
-	&$second_print(&text('restore_mailnosuch', $_[2]->{'mailuser'}));
+elsif ($opts->{'mailuser'} && !$foundmailuser) {
+	&$second_print(&text('restore_mailnosuch', $opts->{'mailuser'}));
 	}
 else {
 	&$second_print($text{'setup_done'});
 	}
 
-if (!$_[2]->{'mailuser'}) {
+if (!$opts->{'mailuser'}) {
 	# Delete all aliases and re-create (except for those used by plugins
 	# such as mailman)
 	&$first_print($text{'restore_mailaliases'});
@@ -3578,8 +3258,15 @@ if (!$_[2]->{'mailuser'}) {
 			local $virt = { 'from' => $1,
 					'to' => [ split(/,/, $2) ] };
 			next if ($exists{$virt->{'from'}}++);
+			for(my $i=0; $i<@{$virt->{'to'}}; $i++) {
+				my $nn = $renamedusers{$virt->{'to'}->[$i]};
+				if ($nn) {
+					$virt->{'to'}->[$i] = &escape_user($nn);
+					}
+				}
 			if ($virt->{'to'}->[0] =~ /^(\S+)\\@(\S+)$/ &&
-			    $config{'mail_system'} == 0) {
+			    $mail_system == 0 &&
+			    getpwnam($1."-".$2)) {
 				# Virtuser is to a local user with an @ in
 				# the name, like foo\@bar.com. But on Postfix
 				# this won't work - instead, we need to use the
@@ -3604,12 +3291,12 @@ if (!$_[2]->{'mailuser'}) {
 # Get users whose mail files may need to be moved
 &foreign_require("mailboxes");
 local @users = &list_domain_users($d);
-if ($_[2]->{'mailuser'}) {
+if ($opts->{'mailuser'}) {
 	@users = grep { $_->{'user'} eq $foundmailuser } @users;
 	}
 
 if (-r $file."_files" &&
-    (!$_[2]->{'mailuser'} || $foundmailuser)) {
+    (!$opts->{'mailuser'} || $foundmailuser)) {
 	local $xtract;
 	if (!&mail_under_home()) {
 		# Can just extract all mail files in /var/mail
@@ -3623,9 +3310,9 @@ if (-r $file."_files" &&
 		&make_dir($xtract, 0700);
 		}
 	local $out;
-	if ($_[2]->{'mailuser'}) {
+	if ($opts->{'mailuser'}) {
 		# Just do one user
-		&$first_print(&text('restore_mailfiles3', $_[2]->{'mailuser'}));
+		&$first_print(&text('restore_mailfiles3', $opts->{'mailuser'}));
 		$out = &backquote_command(&make_unarchive_command(
 			$xtract, $file."_files", $foundmailuser)." 2>&1");
 		}
@@ -3759,7 +3446,7 @@ if (-r $file."_cron") {
 	&$first_print($text{'restore_mailcrons'});
 	&foreign_require("cron");
 	foreach $u (&list_domain_users($d, 1)) {
-		next if ($_[2]->{'mailuser'} && $u->{'user'} ne $foundmailuser);
+		next if ($opts->{'mailuser'} && $u->{'user'} ne $foundmailuser);
 		local $cf = $file."_cron_".$u->{'user'};
 		$cf = "/dev/null" if (!-r $cf);
 		&copy_source_dest($cf, $cron::cron_temp_file);
@@ -3800,8 +3487,8 @@ if (-r $file."_control" && &foreign_check("dovecot") &&
 
 		# Fix up control file permissions for users in this domain
 		foreach $u (&list_domain_users($d, 0, 1, 1, 1)) {
-			next if ($_[2]->{'mailuser'} &&
-				 $_[2]->{'mailuser'} ne $u->{'user'});
+			next if ($opts->{'mailuser'} &&
+				 $opts->{'mailuser'} ne $u->{'user'});
 			&execute_command("chown -R $u->{'uid'}:$u->{'gid'} ".
 			       quotemeta("$control/$u->{'user'}"));
 			}
@@ -3812,7 +3499,7 @@ if (-r $file."_control" && &foreign_check("dovecot") &&
 local $hb = "$d->{'home'}/$config{'homes_dir'}";
 foreach $u (&list_domain_users($d, 1)) {
 	if (-d $u->{'home'} && &is_under_directory($hb, $u->{'home'}) &&
-	    (!$_[2]->{'mailuser'} || $u->{'user'} eq $foundmailuser)) {
+	    (!$opts->{'mailuser'} || $u->{'user'} eq $foundmailuser)) {
 		&execute_command("chown -R $u->{'uid'}:$u->{'gid'} ".
 		       quotemeta($u->{'home'}));
 		}
@@ -3830,12 +3517,15 @@ return 1;
 # Returns HTML for mail restore option inputs
 sub show_restore_mail
 {
-local $rv;
-if ($_[1] && !&mail_under_home()) {
+my ($opts, $d) = @_;
+my $rv;
+if ($d && !&mail_under_home()) {
 	# Offer to restore just one user
-	$rv .= "<br>".$text{'restore_mailuser'}." ".
-		&ui_textbox("mail_mailuser", $_[0]->{'mailuser'}, 15);
+	$rv .= $text{'restore_mailuser'}." ".
+		&ui_textbox("mail_mailuser", $opts->{'mailuser'}, 15)."<br>\n";
 	}
+$rv .= &ui_checkbox("mail_reuser", 1, $text{'restore_reuser2'},
+		    $opts->{'reuser'})."<br>\n";
 return $rv;
 }
 
@@ -3843,8 +3533,9 @@ return $rv;
 # Parses the inputs for mail backup options
 sub parse_restore_mail
 {
-local %in = %{$_[0]};
-return { 'mailuser' => $in{'mail_mailuser'} };
+my ($in, $d) = @_;
+return { 'mailuser' => $in->{'mail_mailuser'},
+	 'reuser' => $in->{'mail_reuser'} };
 }
 
 # check_clash(name, dom)
@@ -3853,10 +3544,11 @@ return { 'mailuser' => $in{'mail_mailuser'} };
 sub check_clash
 {
 &require_mail();
+return 0 if (!$config{'mail'});
 local @virts = &list_virtusers();
 local ($clash) = grep { $_->{'from'} eq $_[0]."\@".$_[1] } @virts;
 return 1 if ($clash);
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Check for a Sendmail alias with the same name as the user
 	local @aliases = &sendmail::list_aliases($sendmail_afiles);
 	local $an = $_[0] ? "$_[0]-$_[1]" : "default-$_[1]";
@@ -3865,7 +3557,7 @@ if ($config{'mail_system'} == 1) {
 			  $_->{'name'} eq $an } @aliases;
 	return 2 if ($clash);
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Check for a Postfix alias with the same name as the user
 	local @aliases = &$postfix_list_aliases($postfix_afiles);
 	local $an = $_[0] ? "$_[0]-$_[1]" : "default-$_[1]";
@@ -3874,7 +3566,7 @@ elsif ($config{'mail_system'} == 0) {
 			  $_->{'name'} eq $an } @aliases;
 	return 2 if ($clash);
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Check for a Qmail .qmail file with the same name as the user
 	local @aliases = &qmailadmin::list_aliases();
 	($clash) = grep { $config{'alias_clash'} && $_[0] && $_ eq $_[0] }
@@ -3890,13 +3582,13 @@ sub check_depends_mail
 {
 # Check for virtusers file
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	$sendmail_vfile || return $text{'setup_esendmailvfile'};
 	@$sendmail_afiles || return $text{'setup_esendmailafile'};
 	!$config{'generics'} || $sendmail_gdbm ||
 		return $text{'setup_esendmailgfile'};
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	@virtual_map_files || $virtual_map_backends[0] eq "mysql" ||
 	    $virtual_map_backends[0] eq "ldap" ||
 		return $text{'setup_epostfixvfile'};
@@ -3913,10 +3605,6 @@ elsif ($_[0]->{'parent'}) {
 	# If this is a sub-domain, then the parent needs a Unix user
 	local $parent = &get_domain($_[0]->{'parent'});
 	return $parent->{'unix'} ? undef : $text{'setup_edepmail'};
-	}
-elsif ($config{'mail_system'} == 5) {
-	# For a VPOPMail domain, there are no dependencies!
-	return undef;
 	}
 else {
 	# For a top-level domain, it needs a Unix user
@@ -3941,7 +3629,7 @@ return undef;
 # mail_system_name([num])
 sub mail_system_name
 {
-local $num = defined($_[0]) ? $_[0] : $config{'mail_system'};
+local $num = defined($_[0]) ? $_[0] : $mail_system;
 return $text{'mail_system_'.$num} || "???";
 }
 
@@ -3959,27 +3647,25 @@ else {
 	}
 }
 
-# mail_system_needs_group()
-# Returns 1 if the current mail system needs a Unix group for mailboxes
-sub mail_system_needs_group
-{
-return 0 if ($config{'mail_system'} == 5);	# never for vpopmail
-#return 0 if ($config{'mail_system'} == 4 &&	# not for Qmail+LDAP,
-#	     !$config{'ldap_unix'});		# if users are non-unix
-return 0 if ($config{'mail_system'} == 6);	# never for exim
-return 1;
-}
-
 # bandwidth_all_mail(&domains-list, &starts-hash, &bw-hash-hash)
 # Scans through the mail log, and updates all domains at once. Returns a new
 # hash reference of start times.
 sub bandwidth_all_mail
 {
 local ($doms, $starts, $bws) = @_;
+
+# Find the minimum last activity time
+local $start_now = time();
+local $min_ltime = $start_now+24*60*60;
+foreach my $lt (values %$starts) {
+	$min_ltime = $lt if ($lt && $lt < $min_ltime);
+	}
 local %max_ltime = %$starts;
+
+# Find the mail log
 local %max_updated;
 local $maillog = $config{'bw_maillog'};
-$maillog = &get_mail_log() if ($maillog eq "auto");
+$maillog = &get_mail_log($min_ltime) if ($maillog eq "auto");
 return $starts if (!$maillog);
 
 # Build a map from domain names to objects, and from Unix usernames to objects
@@ -3997,17 +3683,9 @@ foreach my $d (@$doms) {
 	}
 local $myhostname = &get_system_hostname();
 
-# Find the minimum last activity time
-local $start_now = time();
-local $min_ltime = $start_now+24*60*60;
-foreach my $lt (values %$starts) {
-	$min_ltime = $lt if ($lt && $lt < $min_ltime);
-	}
-
 local $f;
 foreach $f ($config{'bw_maillog_rotated'} ?
-	    &all_log_files($maillog, $min_ltime) :
-	    ( $maillog )) {
+	    &all_log_files($maillog, $min_ltime) : ( $maillog )) {
 	local $_;
 	&open_uncompress_file(LOG, $f);
 
@@ -4262,20 +3940,12 @@ elsif ($_[0] =~ /^(\d+)\.(\d+)$/) {
 return undef;
 }
 
-# can_users_without_mail(&domain)
-# Returns 1 if some domain can have users without mail enabled. Not allowed
-# when using VPOPMail and Qmail+LDAP
-sub can_users_without_mail
-{
-return $config{'mail_system'} != 4 && $config{'mail_system'} != 5;
-}
-
 # sysinfo_mail()
 # Returns the mail server version and path
 sub sysinfo_mail
 {
 &require_mail();
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Postfix
 	local $prog = -x "/usr/lib/sendmail" ? "/usr/lib/sendmail" :
 			&has_command("sendmail");
@@ -4286,20 +3956,20 @@ if ($config{'mail_system'} == 0) {
 	return ( [ $text{'sysinfo_postfix'}, $postfix::postfix_version ],
 		 [ $text{'sysinfo_mailprog'}, $prog." -t" ] );
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Sendmail
 	local $ever = &sendmail::get_sendmail_version();
 	return ( [ $text{'sysinfo_sendmail'}, $ever ],
 		 [ $text{'sysinfo_mailprog'},
 			$sendmail::config{'sendmail_path'}." -t" ] );
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Some Qmail variant
 	return ( [ $text{'sysinfo_qmail'}, "Unknown" ],
 		 [ $text{'sysinfo_mailprog'},
 			"$qmailadmin::config{'qmail_dir'}/bin/qmail-inject" ] );
 	}
-elsif ($config{'mail_system'} == 6) {
+elsif ($mail_system == 6) {
 	return ( [ $text{'sysinfo_exim'}, "Unknown" ],
 		 [ $text{'sysinfo_mailprog'}, $prog." -t" ] );
 	}
@@ -4313,12 +3983,12 @@ else {
 sub mail_system_has_procmail
 {
 &require_mail();
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Check postfix delivery command
 	local $cmd = &postfix::get_real_value("mailbox_command");
 	return $cmd =~ /procmail/;
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# See if sendmail's local mailer is procmail
 	local $conf = &sendmail::get_sendmailcf();
 	foreach my $m (&sendmail::find_type("M", $conf)) {
@@ -4328,7 +3998,7 @@ elsif ($config{'mail_system'} == 1) {
 		}
 	return 0;
 	}
-elsif ($config{'mail_system'} == 2) {
+elsif ($mail_system == 2) {
 	# Check Qmail rc script for use of procmail as default delivery
 	local $got;
 	local $_;
@@ -4340,17 +4010,15 @@ elsif ($config{'mail_system'} == 2) {
 	close(RC);
 	return $got;
 	}
-elsif ($config{'mail_system'} == 5) {
-	# I don't think vpopmail supports procmail
-	return 0;
-	}
 return 0;
 }
 
-# get_mail_log()
+# get_mail_log([start-time])
 # Returns the default mail log file for this system
 sub get_mail_log
 {
+my ($starttime) = @_;
+my $maxage = $starttime ? time() - $starttime : undef;
 if (&foreign_installed("syslog")) {
 	# Try syslog first
 	&foreign_require("syslog");
@@ -4385,7 +4053,11 @@ foreach my $f ("/var/log/mail", "/var/log/maillog", "/var/log/mail.log") {
 	return $f if (-r $f);
 	}
 if (&has_command("journalctl")) {
-	return "journalctl -u 'postfix*' -u 'dovecot*' |";
+	my $cmd = "journalctl -u 'postfix*' -u 'dovecot*'";
+	if ($maxage) {
+		$cmd .= " --since '$maxage seconds ago'";
+		}
+	return $cmd." |";
 	}
 return undef;
 }
@@ -4393,10 +4065,10 @@ return undef;
 sub startstop_mail
 {
 local ($typestatus) = @_;
-local $msn = $config{'mail_system'} == 0 ? "postfix" :
-	     $config{'mail_system'} == 6 ? "exim" :
-	     $config{'mail_system'} == 1 ? "sendmail" : "qmailadmin";
-local $ms = $text{'mail_system_'.$config{'mail_system'}};
+local $msn = $mail_system == 0 ? "postfix" :
+	     $mail_system == 6 ? "exim" :
+	     $mail_system == 1 ? "sendmail" : "qmailadmin";
+local $ms = $text{'mail_system_'.$mail_system};
 local @rv;
 local @links;
 push(@links, { 'link' => "/$msn/",
@@ -4408,6 +4080,8 @@ if (&can_show_history() &&
 		push(@links, { 'stat' => $s });
 		}
 	}
+
+# Show mail server status (Postfix or Sendmail)
 if (defined($typestatus->{$msn}) ? $typestatus->{$msn} == 1
 				 : &is_mail_running()) {
 	push(@rv,{ 'status' => 1,
@@ -4424,6 +4098,7 @@ else {
 		   'longdesc' => $text{'index_mstartdesc'},
 		   'links' => \@links } );
 	}
+
 if (&foreign_installed("dovecot")) {
 	# Add status for Dovecot
 	&foreign_require("dovecot");
@@ -4449,7 +4124,9 @@ if (&foreign_installed("dovecot")) {
 			   'links' => \@dlinks } );
 		}
 	}
+
 if (&foreign_check("init")) {
+	# Add status for SASLauthd
 	&foreign_require("init");
 	my $st = &init::action_status("saslauthd");
 	my $r = &init::status_action("saslauthd");
@@ -4473,6 +4150,52 @@ if (&foreign_check("init")) {
 			}
 		}
 	}
+
+if (!&check_postgrey() && &is_postgrey_configured()) {
+	# Postgrey server
+	if (&is_postgrey_running()) {
+		push(@rv, { 'status' => 1,
+			    'feature' => 'postgrey',
+			    'name' => $text{'index_grname'},
+			    'desc' => $text{'index_grstop'},
+			    'restartdesc' => $text{'index_grrestart'},
+			    'longdesc' => $text{'index_grstopdesc'},
+			    'links' => [] } );
+		}
+	else {
+		push(@rv, { 'status' => 0,
+			    'feature' => 'postgrey',
+			    'name' => $text{'index_grname'},
+			    'desc' => $text{'index_grstart'},
+			    'longdesc' => $text{'index_grstartdesc'},
+			    'links' => [] } );
+		}
+	}
+
+if (&foreign_installed("usermin")) {
+	# Usermin server
+	&foreign_require("usermin");
+	my %miniserv;
+	&usermin::get_usermin_miniserv_config(\%miniserv);
+	if (&check_pid_file($miniserv{'pidfile'})) {
+		push(@rv, { 'status' => 1,
+			    'feature' => 'usermin',
+			    'name' => $text{'index_usname'},
+			    'desc' => $text{'index_usstop'},
+			    'restartdesc' => $text{'index_usrestart'},
+			    'longdesc' => $text{'index_usstopdesc'},
+			    'links' => [] } );
+		}
+	else {
+		push(@rv, { 'status' => 0,
+			    'feature' => 'usermin',
+			    'name' => $text{'index_usname'},
+			    'desc' => $text{'index_usstart'},
+			    'longdesc' => $text{'index_usstartdesc'},
+			    'links' => [] } );
+		}
+	}
+
 return @rv;
 }
 
@@ -4512,11 +4235,37 @@ my ($ok, $err) = &init::stop_action("saslauthd");
 return $ok ? undef : $err;
 }
 
+sub start_service_postgrey
+{
+&foreign_require("init");
+my ($ok, $err) = &init::start_action(&get_postgrey_init());
+return $ok ? undef : $err;
+}
+
+sub stop_service_postgrey
+{
+&foreign_require("init");
+my ($ok, $err) = &init::stop_action(&get_postgrey_init());
+return $ok ? undef : $err;
+}
+
+sub start_service_usermin
+{
+&foreign_require("usermin");
+return &usermin::start_usermin();
+}
+
+sub stop_service_usermin
+{
+&foreign_require("usermin");
+return &usermin::stop_usermin();
+}
+
 # check_secondary_mx()
 # Returns undef if this system can be a secondary MX, or an error message if not
 sub check_secondary_mx
 {
-local $ms = $config{'mail_system'};
+local $ms = $mail_system;
 if (!$config{'mail'}) {
 	return $text{'newmxs_email'};
 	}
@@ -4540,9 +4289,8 @@ else {
 sub setup_secondary_mx
 {
 local ($dom) = @_;
-&obtain_lock_mail($_[0]);
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Just add to sendmail relay domains file
 	local $conf = &sendmail::get_sendmailcf();
 	local $cwfile;
@@ -4559,7 +4307,7 @@ if ($config{'mail_system'} == 1) {
 	&unlock_file($cwfile) if ($cwfile);
 	&sendmail::restart_sendmail();
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Add to Postfix relay domains
 	local @rd = split(/[, ]+/,
 			&postfix::get_real_value("relay_domains"));
@@ -4590,14 +4338,15 @@ elsif ($config{'mail_system'} == 0) {
 	if (!$rrm) {
 		my $cdir = $postfix::config{'postfix_config_file'};
 		$cdir =~ s/\/[^\/]+$//;
-		$rrm = "hash:$cdir/relay_recipient_maps";
+		$rrm = &default_postfix_map_type().
+		       ":$cdir/relay_recipient_maps";
 		&postfix::set_current_value("relay_recipient_maps", $rrm);
 		&postfix::ensure_map("relay_recipient_maps");
 		&postfix::regenerate_relay_recipient_table();
 		&postfix::reload_postfix();
 		}
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Add to Qmail rcpthosts file
 	local $rlist = &qmailadmin::list_control_file("rcpthosts");
 	if (&indexof(lc($dom), (map { lc($_) } @$rlist)) >= 0) {
@@ -4615,9 +4364,8 @@ return undef;
 sub delete_secondary_mx
 {
 local ($dom) = @_;
-&obtain_lock_mail($_[0]);
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Just remove from sendmail relay domains file
 	local $conf = &sendmail::get_sendmailcf();
 	local $cwfile;
@@ -4635,7 +4383,7 @@ if ($config{'mail_system'} == 1) {
 	&unlock_file($cwfile) if ($cwfile);
 	&sendmail::restart_sendmail();
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Add to Postfix relay domains
 	local @rd = split(/[, ]+/,
 			&postfix::get_current_value("relay_domains"));
@@ -4663,7 +4411,7 @@ elsif ($config{'mail_system'} == 0) {
 		&unlock_file($postfix::config{'postfix_config_file'});
 		}
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Add to Qmail rcpthosts file
 	local $rlist = &qmailadmin::list_control_file("rcpthosts");
 	local $idx = &indexof(lc($dom), (map { lc($_) } @$rlist));
@@ -4682,7 +4430,7 @@ sub is_secondary_mx
 {
 local ($dom) = @_;
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Check sendmail relay domains file
 	local $conf = &sendmail::get_sendmailcf();
 	local $cwfile;
@@ -4691,13 +4439,13 @@ if ($config{'mail_system'} == 1) {
 	local $idx = &indexof(lc($dom), (map { lc($_) } @dlist));
 	return $idx < 0 ? 0 : 1;
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Add to Postfix relay domains
 	local @rd = split(/[, ]+/,&postfix::get_current_value("relay_domains"));
 	local $idx = &indexof(lc($dom), (map { lc($_) } @rd));
 	return $idx < 0 ? 0 : 1;
 	}
-elsif ($config{'mail_system'} == 2 || $config{'mail_system'} == 5) {
+elsif ($mail_system == 2) {
 	# Add to Qmail rcpthosts file
 	local $rlist = &qmailadmin::list_control_file("rcpthosts");
 	local $idx = &indexof(lc($dom), (map { lc($_) } @$rlist));
@@ -4928,7 +4676,7 @@ local $atable = &ui_columns_table(
 	\@atable,
 	undef,
 	1);
-if ($config{'mail_system'} != 0) {
+if ($mail_system != 0) {
 	# Bounce-all alias, not shown for Postfix
 	$atable .= &ui_checkbox("bouncealias", 1,
 				&hlink("<b>$text{'tmpl_bouncealias'}</b>",
@@ -5067,7 +4815,7 @@ else {
 	@aliases || &error(&text('tmpl_ealiases'));
 	$tmpl->{'dom_aliases'} = join("\t", @aliases);
 	}
-if ($in{'domaliases_mode'} != 1 && $config{'mail_system'} != 0) {
+if ($in{'domaliases_mode'} != 1 && $mail_system != 0) {
 	$tmpl->{'dom_aliases_bounce'} = $in{'bouncealias'};
 	}
 if ($supports_aliascopy) {
@@ -5109,7 +4857,7 @@ if ($in{'othergroups_mode'} == 2) {
 $tmpl->{'othergroups'} = &parse_none_def('othergroups');
 $tmpl->{'append_style'} = &parse_none_def('append');
 if ($in{'append_mode'} == 2 && $in{'append'} == 6 &&
-    $config{'mail_system'} == 2) {
+    $mail_system == 2) {
 	# user@domain style is not allowed for Qmail
 	&error($text{'tmpl_eappend'});
 	}
@@ -5226,11 +4974,11 @@ $tmpl->{'updateuser_to_reseller'} = $in{'reseller'};
 sub get_generics_hash
 {
 &require_mail();
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	return map { $_->{'from'}, $_ }
 		   &sendmail::list_generics($sendmail_gfile);
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	local $cans = &postfix::get_maps($canonical_type);
 	return map { $_->{'name'}, $_ } @$cans;
 	}
@@ -5244,7 +4992,7 @@ else {
 sub create_generic
 {
 local ($user, $email, $norestart) = @_;
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Add to Sendmail generics file
 	local $gen = { 'from' => $user, 'to' => $email };
 	&sendmail::create_generic($gen, $sendmail_gfile,
@@ -5266,7 +5014,7 @@ if ($config{'mail_system'} == 1) {
 		&sendmail::restart_sendmail() if (!$norestart);
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Add to Postfix generics map
 	local $gen = { 'name' => $user,
 		       'value' => $email };
@@ -5281,12 +5029,12 @@ sub delete_generic
 {
 local ($generic) = @_;
 return if ($generic->{'deleted'});
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# From Sendmail generics file
 	&sendmail::delete_generic($generic, $sendmail_gfile,
 			$sendmail_gdbm, $sendmail_gdbmtype);
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# From Postfix generics map
 	&postfix::delete_mapping($canonical_type, $generic);
 	&postfix::regenerate_canonical_table();
@@ -5299,12 +5047,12 @@ $generic->{'deleted'} = 1;
 sub modify_generic
 {
 local ($generic, $oldgeneric) = @_;
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# In Sendmail generics file
 	&sendmail::modify_generic($oldgeneric, $generic, $sendmail_gfile,
 			$sendmail_gdbm, $sendmail_gdbmtype);
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# In Postfix generics map
 	&postfix::modify_mapping($canonical_type, $oldgeneric, $generic);
 	}
@@ -5339,8 +5087,8 @@ if ($d->{'unix'}) {
 sub get_mail_virtusertable
 {
 &require_mail();
-return $config{'mail_system'} == 1 ? $sendmail_vfile :
-       $config{'mail_system'} == 0 ? $virtual_map_files[0] : undef;
+return $mail_system == 1 ? $sendmail_vfile :
+       $mail_system == 0 ? $virtual_map_files[0] : undef;
 }
 
 # get_mail_genericstable()
@@ -5349,8 +5097,8 @@ return $config{'mail_system'} == 1 ? $sendmail_vfile :
 sub get_mail_genericstable
 {
 &require_mail();
-return $config{'mail_system'} == 1 ? $sendmail_gfile :
-       $config{'mail_system'} == 0 ? $canonical_map_files[0] : undef;
+return $mail_system == 1 ? $sendmail_gfile :
+       $mail_system == 0 ? $canonical_map_files[0] : undef;
 }
 
 # count_domain_aliases([ignore-plugins]
@@ -5359,6 +5107,7 @@ sub count_domain_aliases
 {
 local ($ignore) = @_;
 local %rv;
+return \%rv if (!$config{'mail'});
 
 # Find local users, so we can skip aliases from user@domain -> user.domain
 local %users;
@@ -5407,7 +5156,7 @@ sub copy_alias_virtuals
 local ($d, $aliasdom) = @_;
 local (%need, %already);
 &obtain_lock_mail($d);
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Find existing Sendmail virtusers in the alias domain
 	foreach my $virt (&sendmail::list_virtusers($sendmail_vfile)) {
 		local ($mb, $dname) = split(/\@/, $virt->{'from'});
@@ -5439,7 +5188,7 @@ if ($config{'mail_system'} == 1) {
 		&sendmail::delete_virtuser($virt, @sargs);
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Find existing Postfix virtuals in the alias domain
 	local $alreadyvirts = &postfix::get_maps($virtual_type);
 	foreach my $virt (@$alreadyvirts) {
@@ -5482,7 +5231,7 @@ sub delete_alias_virtuals
 {
 local ($d) = @_;
 &obtain_lock_mail($d);
-if ($config{'mail_system'} == 1) {
+if ($mail_system == 1) {
 	# Remove virtusers in Sendmail
 	foreach my $virt (&sendmail::list_virtusers($sendmail_vfile)) {
 		local ($mb, $dname) = split(/\@/, $virt->{'from'});
@@ -5492,7 +5241,7 @@ if ($config{'mail_system'} == 1) {
 			}
 		}
 	}
-elsif ($config{'mail_system'} == 0) {
+elsif ($mail_system == 0) {
 	# Remove Postfix virtuals
 	local $virts = &postfix::get_maps($virtual_type);
 	local @origvirts = @$virts;	# Needed as $virts gets modified!
@@ -5726,7 +5475,8 @@ if (!$dependent_maps) {
 	&lock_file($postfix::config{'postfix_config_file'});
 	my $cdir = $postfix::config{'postfix_config_file'};
 	$cdir =~ s/\/[^\/]+$//;
-	$dependent_maps = "hash:$cdir/sender_dependent_default_transport_maps";
+	$dependent_maps = &default_postfix_map_type().
+			  ":$cdir/sender_dependent_default_transport_maps";
 	&postfix::set_current_value("sender_dependent_default_transport_maps",
 				    $dependent_maps);
 	&postfix::ensure_map("sender_dependent_default_transport_maps");
@@ -5853,7 +5603,7 @@ return if (!$config{'mail'});
 if ($main::got_lock_mail == 0) {
 	&require_mail();
 	@main::got_lock_mail_files = ( );
-	if ($config{'mail_system'} == 0) {
+	if ($mail_system == 0) {
 		# Lock Postfix files
 		push(@main::got_lock_mail_files, @virtual_map_files);
 		push(@main::got_lock_mail_files, @canonical_map_files);
@@ -5863,7 +5613,7 @@ if ($main::got_lock_mail == 0) {
 		undef(%postfix::list_aliases_cache);
 		undef(%postfix::maps_cache);
 		}
-	elsif ($config{'mail_system'} == 1) {
+	elsif ($mail_system == 1) {
 		# Lock Sendmail files
 		push(@main::got_lock_mail_files, $sendmail_vfile);
 		push(@main::got_lock_mail_files, @$sendmail_afiles);
@@ -5872,7 +5622,7 @@ if ($main::got_lock_mail == 0) {
 		undef(@sendmail::list_virtusers_cache);
 		undef(@sendmail::list_generics_cache);
 		}
-	elsif ($config{'mail_system'} == 2) {
+	elsif ($mail_system == 2) {
 		# Lock Qmail control files
 		push(@main::got_lock_mail_files,
 		     "$qmailadmin::qmail_control_dir/rcpthosts",
@@ -5933,63 +5683,139 @@ return lc($dn0) eq lc($dn1);
 # or SMTP.
 sub update_last_login_times
 {
-# Find the mail log
-my $maillog = $config{'bw_maillog'};
-$maillog = &get_mail_log() if ($maillog eq "auto");
-return 0 if (!$maillog);
+return 0 if (!$config{'mail'});
 
-# Seek to the last position
+# Read the file tracking the mail log position
 &lock_file($mail_login_file);
-my @st = stat($maillog);
-my $lastpost;
 my %logins;
 &read_file($mail_login_file, \%logins);
-$lastpos = $logins{'lastpos'} || $st[7];
-if ($lastpos > $st[7]) {
-	# Off end .. file has probably been rotated
-	$lastpos = 0;
+
+# Find the mail log
+my $maillog = $config{'bw_maillog'};
+$maillog = &get_mail_log($logins{'lasttime'}) if ($maillog eq "auto");
+if (!$maillog) {
+	&unlock_file($mail_login_file);
+	return 0;
 	}
-open(MAILLOG, "<".$maillog);
-seek(MAILLOG, $lastpos, 0);
+
+# Seek to the last position
+open(MAILLOG, $maillog);
+if ($maillog !~ /\|$/) {
+	# Reading a regular file, so seek into it
+	my @st = stat($maillog);
+	my $lastpos;
+	$lastpos = $logins{'lastpos'} || $st[7];
+	if ($lastpos > $st[7]) {
+		# Off end .. file has probably been rotated
+		$lastpos = 0;
+		}
+	seek(MAILLOG, $lastpos, 0);
+	}
 my $now = time();
 my @tm = localtime($now);
+my $lasttime = $logins{'lasttime'};
+my $finaltime = $lasttime;
 while(<MAILLOG>) {
 	s/\r|\n//g;
 
 	# Remove Solaris extra part like [ID 197553 mail.info]
 	s/\[ID\s+\d+\s+\S+\]\s+//;
 
+	# Extract date from log line
+	/^(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+/ || next;
+	my $ltime = &log_time_to_unix_time($now, $tm[5], $1, $2, $3, $4, $5);
+	next if (!$ltime);
+	next if ($lasttime && $ltime <= $lasttime);
+	$finaltime = $ltime;
+
 	if (/^(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\S+)\s+dovecot\S*:\s+(pop3|imap)-login:\s+Login:\s+user=<([^>]+)>/) {
 		# POP3 or IMAP login with dovecot
-		my $ltime;
-		eval { $ltime = timelocal($5, $4, $3, $2,
-				          $apache_mmap{lc($1)}, $tm[5]); };
-		if (!$ltime || $ltime > $now+(24*60*60)) {
-			# Must have been last year!
-			eval { $ltime = timelocal($5, $4, $3, $2,
-					  $apache_mmap{lc($1)}, $tm[5]-1); };
-			}
 		&add_last_login_time(\%logins, $ltime, $7, $8);
 		}
 	elsif (/^(\S+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\S+)\s+.*sasl_username=([^ ,]+)/) {
 		# Postfix SMTP
-		my $ltime;
-		eval { $ltime = timelocal($5, $4, $3, $2,
-				          $apache_mmap{lc($1)}, $tm[5]); };
-		if (!$ltime || $ltime > $now+(24*60*60)) {
-			# Must have been last year!
-			eval { $ltime = timelocal($5, $4, $3, $2,
-					  $apache_mmap{lc($1)}, $tm[5]-1); };
-			}
 		&add_last_login_time(\%logins, $ltime, 'smtp', $7);
 		}
 	}
 close(MAILLOG);
+
+# Webmin last logins
+&foreign_require("acl");
+my %miniserv;
+&get_miniserv_config(\%miniserv);
+&acl::open_session_db(\%miniserv);
+my %wsyslogins;
+foreach my $k (keys %acl::sessiondb) {
+	next if ($k =~ /^1111111/);
+	next if (!$acl::sessiondb{$k});
+	my ($user, $ltime, $lip) = split(/\s+/, $acl::sessiondb{$k});
+	if ($ltime > $wsyslogins{$user} || !$wsyslogins{$user}) {
+		$wsyslogins{$user} = $ltime;
+		&add_last_login_time(\%logins, $ltime, 'webmin', $user);
+		}
+	}
+
+# Usermin last logins
+&foreign_require("usermin");
+my %uminiserv;
+&usermin::get_usermin_miniserv_config(\%uminiserv);
+&acl::open_session_db(\%uminiserv);
+my %usyslogins;
+foreach my $k (keys %acl::sessiondb) {
+	next if ($k =~ /^1111111/);
+	next if (!$acl::sessiondb{$k});
+	my ($user, $ltime, $lip) = split(/\s+/, $acl::sessiondb{$k});
+	if ($ltime > $usyslogins{$user} || !$usyslogins{$user}) {
+		$usyslogins{$user} = $ltime;
+		&add_last_login_time(\%logins, $ltime, 'usermin', $user);
+		}
+	}
+
+# System last logins
+&foreign_require('useradmin');
+eval "use Time::Local";
+my $uaconfig_last_count = $useradmin::config{'last_count'};
+foreach my $entry (&useradmin::list_last_logins(undef, $uaconfig_last_count)) {
+	my ($user, $ltime) = ($entry->[0], $entry->[4] || $entry->[3]);
+	my ($day_of_week, $month, $day, $time, $year) = split(/\s+/, $ltime);
+	my ($hour, $min, $sec) = split(/:/, $time);
+	my $ts;
+	eval {
+		$ts = timelocal($sec, $min, $hour, $day, 
+			$month_to_number_map{lc($month)}, $year - 1900);
+		};
+	next if ($@);
+	if ($ts > $syslogins{$user} || !$syslogins{$user}) {
+		my ($service) = $entry->[1] =~ /^(tty|pts|ftp)/;
+		next if (!$service);
+		$syslogins{$user} = $ts;
+		&add_last_login_time(\%logins, $ts, $service, $user);
+		}
+	}
+
+# Cache the last login times
 @st = stat($maillog);
 $logins{'lastpos'} = $st[7];
+$logins{'lasttime'} = $finaltime || $now;
 &write_file($mail_login_file, \%logins);
 &unlock_file($mail_login_file);
 return 1;
+}
+
+# log_time_to_unix_time(start-time, year, month, day, hour, minute, second)
+# Convert the parts of a log line with the date and time to a Unix time
+sub log_time_to_unix_time
+{
+my ($now, $year, $mon, $day, $hour, $min, $sec) = @_;
+my $ltime;
+eval { $ltime = timelocal($sec, $min, $hour, $day,
+			  $apache_mmap{lc($mon)}, $year); };
+if (!$ltime || $ltime > $now+(24*60*60)) {
+	# Must have been last year!
+	eval { $ltime = timelocal($sec, $min, $hour, $day,
+			  $apache_mmap{lc($mon)}, $year-1); };
+	}
+return $ltime;
 }
 
 # add_last_login_time(&logins, time, type, username)
@@ -6080,6 +5906,8 @@ return ( "autoconfig.".$d->{'dom'}, "autodiscover.".$d->{'dom'} );
 # the POP3 port and encryption type.
 sub get_email_autoconfig_imap
 {
+my ($d) = @_;
+
 # Work out IMAP server port and mode
 local $imap_host = "mail.$d->{'dom'}";
 local $imap_port = 143;
@@ -6088,6 +5916,7 @@ local $imap_ssl = "no";
 local $imap_enc = "password-cleartext";
 local $pop3_port = 110;
 local $pop3_enc = "password-cleartext";
+local $pop3_ssl = "no";
 if (&foreign_installed("dovecot")) {
 	&foreign_require("dovecot");
 	local $conf = &dovecot::get_config();
@@ -6099,6 +5928,7 @@ if (&foreign_installed("dovecot")) {
 		$pop3_port = 995;
 		$imap_type = "SSL";
 		$imap_ssl = "yes";
+		$pop3_ssl = "yes";
 		}
 	elsif ($sslopt eq "ssl_disable" &&
 	       &dovecot::find_value($sslopt, $conf) ne "yes") {
@@ -6106,6 +5936,7 @@ if (&foreign_installed("dovecot")) {
 		$pop3_port = 995;
 		$imap_type = "SSL";
 		$imap_ssl = "yes";
+		$pop3_ssl = "yes";
 		}
 	if ($imap_type ne "SSL" &&
 	    &dovecot::find_value("disable_plaintext_auth", $conf) ne "no") {
@@ -6114,11 +5945,12 @@ if (&foreign_installed("dovecot")) {
 		}
 	}
 return ($imap_host, $imap_port, $imap_type, $imap_ssl, $imap_enc,
-	$pop3_port, $pop3_enc);
+	$pop3_port, $pop3_enc, $pop3_ssl);
 }
 
 # get_email_autoconfig_smtp(&domain)
-# Returns the SMTP
+# Returns the SMTP host, port number, encryption type (plain, SSL or STARTTLS),
+# ssl flag (yes/no), and password encryption method.
 sub get_email_autoconfig_smtp
 {
 local ($d) = @_;
@@ -6128,21 +5960,32 @@ local $smtp_port = 25;
 local $smtp_type = "plain";
 local $smtp_ssl = "no";
 local $smtp_enc = "password-cleartext";
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Check for Postfix submission port
 	&foreign_require("postfix");
 	local $master = postfix::get_master_config();
-	local ($submission) = grep { $_->{'name'} =~ /^(submission|[0-9\.]+:submissions)$/ &&
-				     $_->{'enabled'} } @$master;
+	local ($submission) = grep {
+		$_->{'name'} =~ /^(submission|[0-9\.]+:submission)$/ &&
+		$_->{'enabled'} } @$master;
+	local ($smtps) = grep {
+		$_->{'name'} =~ /^(smtps|[0-9\.]+:smtps)$/ &&
+		$_->{'enabled'} } @$master;
 	if ($submission) {
+		# Submission port, hopefully with TLS
 		$smtp_port = 587;
 		if ($submission->{'command'} =~ /smtpd_sasl_auth_enable=(yes)/) {
 			$smtp_type = "STARTTLS";
-			$smtp_ssl = "yes";
+			$smtp_ssl = "no";
 			}
 		}
+	elsif ($smtps) {
+		# Pure SSL SMTP connection
+		$smtp_port = 465;
+		$smtp_type = "SSL";
+		$smtp_ssl = "yes";
+		}
 	}
-elsif ($config{'mail_system'} == 1) {
+elsif ($mail_system == 1) {
 	# Check for Sendmail submission port
 	&foreign_require("sendmail");
 	local $conf = &sendmail::get_sendmailcf();
@@ -6166,25 +6009,27 @@ return ($smtp_host, $smtp_port, $smtp_type, $smtp_ssl, $smtp_enc);
 # Create or update the CGI script used for email autoconfig
 sub enable_cgi_autoconfig
 {
-local ($d) = @_;
+my ($d) = @_;
 
 # Work out mail server ports and modes
-local ($imap_host, $imap_port, $imap_type, $imap_ssl, $imap_enc,
-       $pop3_port, $pop3_enc) = &get_email_autoconfig_imap($d);
-local ($smtp_host, $smtp_port, $smtp_type, $smtp_ssl, $smtp_enc) =
-      &get_email_autoconfig_smtp($d);
+my ($imap_host, $imap_port, $imap_type, $imap_ssl, $imap_enc,
+    $pop3_port, $pop3_enc) = &get_email_autoconfig_imap($d);
+my ($smtp_host, $smtp_port, $smtp_type, $smtp_ssl, $smtp_enc) =
+	&get_email_autoconfig_smtp($d);
+my $smtp_ssl2 = $smtp_ssl eq "yes" ? "on" : "off";
+my $imap_ssl2 = $imap_ssl eq "yes" ? "on" : "off";
 
 # Create CGI that outputs the correct XML for the domain
-local $cgidir = &cgi_bin_dir($d);
-local $autocgi = "$cgidir/autoconfig.cgi";
+my $cgidir = &cgi_bin_dir($d);
+my $autocgi = "$cgidir/autoconfig.cgi";
 if (!-d $cgidir) {
 	return "CGI directory $cgidir does not exist";
 	}
 &lock_file($autocgi);
 &copy_source_dest_as_domain_user($d, "$module_root_directory/autoconfig.cgi",
 				 $autocgi);
-local $lref = &read_file_lines_as_domain_user($d, $autocgi);
-local $tmpl = &get_template($d->{'template'});
+my $lref = &read_file_lines_as_domain_user($d, $autocgi);
+my $tmpl = &get_template($d->{'template'});
 foreach my $l (@$lref) {
 	if ($l =~ /^#!/) {
 		$l = "#!".&get_perl_path();
@@ -6211,6 +6056,9 @@ foreach my $l (@$lref) {
 	elsif ($l =~ /^\$SMTP_SSL\s+=/) {
 		$l = "\$SMTP_SSL = '$smtp_ssl';";
 		}
+	elsif ($l =~ /^\$SMTP_SSL2\s+=/) {
+		$l = "\$SMTP_SSL2 = '$smtp_ssl2';";
+		}
 	elsif ($l =~ /^\$IMAP_HOST\s+=/) {
 		$l = "\$IMAP_HOST = '$imap_host';";
 		}
@@ -6226,6 +6074,9 @@ foreach my $l (@$lref) {
 	elsif ($l =~ /^\$IMAP_SSL\s+=/) {
 		$l = "\$IMAP_SSL = '$imap_ssl';";
 		}
+	elsif ($l =~ /^\$IMAP_SSL2\s+=/) {
+		$l = "\$IMAP_SSL2 = '$imap_ssl2';";
+		}
 	elsif ($l =~ /^\$POP3_PORT\s+=/) {
 		$l = "\$POP3_PORT = '$pop3_port';";
 		}
@@ -6239,7 +6090,6 @@ foreach my $l (@$lref) {
 		$l = "\$STYLE = '$tmpl->{'append_style'}';";
 		}
 	}
-local $tmpl = &get_template($d->{'template'});
 
 # Sub in XML for thunderbird
 local $xml;
@@ -6602,11 +6452,10 @@ sub get_thunderbird_autoconfig_xml
 {
 return <<'EOF';
 <?xml version="1.0" encoding="UTF-8"?>
- 
 <clientConfig version="1.1">
   <emailProvider id="$SMTP_DOMAIN">
     <domain>$SMTP_DOMAIN</domain>
-    <displayName>$OWNER Email</displayName>
+    <displayName>$OWNER</displayName>
     <displayShortName>$OWNER</displayShortName>
     <incomingServer type="imap">
       <hostname>$IMAP_HOST</hostname>
@@ -6639,31 +6488,35 @@ EOF
 sub get_outlook_autoconfig_xml
 {
 return <<'EOF';
-<?xml version="1.0" encoding="utf-8" ?>
 <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006">
   <Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a">
+    <User>
+      <DisplayName>$OWNER</DisplayName>
+    </User>
     <Account>
       <AccountType>email</AccountType>
       <Action>settings</Action>
       <Protocol>
-	<Type>IMAP</Type>
-        <TTL>24</TTL>
-	<Server>$IMAP_HOST</Server>
+        <Type>IMAP</Type>
+        <Server>$IMAP_HOST</Server>
         <Port>$IMAP_PORT</Port>
-	<LoginName>$SMTP_LOGIN</LoginName>
         <DomainRequired>off</DomainRequired>
-        <SSL>$IMAP_SSL</SSL>
-	<AuthRequired>on</AuthRequired>
+        <SPA>off</SPA>
+        <SSL>$IMAP_SSL2</SSL>
+	<Encryption>auto</Encryption>
+        <AuthRequired>on</AuthRequired>
+        <LoginName>$SMTP_LOGIN</LoginName>
       </Protocol>
       <Protocol>
-	<Type>SMTP</Type>
-        <TTL>24</TTL>
-	<Server>$SMTP_HOST</Server>
+        <Type>SMTP</Type>
+        <Server>$SMTP_HOST</Server>
         <Port>$SMTP_PORT</Port>
-	<LoginName>$SMTP_LOGIN</LoginName>
         <DomainRequired>off</DomainRequired>
-        <SSL>$SMTP_SSL</SSL>
-	<AuthRequired>on</AuthRequired>
+        <SPA>off</SPA>
+        <SSL>$SMTP_SSL2</SSL>
+	<Encryption>auto</Encryption>
+        <AuthRequired>on</AuthRequired>
+        <LoginName>$SMTP_LOGIN</LoginName>
       </Protocol>
     </Account>
   </Response>
@@ -6859,6 +6712,53 @@ return ( [ 0, "username.domain" ],
 	 [ 5, "domain_username" ],
 	 [ 6, "username\@domain" ],
 	 [ 7, "username\%domain" ] );
+}
+
+# remove_forward_in_other_users(&user, &domain)
+# Remove any forward to this user in other aliases
+sub remove_forward_in_other_users
+{
+my ($user, $d) = @_;
+if ($mail_system == 0) {
+	# Postfix
+	return if (!$user->{'email'});
+	my $user_alias = "\\" . &escape_alias($user->{'email'});
+	&foreign_require("postfix");
+	my $afiles =
+		[ &postfix::get_aliases_files(
+		  &postfix::get_real_value("alias_maps")) ];
+	&postfix::lock_alias_files($afiles);
+	my @aliases = &postfix::list_postfix_aliases($afiles);
+	my @oaliases = grep { &indexof($user_alias,
+				@{$_->{'values'}}) >= 0 } @aliases;
+	my $malias;
+	foreach my $oalias (@oaliases) {
+		my @values = grep { $_ ne $user_alias } @{$oalias->{'values'}};
+		my %nalias = %$oalias;
+		delete($nalias{'value'});
+		$nalias{'values'} = \@values;
+		&postfix::modify_postfix_alias($oalias, \%nalias);
+		$malias++;
+		}
+	&postfix::unlock_alias_files($afiles);
+	if ($malias) {
+		&postfix::regenerate_aliases();
+		&postfix::reload_postfix();
+		}
+	}
+}
+
+# default_postfix_map_type()
+# Returns the default Postfix map type, such as 'hash' or 'db'
+sub default_postfix_map_type
+{
+&require_mail();
+if ($mail_system == 0) {
+	foreach my $t ('hash', 'lmdb', 'dbm') {
+		return $t if (&postfix::supports_map_type($t));
+		}
+	}
+return 'hash';	# Should never happen
 }
 
 $done_feature_script{'mail'} = 1;

@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'mass_err'});
 $d = &get_domain($in{'dom'});
 &can_edit_domain($d) || &error($text{'users_ecannot'});
@@ -12,14 +13,12 @@ $d = &get_domain($in{'dom'});
 
 &obtain_lock_unix($d);
 &obtain_lock_mail($d);
-@users = &list_domain_users($d);
+@users = &list_domain_users($d, 0, 0, 0, 0, 1);
 @ashells = grep { $_->{'mailbox'} && $_->{'avail'} } &list_available_shells();
 
 # Get the users
 foreach $mu (@mass) {
-	($unix, $name) = split(/\//, $mu, 2);
-	($user) = grep { $_->{'user'} eq $name &&
-			 $_->{'unix'} == $unix } @users;
+	($user) = grep { $_->{'user'} eq $mu } @users;
 	if ($user) {
 		push(@musers, $user);
 		}
@@ -31,8 +30,6 @@ foreach $mu (@mass) {
     $in{'quota'} =~ /^[0-9\.]+$/ || &error($text{'user_equota'});
 !&has_mail_quotas() || $in{'mquota_def'} != 0 ||
     $in{'mquota'} =~ /^[0-9\.]+$/ || &error($text{'user_emquota'});
-!&has_server_quotas() || $in{'qquota_def'} != 0 ||
-    $in{'qquota'} =~ /^[0-9]+$/ || &error($text{'user_eqquota'});
 
 # Update each one
 &ui_print_unbuffered_header(&domain_in($d), $text{'mass_title'}, "");
@@ -44,6 +41,13 @@ foreach $user (@musers) {
 	&$indent_print();
 	$pop3 = &remove_userdom($user->{'user'}, $d);
 
+	# Skip virtual (extra) users
+	if ($user->{'extra'}) {
+		&$outdent_print();
+		&$second_print($text{'mass_evirtuser'});
+		next;
+		}
+
 	# Home directory quota
 	if (&has_home_quotas() && $in{'quota_def'} != 2) {
 		&$first_print($text{'mass_setquota'});
@@ -52,9 +56,6 @@ foreach $user (@musers) {
 			}
 		elsif ($user->{'noquota'}) {
 			&$second_print($text{'mass_enoquota'});
-			}
-		elsif (!$user->{'unix'}) {
-			&$second_print($text{'mass_eunix'});
 			}
 		elsif ($in{'quota_def'} == 1) {
 			# Quota set to unlimited
@@ -85,9 +86,6 @@ foreach $user (@musers) {
 		elsif ($user->{'noquota'}) {
 			&$second_print($text{'mass_enoquota'});
 			}
-		elsif (!$user->{'unix'}) {
-			&$second_print($text{'mass_eunix'});
-			}
 		elsif ($in{'mquota_def'} == 1) {
 			if ($user->{'mquota'}) {
 				$user->{'mquota'} = 0;
@@ -103,28 +101,6 @@ foreach $user (@musers) {
 				}
 			&$second_print(&text('mass_setq',
 					&quota_show($user->{'mquota'},"mail")));
-			}
-		}
-
-	# Mail server quota
-	if (&has_server_quotas() && $in{'qquota_def'} != 2) {
-		&$first_print($text{'mass_setqquota'});
-		if (!$user->{'mailquota'}) {
-			&$second_print($text{'mass_emailquota'});
-			}
-		elsif ($in{'qquota_def'} == 1) {
-			if ($user->{'qquota'}) {
-				$user->{'qquota'} = 0;
-				$changed++;
-				}
-			&$second_print($text{'mass_setu'});
-			}
-		elsif ($in{'qquota_def'} == 0) {
-			if ($user->{'qquota'} != $in{'qquota'}) {
-				$user->{'qquota'} = $in{'qquota'};
-				$changed++;
-				}
-			&$second_print(&text('mass_setq', $user->{'qquota'}));
 			}
 		}
 
@@ -155,10 +131,7 @@ foreach $user (@musers) {
 		&$first_print($text{'mass_setshell'});
 		($shell) = grep { $_->{'shell'} eq $in{'shell'} }
 				@ashells;
-		if (!$user->{'unix'}) {
-			&$second_print($text{'mass_eunix'});
-			}
-		elsif ($shell) {
+		if ($shell) {
 			if ($user->{'shell'} ne $in{'shell'}) {
 				$user->{'shell'} = $in{'shell'};
 				$changed++;

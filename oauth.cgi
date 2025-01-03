@@ -26,7 +26,7 @@ if ($mode eq 'google') {
 
 	# Validate that it actually works
 	my $buckets = &list_gcs_buckets();
-	ref($buckets) || &error(&text('cloud_egoogletoken2', $buckets));
+	ref($buckets) || &error(&text('cloud_egoogletoken2_gcs', $buckets));
 	}
 elsif ($mode eq 'googledns') {
 	# Update Google DNS token
@@ -44,9 +44,26 @@ elsif ($mode eq 'googledns') {
 
 	# Validate that it actually works
 	$rv = &call_googledns_api("/managedZones", [], "GET");
-	ref($rv) || &error(&text('cloud_egoogletoken2', $rv));
+	ref($rv) || &error(&text('cloud_egoogletoken2_gdns', $rv));
 	}
+elsif ($mode eq 'drive') {
+	# Update Drive token
+	$config{'drive_oauth'} = $in{'code'};
+	my $gce = { 'oauth' => $config{'drive_oauth'},
+	            'clientid' => $config{'drive_clientid'},
+		    'secret' => $config{'drive_secret'},
+		  };
+	my ($ok, $token, $rtoken, $ttime) = &get_oauth_access_token($gce);
+	$ok || &error(&text('cloud_egoogletoken', $token));
+	$config{'drive_token'} = $token;
+	$config{'drive_rtoken'} = $rtoken;
+	$config{'drive_ttime'} = $ttime;
+	$config{'drive_tstart'} = time();
 
+	# Validate that it actually works
+	my $buckets = &list_drive_folders();
+	ref($buckets) || &error(&text('cloud_egoogletoken2_gdrv', $buckets));
+	}
 else {
 	&error($text{'cloud_eoauth_mode'});
 	}

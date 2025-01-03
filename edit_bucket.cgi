@@ -17,11 +17,11 @@ else {
 	# Get the account and bucket
 	($account) = grep { $_->[0] eq $in{'account'} } @accounts;
 	$account || &error($text{'bucket_eagone'});
-	$buckets = &s3_list_buckets(@$account);
+	$buckets = &s3_list_buckets($account->[0], $account->[1]);
 	ref($buckets) || &error(&text('bucket_elist', $buckets));
 	($bucket) = grep { $_->{'Name'} eq $in{'name'} } @$buckets;
 	$bucket || &error($text{'bucket_egone'});
-	$info = &s3_get_bucket(@$account, $in{'name'});
+	$info = &s3_get_bucket($account->[0], $account->[1], $in{'name'});
 	}
 
 print &ui_form_start("save_bucket.cgi", "post");
@@ -37,7 +37,7 @@ print &ui_table_start($text{'bucket_header'}, "width=100%", 2);
 if ($in{'new'}) {
 	# Can select account, enter a bucket name and choose a location
 	print &ui_table_row($text{'bucket_account'},
-		&ui_select("account", undef, [ map { $_->[0] } @accounts ]));
+		&ui_select("account", undef, [ map { [ $_->[0], $_->[3]->{'desc'} ] } @accounts ]));
 
 	print &ui_table_row($text{'bucket_name'},
 		&ui_textbox("name", undef, 40));
@@ -45,12 +45,18 @@ if ($in{'new'}) {
 	print &ui_table_row($text{'bucket_location'},
 		&ui_select("location", $config{'s3_location'},
 			   [ [ "", $text{'default'} ],
-			     &s3_list_locations(@$account) ]));
+			     &s3_list_locations($account->[0], $account->[1]) ]));
 	}
 else {
 	# Account, bucket and location are fixed
-	print &ui_table_row($text{'bucket_account'},
-		"<tt>$in{'account'}</tt>");
+	if ($account->[3]) {
+		print &ui_table_row($text{'bucket_account2'},
+			$account->[3]->{'desc'} || $account->[3]->{'access'});
+		}
+	else {
+		print &ui_table_row($text{'bucket_account'},
+			"<tt>$in{'account'}</tt>");
+		}
 
 	print &ui_table_row($text{'bucket_name'},
 		"<tt>$in{'name'}</tt>");
@@ -60,10 +66,11 @@ else {
 				    : $text{'default'});
 
 	print &ui_table_row($text{'bucket_owner'},
-	    "<tt>$info->{'acl'}->{'Owner'}->[0]->{'DisplayName'}->[0]</tt>");
+	    "<tt>".($info->{'acl'}->{'Owner'}->[0]->{'DisplayName'}->[0] ||
+		    $info->{'acl'}->{'Owner'}->[0]->{'ID'}->[0])."</tt>");
 
 	# Show file count and size
-	$files = &s3_list_files(@$account, $in{'name'});
+	$files = &s3_list_files($account->[0], $account->[1], $in{'name'});
 	if (ref($files)) {
 		$size = 0;
 		foreach my $f (@$files) {
@@ -85,6 +92,7 @@ $grant = $in{'new'} ? [ ] :
 $i = 0;
 foreach my $g (@$grant, { }) {
 	$grantee = $g->{'Grantee'}->[0]->{'DisplayName'}->[0] ||
+		   $g->{'Grantee'}->[0]->{'ID'}->[0] ||
 		   $g->{'Grantee'}->[0]->{'URI'}->[0];
 	$grantee =~ s/^\Q$s3_groups_uri\E//;
 	$ptable .= &ui_columns_row([

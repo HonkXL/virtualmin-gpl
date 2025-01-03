@@ -64,7 +64,8 @@ if ($in{'generic'}) {
 		# Sub-server under parent's user
 		($rdleft, $rdreason, $rdmax) = &count_domains("realdoms");
 		if ($rdleft) {
-			push(@generics, [ $text{'form_generic_subserver'},
+			push(@generics, [ &text('form_generic_subserverof',
+						$gparent->{'dom'}),
 				  'add1=1&parentuser1='.$gparent->{'user'} ]);
 			}
 		($adleft, $adreason, $admax) = &count_domains("aliasdoms");
@@ -140,7 +141,12 @@ if ($in{'subdom'}) {
 			$subdom ? "create_subdom" :
 			$parentdom ? "create_subserver" :
 				  "create_form");
-
+# Show user friendly info
+if (!$tdleft && $tdreason == 3) {
+	print &ui_alert_box(
+		&text('setup_emax', $tdmax, $virtualmin_account_subscriptions),
+		'warn', undef, undef, '');
+	}
 # Show generic mode selector
 if ($in{'generic'} && @generics > 1) {
 	print "<b>$text{'form_genericmode'}</b>\n";
@@ -173,8 +179,7 @@ print &ui_hidden_table_start($text{'form_header'}, "width=100%", 2,
 if ($subdom) {
 	# Under top-level domain
 	print &ui_table_row(&hlink($text{'form_domain'}, "domainname"),
-		&ui_textbox("dom", undef, 20, 0, undef,
-		  &vui_ui_input_noauto_attrs()).".$subdom->{'dom'}",
+		&vui_noauto_textbox("dom", undef, 20).".$subdom->{'dom'}",
 		undef, \@tds);
 	}
 else {
@@ -183,8 +188,8 @@ else {
 			".$parentdom->{'dom'}" :
 		       $access{'subdom'} ? ".$access{'subdom'}" : undef;
 	print &ui_table_row(&hlink($text{'form_domain'}, "domainname"),
-	      &ui_textbox("dom", $force, 50, 0, undef,
-			  "onBlur='domain_change(this)' @{[&vui_ui_input_noauto_attrs()]}'"),
+	      &vui_noauto_textbox("dom", $force, 50, 0, undef,
+				  "onBlur='domain_change(this)'"),
 	      undef, \@tds);
 
 	# Javascript to append domain name if needed
@@ -202,8 +207,7 @@ else {
 
 # Description / owner
 print &ui_table_row(&hlink($text{'form_owner'}, "ownersname"),
-		    &ui_textbox("owner", undef, 50, undef, undef,
-			  &vui_ui_input_noauto_attrs()),
+		    &vui_noauto_textbox("owner", undef, 50),
 		    undef, \@tds);
 
 if (!$parentuser) {
@@ -218,8 +222,7 @@ if (!$parentuser) {
 			  [ [ 0, $text{'form_sshkey0'} ],
 			    [ 1, $text{'form_sshkey1'} ],
 			    [ 2, $text{'form_sshkey2'} ] ])."<br>\n".
-		&ui_textarea("sshkey", undef, 3, 60,
-		             undef, undef, &vui_ui_input_noauto_attrs()), undef, \@tds);
+		&ui_textarea("sshkey", undef, 3, 60), undef, \@tds);
 	}
 
 # Generate Javascript for template change
@@ -563,7 +566,8 @@ foreach $f (@dom_features) {
 	local $txt = $parentdom ? $text{'form_sub'.$f} : undef;
 	$txt ||= $text{'form_'.$f};
 	push(@grid_order_initial, $f);
-	push(@grid, &ui_checkbox($f, 1, "", $config{$f} == 1).
+	push(@grid, &ui_checkbox($f, 1, "", $config{$f} == 1,
+		&feature_check_chained_javascript($f)).
 		    " <b>".&hlink($txt, $f)."</b>");
 	}
 
@@ -587,7 +591,8 @@ foreach $f (@fplugins) {
 	$hlink = &plugin_call($f, "feature_hlink");
 	$label = &hlink($label, $hlink, $f) if ($hlink);
 	push(@grid_order_initial, $f);
-	push(@grid, &ui_checkbox($f, 1, "", !$plugins_inactive{$f}).$label);
+	push(@grid, &ui_checkbox($f, 1, "", !$plugins_inactive{$f},
+		&feature_check_chained_javascript($f)).$label);
 	if (&plugin_call($f, "feature_inputs_show", undef)) {
 		push(@input_plugins, $f);
 		}
@@ -669,17 +674,28 @@ else {
 
 # Show DNS IP address field
 if (&can_dnsip()) {
-	my $def_dns_ip = $config{'external_ip_cache'} || &get_dns_ip($resel);
-	my $defmsg = $def_dns_ip || $text{'spf_default2'};
+	my $def_dns_ip =
+		&get_any_external_ip_address_cached() ||
+		&get_any_external_ip_address() || &get_dns_ip($resel);
+	my $dns_ip = $parentdom ? $parentdom->{'dns_ip'} : undef;
+	my @opts;
+	if ($def_dns_ip) {
+		push(@opts, [ 1, $text{'spf_default3'}, $def_dns_ip ]);
+		push(@opts, [ 2, $text{'spf_default2'} ]);
+		}
+	else {
+		push(@opts, [ 1, $text{'spf_default2'} ]);
+		}
+	push(@opts, [ 0, $text{'spf_custom'},
+		      &ui_textbox("dns_ip", $dns_ip, 20) ]);
 	print &ui_table_row(&hlink($text{'edit_dnsip'}, "edit_dnsip"),
-		&ui_opt_textbox("dns_ip",
-				$parentdom ? $parentdom->{'dns_ip'} : undef,
-				20, $defmsg));
+		&ui_radio_table("dns_ip_def", $dns_ip ? 0 : 1, \@opts));
 	}
 
 print &ui_hidden_table_end();
 
-if ($can_website && !$aliasdom && $virtualmin_pro) {
+if ($can_website && !$aliasdom && $virtualmin_pro &&
+    $deftmpl->{'content_web'} == 3) {
 	# Show field for initial content
 	print &ui_hidden_table_start($text{'form_park'}, "width=100%", 2,
 				     "park", 0);
@@ -690,12 +706,10 @@ if ($can_website && !$aliasdom && $virtualmin_pro) {
 				      [ [ 1, $text{'form_content1'} ],
 					[ 2, $text{'form_content2'} ],
 					[ 0, $text{'form_content0'} ] ])."<br>".
-			    &ui_textarea("content", undef, 5, 70, undef, undef,
-			                 "placeholder=\"@{[&html_strip($text{'deftmplt_default_slog'}, ' ')]}\""),
+			    &ui_textarea("content", undef, 5, 70),
 			    3, \@tds);
 
 	print &ui_hidden_table_end();
-	print '<script>var content_def_radios = document.querySelectorAll("input[type=radio][name=\'content_def\']"), content_textarea = document.querySelector("textarea[name=\'content\']"), content_textarea_def_placeholder = content_textarea.getAttribute(\'placeholder\'); function content_def_event(event) { if ( this.value == 1 ) { content_textarea.style.display = "none"; } else { content_textarea.style.display = "inline-block"; } content_textarea.placeholder = this.value == 2 ? content_textarea_def_placeholder : content_textarea.placeholder = ""; } Array.prototype.forEach.call(content_def_radios, function(radio) { radio.removeEventListener("change", content_def_event); radio.addEventListener("change", content_def_event); });</script>';
 	}
 print &ui_form_end([ [ "ok", $text{'form_ok'} ] ]);
 if (!$config{'template_auto'}) {

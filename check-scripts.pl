@@ -95,7 +95,10 @@ foreach $s (@scripts) {
 				($host, $port, $page, $ssl) = &parse_http_url($url);
 				$h = &make_http_connection(
 					$host, $port, $ssl,
-					$f->{'method'} || "HEAD", $page);
+					$f->{'method'} || "HEAD", $page,
+					[ [ 'Host', $host ],
+					  [ 'User-agent', 'Webmin' ],
+					  [ 'Accept-language', 'en' ] ]);
 				if (!ref($h)) {
 					print ".. failed : $h\n";
 					push(@errs, [ $script, $v, $url, $h ]);
@@ -103,9 +106,6 @@ foreach $s (@scripts) {
 					}
 				
 				# Make sure the file exists
-				&write_http_connection($h, "Host: $host\r\n");
-				&write_http_connection($h, "User-agent: Webmin\r\n");
-				&write_http_connection($h, "\r\n");
 				$line = &read_http_connection($h);
 				$line =~ s/\r|\n//g;
 				if ($line !~ /^HTTP\/1\..\s+(200|30[0-9])\s+/) {
@@ -125,13 +125,22 @@ foreach $s (@scripts) {
 	$url = undef;
 	if (defined(&$lfunc)) {
 		foreach $v (@{$script->{'versions'}}) {
-			($url, $re, $prefix, $suffix) = &$lfunc($v);
+			($url, $re, $prefix, $suffix, $opts) = &$lfunc($v);
 			next if (!$url || !$re);
+			$opts ||= { };
 			print "Checking $script->{'name'} website for $v ..\n";
-			($host, $port, $page, $ssl) = &parse_http_url($url);
 			$data = $err = undef;
-			&http_download($host, $port, $page, \$data, \$err,
-				       undef, $ssl, undef, undef, undef, 0, 1);
+			if ($opts->{'wget'}) {
+				$data = &backquote_command("wget -O - -q ".quotemeta($url)." 2>/dev/null");
+				$err = "wget $url failed" if ($?);
+				}
+			else {
+				($host, $port, $page, $ssl) =
+					&parse_http_url($url);
+				&http_download($host, $port, $page, \$data,
+					       \$err, undef, $ssl, undef, undef,
+					        undef, 0, 1);
+				}
 			if ($err || !$data) {
 				push(@errs, [ $script, $v, $url,
 					"Failed to find latest version" ]);

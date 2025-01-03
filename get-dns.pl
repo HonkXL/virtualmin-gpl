@@ -41,6 +41,7 @@ if (!$module_name) {
 	}
 
 # Parse command line
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -60,15 +61,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--dnssec-records") {
 		$dnssecmode = 1;
-		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");

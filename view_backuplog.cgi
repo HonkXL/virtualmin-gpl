@@ -23,8 +23,13 @@ if ($log->{'desc'}) {
 	}
 
 # Destination
-print &ui_table_row($text{'viewbackup_dest'},
-	&nice_backup_url($log->{'dest'}, 1), 3);
+my ($proto, $user, $pass, $host, $path, $port) =
+	&parse_backup_url($log->{'dest'});
+my $nice = &nice_backup_url($log->{'dest'}, 1);
+if ($proto == 0 && &foreign_check("filemin")) {
+	$nice = &ui_link("../filemin/index.cgi?path=".&urlize($path), $nice);
+	}
+print &ui_table_row($text{'viewbackup_dest'}, $nice, 3);
 
 # Domains included
 @alldnames = split(/\s+/, $log->{'doms'});
@@ -63,7 +68,7 @@ print &ui_table_row($text{'viewbackup_size'},
 print &ui_table_row($text{'viewbackup_time'},
 	&nice_hour_mins_secs($log->{'end'} - $log->{'start'}));
 
-# Incremental?
+# Differential?
 print &ui_table_row($text{'viewbackup_inc'},
 	$log->{'increment'} == 1 ? $text{'viewbackup_inc1'} :
 	$log->{'increment'} == 2 ? $text{'viewbackup_inc2'} :
@@ -130,9 +135,15 @@ if (@dnames == @alldnames) {
 	print &ui_hidden_table_end();
 	}
 
+# Can we restore?
+my $restore = 0;
+if ($log->{'ok'} || scalar(@alldnames) != scalar(@errdnames)) {
+	$restore = 1;
+	}
+
 if ($log->{'ok'} || $log->{'errdoms'}) {
 	print &ui_form_end([
-		[ undef, $text{'viewbackup_restore'} ],
+		$restore ? ( [ undef, $text{'viewbackup_restore'} ] ) : ( ),
 		$can == 2 ? ( ) : ( [ 'delete', $text{'viewbackup_delete'} ] )
 		]);
 	}

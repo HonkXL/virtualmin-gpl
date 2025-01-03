@@ -46,6 +46,7 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -57,20 +58,8 @@ while(@ARGV > 0) {
 	elsif ($a eq "--all-domains") {
 		$all = 1;
 		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--email-only") {
-		$emailonly = 1;
-		}
 	elsif ($a eq "--plugins") {
 		$plugins = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -88,7 +77,7 @@ else {
 
 foreach $d (@doms) {
 	@aliases = &list_domain_aliases($d, !$plugins);
-	if ($multi) {
+	if ($multiline) {
 		# Show each destination on a separate line
 		foreach $a (@aliases) {
 			print $a->{'from'},"\n";
@@ -143,7 +132,8 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists the mail aliases in one or more virtual servers.\n";
 print "\n";
 print "virtualmin list-aliases --all-domains | --domain name | --user username\n";
-print "                       [--multiline | --name-only | --email-only]\n";
+print "                       [--multiline | --json | --xml | --name-only |\n";
+print "                        --email-only]\n";
 print "                       [--plugins]\n";
 exit(1);
 }

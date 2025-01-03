@@ -13,17 +13,13 @@ $in{'selector'} =~ /^[a-z0-9\.\-\_]+/i || &error($text{'dkim_eselector'});
 $dkim->{'selector'} = $in{'selector'};
 $dkim->{'enabled'} = $in{'enabled'};
 $dkim->{'verify'} = $in{'verify'};
+$dkim->{'alldns'} = $in{'alldns'};
 $dkim->{'sign'} = 1;
 @extra = split(/\s+/, $in{'extra'});
 foreach $e (@extra) {
 	$e =~ /^[a-z0-9\-\_\.\*]+$/ || &error(&text('dkim_eextra', $e));
 	}
 $dkim->{'extra'} = \@extra;
-@exclude = split(/\s+/, $in{'exclude'});
-foreach $e (@exclude) {
-	$e =~ /^[a-z0-9\-\_\.\*]+$/ || &error(&text('dkim_eexclude', $e));
-	}
-$dkim->{'exclude'} = \@exclude;
 
 if ($in{'enabled'}) {
 	# Turn on DKIM, or change settings

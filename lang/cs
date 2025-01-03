@@ -13,6 +13,7 @@ index_aliases=Aliasů
 index_emailto=Emailová adresa
 index_list=Seznam..
 index_emysql=MySQL pravděpodobně neběží, nebo není nainstalován na Váš systém, nebo nebyl správně nastaven ve Webmin modulu <a href='$1'>Databáze MySQL</a>. Jestliže Váš systém nepoužívá MySQL, měl by být vypnut na stránce <a href='$2'>nastavení modulů</a> Virtualminu.
+
 index_epostgres=PostgreSQL pravděpodobně neběží, nebo není nainstalován na Váš systém, nebo nebyl správně nastaven ve Webmin modulu <a href='$1'>Databáze PostgreSQL</a>. Jestliže Váš systém nepoužívá PostgreSQL, měl by být vypnut na stránce <a href='$2'>nastavení modulů</a> Virtualminu.
 index_mmanage=Spravovat postovni server
 index_dstop=Ukoncit Dovecot
@@ -45,7 +46,6 @@ form_email=Kontaktní emailová adresa
 form_user=Administrační jméno
 form_dbname=Implicitní název databáze
 form_group=Skupina administračního uživatele
-form_dir=Vytvořit domovský adresář?
 form_ip=IP adresa pro stránky a doménu
 form_bytes=bytů
 form_template=Šablona nastavení serveru
@@ -98,7 +98,6 @@ setup_mysqldb=Vytvářím MySQL databázi $1 ..
 setup_postgresdb=Vytvářím PostgreSQL databázi $1 ..
 setup_save=Ukládám informace o serveru ..
 setup_done=.. hotovo
-setup_scriptclash=.. skript potřebuje vytvořit databázi s názvem $1, která již existuje
 setup_scriptdone=.. hotovo. $1
 
 indom=V doméně $1
@@ -125,6 +124,7 @@ user_header=Podrobnosti emailové schránky uživatele virtuální domény
 user_mheader=Podrobnosti poštovní schránky administračního uživatele virtuálního serveru
 user_header2=Nastavení kvóty a domovského adresáře
 user_header2a=Nastavení emailu
+user_header3=Nastavení přeposílání
 user_user=Emailová adresa
 user_user2=Uživatelské jméno
 user_domain=V doméně
@@ -146,13 +146,11 @@ user_dbs=Povolit přístup k databázím
 user_dbsall=Databáze v doméně
 user_dbssel=Přístup povolen do
 user_edbpass=Uživatelské heslo musí být změněno při prvním přístupu do databáze
-user_header3=Nastavení přeposílání
 user_header4=Další uživatelská oprávnění
 user_tome=Doručit tomuto uživateli
 user_forward=Přeposlat dalším uživatelům
 user_auto=Poslat automatickou odpověď
 user_period=Minimální doba mezi automatickými odpověďmi
-user_ehomeexists=Domovský adresář musí existovat pro FTP uživatele
 
 aliases_ecannot=Nejste opravne upravovat aliasy teto domeny
 aliases_title=Aliasy Postovnich Schranek
@@ -297,7 +295,6 @@ edit_ip=IP adresa
 edit_shared=(Sdílená všemi servery)
 edit_dnsip=Veřejná IP adresa
 edit_return=podrobnosti virtuálního serveru
-edit_users2=Konfigurovat uživatele emailu a FTP
 edit_aliases=Konfigurovat emailové aliasy
 edit_rename=Prejmenovat domenu
 edit_bwnone=Neomezeno
@@ -305,7 +302,6 @@ edit_databases=Konfigurovat databáze
 edit_databasesdesc=Zobrazit, vytvořit nebo odstranit databáze přidělené tomuto virtuálnímu serveru.
 edit_spf=Možnosti DNS
 edit_exclude=Vyloučené adresáře
-edit_reemail=Znovu odeslat přihlašovací email
 edit_newipdesc=Otevřít formulář pro změnu privátní IP adresy tohoto serveru, nebo jeho port webového serveru.
 edit_changepass=Změnit heslo
 edit_created=Vytvořeno
@@ -412,13 +408,7 @@ import_db_mysql=Názvy MySQL databází
 import_db_postgres=Názvy PostgreSQL databází
 import_ip=IP adresa používaná Apache a DNS
 
-import_enoip=Zadaná IP adresa není aktivní na Vašem systému.
-import_eipclash=Zadaná IP adresa je již používána doménou $1 .
 import_ereal=Zadaná IP adresa je používána rozhraním $1, které není virtuální
-import_nomysql=Nebyla nalezena žádná MySQL databáze $1.
-import_nopostgres=Nebyla nalezena žádná PostgreSQL databáze $1.
-import_novirt=Žádné unikátní virtuální IP adresy pro tuto doménu.
-import_user3=Zada
 import_dirs=Vytvářím adresáře v domovském adresáři
 import_home=Domovský adresář
 import_ehome=Neplatný nebo chybějící domovský adresář
@@ -483,13 +473,11 @@ losing_mysql=Všechny databáze MySQL, všechny tabulky a serverové přihláše
 sublosing_mysql=Všechny databáze MySQL a všechny tabulky budou smazány.
 losing_postgres=Všechny PostgreSQL databáze, tabulky a přihlášení budou smazány.
 sublosing_postgres=Všechny PostgreSQL databáze a tabulky budou smazány.
-losing_dir=Domovský adresář tohoto virtuálního serveru, obsahující všechny stránky a data, bude smazán.
 
 check_defip=Vychozi IP adresa pro virtualni servery je $1
 check_ednsip2=Implicitní IP adresa je nastavena na $1, ale detekovaná veřejná adresa je $2 . Toto zpravidla nastává v případě, kdy jste připojeni přes NAT a mělo by být opraveno na stránce <a href='$3'>nastavení modulů</a>
 check_ewebactions=Modul Apache <tt>mod_actions</tt> buď není nainstalován nebo není povolen
 check_dnsok2=BIND DNS server je instalovan
-check_mysqlnopass=MySQL je nainstalován a běží, ale nemá nastaven žádné <tt>root</tt> heslo! <b>Proveďte nápravu okamžitě v modulu <a href='$1'>Databáze MySQL</a></b>
 check_postgresnopass=PostgreSQL je nainstalován a běží, ale nemá nastaven žádné <tt>$2</tt> heslo! <b>Proveďte nápravu okamžitě v modulu <a href='$1'>Databáze PostgreSQL</a></b>
 check_done=.. vas system je pripraven pro pouziti Virtualminem
 check_edepwebalizer=Webalizer nelze povolit v <a href='$1'>konfiguraci modulu</a> Virtualminu soucasne s apachem
@@ -498,7 +486,6 @@ check_eftpshell=Shell $1 pro FTP uzivatele neni zahrnut v $2, coz muze zabranit 
 check_emysqlsync=Synchronizace mezi Unixovými a MySQL uživateli je zapnuta v modulu <a href='$1'>Databáze MySQL</a>. To ovšem není potřeba, protože Virtualmin vytváří MySQL účty pro vlastníka domény až když jsou potřeba, takže důrazně doporučujeme tuto možnost vypnout
 check_allwebmin=Aktualizuju vsechny uzivatele Webmin s novym nastavenim ..
 check_allresel=Aktualizuju vsechny distributory s novym nastavenim
-check_current=V globalni konfiguraci Webalizeru, je polozka <b>Prirustkocy soubor Webalizeru</b> nastaven jako absollutni cesta. Pouzijte <a href='$1'>Webalizer</a> pokud jej chcete zmenit na relativni jako soucasny <tt>webalizer.current</tt>
 check_detected=DEtekovan postovni server $1
 check_emysqlplugin=Modul uzivatelu MySQL jiz neni potrebny. Jeho funkce byly implementovany v jadre Virtualmin
 check_ebcmd=Prikaz $1 potrebny k vytvoreni ci obnovy ze zalohy neni instalovan
@@ -554,7 +541,6 @@ backup_errors0=Ihned zastavit zalohovani
 backup_errors1=Pokracovat s jinymi doplnky a servery
 backup_increment=Uroven zalohovani
 backup_increment0=Plny (vsechny soubory)
-backup_increment1=Prirustkovy (pouze soubory zmenene od posledniho zalohovani)
 backup_email=Zaslat zpravu o provedeni zalohy na adresu
 backup_email_err=Zaslat email pouze v pripade selhani
 
@@ -574,13 +560,9 @@ backup_disabled=Zakazano
 backup_mode0=Mistni soubor nebo adresar
 backup_mode0a=Soubor nebo adresar v <tt>virtualmin-backup/</tt>
 backup_mode1=FTP server
-backup_mode2=SSH server
 backup_mode3=Kos Amazon S3
 backup_mode5=Nahrat na server
-backup_akey=ID pristupoveho klice
-backup_skey=ID tajneho klice
 backup_ftpserver=FTP server
-backup_sshserver=SSH server
 backup_path=Soubor na serveru
 backup_login=Prihlasit se jako uzivatel
 backup_mailfiles2=Zahrnout soubory s postou
@@ -604,7 +586,6 @@ backup_ehomeformat3=Maji li vsechny virtualni servery domovsky adresar, lze prov
 backup_niceftp=$1 na FTP serveru $2
 backup_nicescp=$1 na SSH serveru $2
 backup_nicefile=mistni soubor $1
-backup_nices3=Kos Amazon S3 $1
 backup_nicedownload=stazeny soubor
 backup_niceupload=nacteny soubor
 backup_senabled1=Planovac zaloh Virtualmin byl povolen pro vsechny virtualni domeny.
@@ -632,12 +613,8 @@ backup_es3path=Nemuzete urcovat nazev souboru, ma-li byt zaloha provedena do nek
 backup_doing=Zahajeno zalohovani $1 domen do $2 ..
 backup_doing2=Zahajeno zalohovani $1 konfiguraci Virtualminu do $2 ..
 backup_euser=Nepripustne znaky prihlasovani FTP
-backup_epass=Neplatne znaky v hesle FTP - "@", ":" a "/" nelze pouzit
 backup_euser2=Nepripustne znaky prihlasivani SSH
-backup_epass2=Neplatny znak v hesle SSH - @ nelze pouzit
 backup_ebucket=Chybejici ci chyby nazev pouzdra S3
-backup_eakey=Chybejici ci chybny autentizacni klic S3
-backup_eskey=Chybny ci chybejici kod S3
 backup_esfile=Nepripustne znaky v souboru S3
 backup_done=Zaloha provedena. Vysledna velikost zalohy cini $1.
 backup_time=Celkovy cas zalohovani $1.
@@ -653,7 +630,6 @@ backup_emode=Nebyl vybran platny cil provedeni zalohy
 backup_es3nopath=Musite urcit nazev souboru behem zalohovani do jednoho souboru na S3
 
 backup_dirtar=Vytvarim soubor TAR z domovskeho adresare ..
-backup_dirtarinc=Vytvarim prirustkovy TAR soubor z domovskeho adresare ..
 backup_dirtarfailed=.. vytvoreni souboru TAR selhalo! $1
 backup_dirzip=Vytvářím ZIP soubor domovského adresáře ..
 backup_virtualmincp=Kopiruju konfiguraci virtualniho serveru ..
@@ -687,7 +663,6 @@ backup_vtemplates=Sablony serveru
 backup_vresellers=Ucet distributora
 backup_vemail=Emailove zpravy pro nove schranky
 backup_vcustom=Vlastni pole, odkazy a procesy
-backup_vscripts=Instalatory skriptu tretich stran
 backup_vstyles=Styl obsahu modulu tretich stran
 backup_vscheds=Planovane zalohy Virtualmin
 backup_virtualmin=Nastaveni Virtualmin taktez zalohovat
@@ -790,19 +765,13 @@ cert_self=Generuj samopodepsany klic
 cert_tabcurrent=Soucasny certifikat
 cert_tabcsr=Pozadavek na podpis
 cert_tabnew=Novy certifikat
-cert_tabchain=Certifikat CA
 cert_download=Stahnout certifikat
 cert_pem=Format PEM
 cert_pkcs12=Format PKCS12
 cert_pkcs7=Format PKCS&
 cert_edownload=Nebyl nalezen certifikat SSL!
 cert_eformat=Nelze docilit pozadovaneho formatu certifikatu
-cert_header4=Podrobnosti certifikacni autority
-cert_chain=Soubor s CA certifikatem
 cert_chain0=Nevybran zadny
-cert_chain1=Neni potreba zadny
-cert_chain2=Nacteny soubor $1
-cert_chainok=Ulozit Certifikat
 cert_esubject=Certifikat pravdepodobne nobsahuje CN
 
 newbw_unlim=Neomezeno
@@ -888,12 +857,6 @@ database_charset=Znaková sada pro novou databázi
 database_encoding=Kódování pro novou databázi
 database_opts=Další nastavení pro $1
 
-reemail_title=Znovu odeslat přihlašovací email
-reemail_dis=Registrační email nemohl být odeslán, protože nebyl povolen v šabloně serveru.
-reemail_desc=Tato stránka může být použita k znovu odeslání emailu, který byl zaslán při vytvoření virtuálního serveru.
-reemail_to=Emailová adresa vlastníka serveru:
-reemail_ok=Odeslat
-
 newips_title=Změna IP adres
 newips_ecannot=Nemáte oprávnění změnit IP adresy
 newips_new=Nová IP adresa
@@ -924,9 +887,6 @@ resel_edefip2=IP adresa není na tomto systému zatím aktivní
 licence_unlimited=neomezená
 
 scripts_longdesc=Popis
-scripts_idesc=Popis skriptu
-scripts_findok=Hledat
-
 mailusers_title=Poslat Vsem
 mailusers_all=Vse
 
@@ -944,16 +904,10 @@ newscripts_src1=Nahraný soubor $1
 newscripts_longdesc=Popis
 newscripts_wother=Emailová adresa
 
-addscripts_err=Pridani skriptu nebylo v poradku dokonceno.
 addscripts_elocal=Lokalni soubor neexistuje.
 addscripts_eupload=Nebyl vybran zadny soubor pro upload.
 addscripts_eurl=Chybejici ci chybna adresa URL
 addscripts_etar=Chyba pri pokusu extrahovat soubor typu tar: $1
-addscripts_efile=Chybny nazev souboru pro skript $1
-addscripts_title=Pridat Skript instalator
-addscripts_done=Instalatory skriptu $1 byly uspesne pridany z urceneho souboru.
-addscripts_done1=Instalator skriptu $1 byl uspesne pridan z urceneho souboru.
-addscripts_enone=Soubor neobsahuje zadny instalator skriptu.
 
 mass_title=Upravit vice uzivatelu najednou
 mass_quota=Kvóta domovského adresáře
@@ -1085,6 +1039,7 @@ spam_efile=Neplatný nebo chybějící soubor v domovském adresáři
 
 cat_objects=Objekty Serveru
 cat_server=Konfigurace serveru
+cat_dns=Registrace Domeny
 cat_admin=Možnosti administrace
 cat_create=Vytvorit Sub-Server
 cat_backup=Zalohovat ci Obnovit
@@ -1092,7 +1047,6 @@ cat_delete=Zakazat a Odstranit
 cat_services=Služby
 cat_logs=Události a zprávy
 cat_webmin=Moduly Webminu
-cat_dns=Registrace Domeny
 cat_links=Vlastni Odkazy
 cat_add=Pridat Server
 cat_setting=Nastaveni Systemu
@@ -1146,8 +1100,6 @@ amass_ebounce=Nelze kombinovat adresata pokusu o opetovne dorucenim s jinymi dru
 amass_done=Vytvoren alias postovni schranky $1
 amass_eclash=Alias se stejnym nazvem jiz existuje
 amass_eunknown=Neznamy prijemne aliasu $1
-
-massu_rusuredb=Data z $1 databází budou také odstraněny.
 
 usage_sdb=Velikost databází
 usage_userheader=Diskový prostor využitý uživateli mailu a FTP na tomto serveru a všech sub-serverech.
@@ -1292,9 +1244,6 @@ balancers_ecannot=Nejste opravnen upravovat cesty k Proxy teto domeny
 balancers_esupport=Domena ci system nepodporuje proxy
 balancers_add=Pridat novou cestu k Proxy
 balancers_path=URL adresa
-balancers_name=Nazev proxy
-balancers_urls=Cilove URL
-balancers_used=Pro skript
 balancers_delete=Odstranit zvolene proxy
 balancers_none=Nebyla doposud definovana zadna cesta k Proxy
 balancers_return=seznam cest k Proxy
@@ -1305,31 +1254,18 @@ balancers_none2=Proxy neni povoleno
 balancer_create=Vytvor cestu k Proxy
 balancer_edit=Upravit cestu k Proxy
 balancer_egone=Zvolena cesta k Proxy jiz neni platna
-balancer_header=Detail HTTP proxy
-balancer_name=Nazev proxy
-balancer_auto=Vybrat automaticky
 balancer_path=Mistni adresa URL
 balancer_urls=Cilove URL
-balancer_url=Cilova URL
 balancer_err=Chyba behem ukladani cesty k Proxy
 balancer_epath=Chybna ci chybejici adresa URL - musi byt ve tvaru / nebo /cokoliv
 balancer_ebalancer=Chybny ci chybejici nazev proxy - lze pouzit pouze pismena a cisla
 balancer_eurl=Chybne cilove URL : $1
-balancer_eurl2=Chybna ci neplatna cilova URL
 balancer_eurls=Nebyla zvolena zadna cilova URL
-balancer_script=Pouzito instalatorem skriptu
-balancer_scriptver=Verze skriptu
 
 scriptwarn_dom=Název domény
 
 features_ecannot=Nemáte oprávnění nastavovat povolené součásti
 features_err=Nepodařilo se uložit povolené součásti
-
-chain_err=Chyba behem ukladani CA certifikatu
-chain_efile=Soubor certifikatu neexistuje
-chain_ecert=Chybny soubor certifikatu : $1
-chain_emode1=Nejste opravnen zvolit jiny soubor na serveru!
-chain_eupload=Nebyl zvolen zadny uploadovany certifikat
 
 newshells_desc=Popis
 newshells_edesc=Chybí popis na řádku $1

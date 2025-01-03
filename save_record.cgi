@@ -3,11 +3,13 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'record_err'});
 $d = &get_domain($in{'dom'});
 $d || &error($text{'edit_egone'});
 &can_edit_domain($d) || &error($text{'edit_ecannot'});
 &can_edit_records($d) || &error($text{'records_ecannot'});
+&copy_alias_records($d) && &error($text{'records_ecannot2'});
 &require_bind();
 &pre_records_change($d);
 ($recs, $file) = &get_domain_dns_records_and_file($d);
@@ -135,11 +137,11 @@ else {
 	if ($r->{'type'} eq 'CNAME') {
 		$newrecs = [ @$recs ];
 		push(@$newrecs, $r) if ($in{'type'});
-		%clash = map { $_->{'name'}, $_ }
+		%clash = map { lc($_->{'name'}), $_ }
 			     grep { $_ ne $r } @$newrecs;
 		foreach $e (@$newrecs) {
 			if ($e->{'type'} =~ /^(CNAME|A|AAAA|MX)$/ &&
-			    $clash{$r->{'name'}}) {
+			    $clash{lc($r->{'name'})}) {
 				&error(&text('record_ecname', $r->{'name'}));
 				}
 			}

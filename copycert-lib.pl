@@ -28,16 +28,16 @@ if (&foreign_installed("dovecot")) {
 		   'virt' => 1,
 		   'short' => 'd' });
 	}
-if ($config{'mail'} && $config{'mail_system'} == 0) {
+if ($config{'mail'} && $mail_system == 0) {
 	push(@rv, {'id' => 'postfix',
 		   'dom' => &postfix_supports_sni() ? 1 : 0,
 		   'virt' => 1,
 		   'short' => 'p' });
 	}
-if ($config{'ftp'}) {
+if ($config{'ftp'} || &foreign_installed("proftpd")) {
 	push(@rv, {'id' => 'proftpd',
 		   'dom' => 0,
-		   'virt' => 0,
+		   'virt' => 1,
 		   'short' => 'f' });
 	}
 if ($config{'mysql'}) {
@@ -179,7 +179,7 @@ if (&foreign_installed("dovecot")) {
 		}
 	}
 
-if ($config{'mail_system'} == 0) {
+if ($mail_system == 0) {
 	# Check Postfix certificate
 	if ($perip) {
 		# Try per-IP cert first
@@ -215,10 +215,34 @@ if ($config{'mail_system'} == 0) {
 		}
 	}
 
-if ($config{'ftp'}) {
-	# Check ProFTPd certificate
+if ($config{'ftp'} || &foreign_installed("proftpd")) {
+	# Check ProFTPd per-IP certificate
 	&foreign_require("proftpd");
 	my $conf = &proftpd::get_config();
+	if ($perip) {
+		my ($virt, $vconf) = &get_proftpd_virtual($d);
+		if ($virt) {
+			my $cfile = &proftpd::find_directive(
+					"TLSRSACertificateFile", $vconf);
+			my $kfile = &proftpd::find_directive(
+					"TLSRSACertificateKeyFile", $vconf);
+			my $cafile = &proftpd::find_directive(
+					"TLSCACertificateFile", $vconf);
+			if ($cfile) {
+				push(@svcs, { 'id' => 'proftpd',
+					      'cert' => $cfile,
+					      'key' => $kfile,
+					      'ca' => $cafile,
+					      'prefix' => 'ftp',
+					      'port' => 990,
+					      'ip' => $d->{'ip'},
+					      'd' => $d,
+					    });
+				}
+			}
+		}
+
+	# Check ProFTPd global certificate
 	my $cfile = &proftpd::find_directive(
 			"TLSRSACertificateFile", $conf);
 	my $kfile = &proftpd::find_directive(
@@ -231,7 +255,8 @@ if ($config{'ftp'}) {
 			      'key' => $kfile,
 			      'ca' => $cafile,
 			      'prefix' => 'ftp',
-			      'port' => 990, });
+			      'port' => 990,
+			    });
 		}
 	}
 
@@ -710,7 +735,7 @@ $miniserv{'keyfile'} = $keyfile;
 $miniserv{'extracas'} = $chainfile;
 &put_miniserv_config(\%miniserv);
 &unlock_file($ENV{'MINISERV_CONFIG'});
-&restart_miniserv();
+&register_post_action(\&restart_webmin_fully);
 &$second_print($text{'setup_done'});
 
 # Tell the user if not in SSL mode
@@ -757,7 +782,7 @@ $miniserv{'keyfile'} = $keyfile;
 $miniserv{'extracas'} = $chainfile;
 &usermin::put_usermin_miniserv_config(\%miniserv);
 &unlock_file($usermin::usermin_miniserv_config);
-&usermin::restart_usermin_miniserv();
+&register_post_action(\&restart_usermin);
 &$second_print($text{'setup_done'});
 
 # Tell the user if not in SSL mode
@@ -830,12 +855,29 @@ foreach my $f (@cfiles) {
 	&flush_file_lines($f, undef, 1);
 	&unlock_file($f);
 	}
+
+# Apply the change
 if (&mysql::is_mysql_running() > 0) {
-	&mysql::stop_mysql();
-	my $err = &mysql::start_mysql();
-	if ($err) {
-		&$second_print(&text('copycert_emysqlstart', $err));
-		return;
+	# First try to apply the live config
+	my @cmds = ( "set global ssl_key = '$key'",
+		     "set global ssl_cert = '$cert'",
+		     "set global ssl_ca = '$ca'",
+		     "alter instance reload tls" );
+	my $failed = 0;
+	foreach my $c (@cmds) {
+		eval {
+			local $main::error_must_die = 1;
+			&mysql::execute_sql_logged($mysql::master_db, $c);
+			};
+		if ($@) {
+			$failed = 1;
+			last;
+			}
+		}
+
+	# Fall back to restarting MySQL later
+	if ($failed) {
+		&register_post_action(\&restart_mysql_server);
 		}
 	}
 &$second_print($text{'setup_done'});

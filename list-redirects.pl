@@ -10,6 +10,15 @@ table format, but can be switched to a more complete and parsable output with
 the C<--multiline> flag. Or you can have just the alias paths listed with
 the C<--name-only> parameter.
 
+To limit the list to only redirects for some path, use the C<--path> flag
+followed by a URL path. Or to limit to redirects for a certain hostname,
+use the C<--host> flag.
+
+By default the underlying path to redirect from will be shown, which
+typically excludes the C<.well-known> path used by Let's Encrypt. However,
+you can transform this to the more user-friendly path shown in the
+Virtualmin UI with the C<--fix-wellknown> flag.
+
 =cut
 
 package virtual_server;
@@ -29,22 +38,20 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
 		$domain = shift(@ARGV);
 		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
 	elsif ($a eq "--path") {
-		$onlypath = shift(@ARGV);
+		$path = shift(@ARGV);
 		}
-	elsif ($a eq "--help") {
-		&usage();
+	elsif ($a eq "--host") {
+		$host = shift(@ARGV);
+		}
+	elsif ($a eq "--fix-wellknown") {
+		$wellknown = 1;
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -64,8 +71,14 @@ if ($path) {
 	@redirects = grep { $_->{'path'} eq $path ||
 			    $_->{'path'} eq $phd.$path } @redirects;
 	}
+if (defined($host)) {
+	@redirects = grep { $_->{'host'} eq $host } @redirects;
+	}
+if ($wellknown) {
+	@redirects = map { &remove_wellknown_redirect($_) } @redirects;
+	}
 
-if ($multi) {
+if ($multiline) {
 	# Show in multi-line format
 	foreach $r (@redirects) {
 		print "$r->{'path'}\n";
@@ -79,10 +92,15 @@ if ($multi) {
 			print "    Code: ",$r->{'code'},"\n";
 			}
 		print "    Protocols: ",join(" ", grep { $r->{$_} } ("http", "https")),"\n";
-		if ($r->{'dir'}) {
-			my @dirs = ( $r->{'dir'}->{'name'} );
-			push(@dirs, $r->{'dir2'}->{'name'}) if ($r->{'dir2'});
-			print "    Directives: ",join(" ", @dirs),"\n";
+		if ($r->{'host'}) {
+			print "    Limit to hostname: $r->{'host'}\n";
+			print "    Regexp hostname: ",
+				($r->{'hostregexp'} ? "Yes" : "No"),"\n";
+			}
+		if ($r->{'dirs'}) {
+			print "    Directives: ",
+				join(" ", &unique(map { $_->{'name'} }
+							@{$r->{'dirs'}})),"\n";
 			}
 		}
 	}
@@ -94,7 +112,7 @@ elsif ($nameonly) {
 	}
 else {
 	# Show all on one line
-	$fmt = "%-20s %-59s\n";
+	$fmt = "%-20.20s %-59.59s\n";
 	printf $fmt, "Path", "Destination";
 	printf $fmt, ("-" x 20), ("-" x 59);
 	foreach $r (@redirects) {
@@ -108,7 +126,10 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists the web aliases and redirects in some virtual server.\n";
 print "\n";
 print "virtualmin list-redirects --domain domain.name\n";
-print "                         [--multiline | --name-only]\n";
+print "                         [--multiline | --json | --xml | --name-only]\n";
+print "                         [--path /path]\n";
+print "                         [--host hostname]\n";
+print "                         [--fix-wellknown]\n";
 exit(1);
 }
 

@@ -34,15 +34,10 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--user") {
+	if ($a eq "--user") {
 		$user = shift(@ARGV);
 		}
 	elsif ($a eq "--key") {
@@ -50,9 +45,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--container") {
 		$container = shift(@ARGV);
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -78,7 +70,7 @@ if (!ref($files)) {
 if ($container) {
 	@$files = grep { $_ eq $container } @$files;
 	}
-if ($multi) {
+if ($multiline) {
 	# Full details
 	foreach $f (@$files) {
 		print $f,"\n";
@@ -119,7 +111,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists all containers owned by a Rackspace account.\n";
 print "\n";
-print "virtualmin list-rs-containers [--multiline | --name-only]\n";
+print "virtualmin list-rs-containers [--multiline | --json | --xml | --name-only]\n";
 print "                              [--user username]\n";
 print "                              [--key api-key]\n";
 exit(1);

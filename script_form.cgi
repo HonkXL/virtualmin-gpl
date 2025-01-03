@@ -78,6 +78,11 @@ if ($ok) {
 	print &ui_table_start($text{'scripts_iheader'}, undef, 2);
 
 	# Show script description
+	print &ui_table_row($text{'scripts_iinstver'},
+		"$script->{'release'}&nbsp;".
+			&ui_help("$text{'scripts_iinstdate'}: ".
+				&filetimestamp_to_date($script->{'filename'})))
+		if ($script->{'release'});
 	print &ui_table_row($text{'scripts_iname'}, $script->{'desc'});
 	print &ui_table_row($text{'scripts_idesc'}, $script->{'longdesc'})
 		if ($script->{'longdesc'});
@@ -124,13 +129,30 @@ if ($ok) {
 		# If password length doesn't fit, generate new one
 		$dompass_bad = 1;
 		$dompass = &random_password($passlenreq);
+
+		# If script has password pattern requirement
+		# and generated password doesn't fit, try
+		# generating a new one
+		if ($passpattern) {
+			my $regex = qr/$passpattern/;
+			if ($dompass !~ $regex) {
+				for (my $i = 0; $i < 100; $i++) {
+					my $password = &random_password($passlenreq);
+					if ($password =~ $regex) {
+						$dompass = $password;
+						last;
+						}
+					}
+				}
+			}
 		}
 
 	
 	# If there is a pattern set, test it and pass to HTML5 tag
 	if ($passpattern) {
-		$dompass_bad = 1 if ($dompass !~ /$passpattern/);
-		$passpattern = " pattern=\"".&quote_escape($passpattern)."\"";
+		my $regex = qr/$passpattern/;
+		$dompass_bad = 1 if ($dompass !~ $regex);
+		$passpattern = " pattern=\"".&quote_escape($passpattern, '"')."\"";
 		}
 
 	# If password length requirement is set

@@ -74,6 +74,10 @@ elsif ($type eq "resel") {
 elsif ($type eq "resels") {
 	return &text('log_'.$action.'_resels', $object);
 	}
+elsif ($type eq "acme") {
+	return &text('log_'.$action.'_acme',
+		     "<tt>".($p->{'type'} || $p->{'url'})."</tt>");
+	}
 elsif ($type eq "template") {
 	return &text('log_'.$action.'_template', &html_escape($object));
 	}
@@ -176,6 +180,10 @@ elsif ($action eq "autoconfig") {
 	}
 elsif ($type eq "ratelimit") {
 	return &text('log_'.$action.'_ratelimit');
+	}
+elsif ($type eq "s3") {
+	return &text('log_'.$action.'_s3',
+		     "<tt>".&html_escape($object)."</tt>");
 	}
 elsif ($action eq "wizard") {
 	return &text('log_wizard', $text{'wizard_title_'.$object});

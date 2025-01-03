@@ -18,7 +18,7 @@ if ($d->{'dns'}) {
 			# Default comes from SOA record
 			$maxttl = $r->{'values'}->[6];
 			}
-		if ($r->{'ttl'} &&
+		if (!&is_dnssec_record($r) && $r->{'ttl'} &&
 		    &ttl_to_seconds($r->{'ttl'}) > &ttl_to_seconds($maxttl)) {
 			$maxttl = $r->{'ttl'};
 			}
@@ -44,7 +44,7 @@ if ($d->{'dns'}) {
 		}
 	}
 
-print &ui_form_start("transfer.cgi");
+print &ui_form_start("transfer.cgi", "post");
 print &ui_hidden("dom", $d->{'id'}),"\n";
 print &ui_table_start($text{'transfer_header'}, undef, 2);
 
@@ -57,14 +57,18 @@ print &ui_table_row($text{'transfer_dom'},
 
 # Destination system
 my @hosts = &get_transfer_hosts();
-my $hfield = &ui_textbox("host", undef, 40, 0, undef, "autocomplete=off placeholder='example.com:22'")." ".
+my $hfield = &ui_textbox("host", undef, 40, 0, undef,
+			 "autocomplete=off placeholder='example.com:22'")." ".
+	     &ui_select("proto", "ssh",
+                   [ [ "ssh", $text{'transfer_ssh'} ],
+                     [ "webmin", $text{'transfer_webmin'} ] ])." ".
 	     &ui_checkbox("savehost", 1, $text{'transfer_savehost'}, 0);
 if (@hosts) {
+	my @opts = map { [ $_->[0], $_->[0]." (".$text{'transfer_'.($_->[2] || 'ssh')}.")" ] } @hosts;
 	print &ui_table_row($text{'transfer_host'},
 		&ui_radio_table("host_mode", 1,
 		    [ [ 1, $text{'transfer_host1'},
-			&ui_select("oldhost", $hosts[0]->[0],
-				   [ (map { $_->[0] } @hosts) ]) ],
+			&ui_select("oldhost", $hosts[0]->[0], \@opts) ],
 		      [ 0, $text{'transfer_host0'},
 			$hfield ] ]));
 	}
@@ -73,9 +77,13 @@ else {
 	print &ui_table_row($text{'transfer_host'}, $hfield);
 	}
 
+# Root login
+print &ui_table_row($text{'transfer_user'},
+	&ui_textbox("hostuser", "root", 20));
+
 # Root password
 print &ui_table_row($text{'transfer_pass'},
-	&ui_password("hostpass", undef, 20)." ".
+	&ui_password("hostpass", undef, 20)." &nbsp;".
 	$text{'transfer_passdef'});
 
 # Delete from source

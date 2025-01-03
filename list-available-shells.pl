@@ -9,6 +9,9 @@ by domain owners and mailbox users. To limit it to just domain owners,
 the C<--owner> flag can be given. Or to show only shells designated for use
 by mailboxes, add C<--mailbox> to the command line.
 
+To filter to only shells available for selection in the Virtualmin UI, add
+the C<--available> flag.
+
 To get a more parsable format with full details for each shell, use the
 C<--multiline> parameter. Or to only output shell paths, use C<--name-only>.
 
@@ -31,12 +34,10 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--owner") {
+	if ($a eq "--owner") {
 		$type = "owner";
 		}
 	elsif ($a eq "--mailbox") {
@@ -45,11 +46,8 @@ while(@ARGV > 0) {
 	elsif ($a eq "--reseller") {
 		$type = "reseller";
 		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
+	elsif ($a eq "--available") {
+		$avail = 1;
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -61,8 +59,11 @@ while(@ARGV > 0) {
 if ($type) {
 	@shells = grep { $_->{$type} } @shells;
 	}
+if ($avail) {
+	@shells = grep { $_->{'avail'} } @shells;
+	}
 
-if ($multi) {
+if ($multiline) {
 	# Show full details
 	foreach $shell (@shells) {
 		print $shell->{'shell'},"\n";
@@ -106,8 +107,10 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the shells available for mailboxes and domain administrators.\n";
 print "\n";
-print "virtualmin list-available-shells [--multiline]\n";
+print "virtualmin list-available-shells [--multiline | --json | --xml |\n";
+print "                                  --name-only]\n";
 print "                                 [--owner | --mailbox | --reseller]\n";
+print "                                 [--available]\n";
 exit(1);
 }
 

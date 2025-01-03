@@ -119,9 +119,10 @@ sub valid_domain_name
 {
 my ($name) = @_;
 $name =~ /^\*\./ && return $text{'setup_edomainstar'};
-$name =~ /^[A-Za-z0-9\.\-]+$/ || return $text{'setup_edomain'};
+$name =~ /^[A-Za-z0-9\.\-_]+$/ || return $text{'setup_edomain'};
 $name =~ /^\./ && return $text{'setup_edomain2'};
 $name =~ /\.$/ && return $text{'setup_edomain2'};
+$name =~ /\.\./ && return $text{'setup_edomain3'};
 if ($name =~ /^(www)\./i) {
 	return &text('setup_edomainprefix', "$1");
 	}

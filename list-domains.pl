@@ -71,26 +71,14 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "list-domains.pl must be run as root";
 	}
-&require_mail();
 
 # Parse command-line args
 $owner = 1;
 @allplans = &list_plans();
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--simple-multiline") {
-		$multi = 2;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--id-only") {
-		$idonly = 1;
-		}
-	elsif ($a eq "--user-only") {
+	if ($a eq "--user-only") {
 		$useronly = 1;
 		}
 	elsif ($a eq "--home-only") {
@@ -189,9 +177,6 @@ while(@ARGV > 0) {
 		$ip = shift(@ARGV);
 		&check_ipaddress($ip) || &check_ip6address($ip) ||
 		    &usage("--ip must be followed by an IPv4 or v6 address");
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -301,14 +286,17 @@ if ($ip) {
 		       $_->{'ip6'} eq $ip } @doms;
 	}
 
-if ($multi) {
+if ($multiline) {
 	# Show attributes on multiple lines
 	@shells = grep { $_->{'owner'} } &list_available_shells();
 	$resok = defined(&supports_resource_limits) &&
 		 &supports_resource_limits();
 	@tmpls = &list_templates();
 	@fplugins = &list_feature_plugins();
-	if ($multi == 1) {
+	if (defined(&list_acme_providers)) {
+		%acmes = map { $_->{'id'}, $_ } &list_acme_providers();
+		}
+	if ($multiline == 1) {
 		$hs = &quota_bsize("home");
 		$ms = &quota_bsize("mail");
 		$sender_bcc = &get_all_domains_sender_bcc();
@@ -389,13 +377,17 @@ if ($multi) {
 				print "    Password for ${f}: $p\n";
 				}
 			}
-		if ($d->{'mysql'} && $d->{'mysql_module'} ne 'mysql') {
+		if ($d->{'mysql'}) {
 			my $host = &get_database_host_mysql($d);
 			print "    Hostname for mysql: $host\n";
+			my $port = &get_database_port_mysql($d);
+			print "    Port for mysql: $port\n";
 			}
-		if ($d->{'postgres'} && $d->{'postgres_module'} ne 'postgresql') {
+		if ($d->{'postgres'}) {
 			my $host = &get_database_host_postgres($d);
 			print "    Hostname for postgres: $host\n";
+			my $port = &get_database_port_postgres($d);
+			print "    Port for postgres: $port\n";
 			}
 		print "    Home directory: $d->{'home'}\n";
 		if (!$d->{'parent'} && ($jail = &get_domain_jailkit($d))) {
@@ -420,6 +412,8 @@ if ($multi) {
 				  "For exceeding bandwidth limit" :
 				$d->{'disabled_reason'} eq 'transfer' ?
 				  "Transferred to another system" :
+				$d->{'disabled_reason'} eq 'schedule' ?
+				  "Manually configured schedule" :
 				$d->{'disabled_why'} ?
 				  "Manually ($d->{'disabled_why'})" :
 				  "Manually";
@@ -429,8 +423,12 @@ if ($multi) {
 				      &make_date($d->{'disabled_time'}),"\n";
 				}
 			}
+		elsif ($d->{'disabled_auto'}) {
+			print "    Disable scheduled on: ",
+			      &make_date($d->{'disabled_auto'}),"\n";
+			}
 		if ($d->{'virt'}) {
-			if ($multi == 2) {
+			if ($multiline == 2) {
 				print "    IP address: $d->{'ip'} (Private)\n";
 				}
 			else {
@@ -443,7 +441,7 @@ if ($multi) {
 			print "    IP address: $d->{'ip'} (Shared)\n";
 			}
 		if ($d->{'virt6'}) {
-			if ($multi == 2) {
+			if ($multiline == 2) {
 				print "    IP address: $d->{'ip6'} (Private)\n";
 				}
 			else {
@@ -472,7 +470,7 @@ if ($multi) {
 			      &quota_show($d->{'quota'}, "home"),"\n";
 			print "    Server block quota: ",
 			      ($d->{'quota'} || "Unlimited"),"\n";
-			if ($multi == 1) {
+			if ($multiline == 1) {
 				($qhome, $qmail) = &get_domain_quota($d);
 				print "    Server quota used: ",
 				      &nice_size($qhome*$hs + $qmail*$ms),"\n";
@@ -485,7 +483,7 @@ if ($multi) {
 			      &quota_show($d->{'uquota'}, "home"),"\n";
 			print "    User block quota: ",
 			      ($d->{'uquota'} || "Unlimited"),"\n";
-			if ($multi == 1) {
+			if ($multiline == 1) {
 				print "    User quota used: ",
 				      &nice_size($duser->{'uquota'}*$hs +
 						 $duser->{'umquota'}*$ms),"\n";
@@ -497,7 +495,7 @@ if ($multi) {
 				       $duser->{'umquota'}*$ms),"\n";
 				}
 			}
-		if ($multi == 1) {
+		if ($multiline == 1) {
 			@dbs = &domain_databases($d);
 			if (@dbs) {
 				$dbquota = &get_database_usage($d);
@@ -534,7 +532,7 @@ if ($multi) {
 			}
 
 		# Show spam and virus delivery
-		if ($multi == 1) {
+		if ($multiline == 1) {
 			foreach $w ('spam', 'virus') {
 				next if (!$config{$w} || !$d->{$w});
 				$func = "get_domain_${w}_delivery";
@@ -557,13 +555,13 @@ if ($multi) {
 			}
 
 		# Show spam filtering client
-		if ($config{'spam'} && $d->{'spam'} && $multi == 1) {
+		if ($config{'spam'} && $d->{'spam'} && $multiline == 1) {
 			$c = &get_domain_spam_client($d);
 			print "    SpamAssassin client: $c\n";
 			}
 
 		# Show spam clearing setting
-		if ($config{'spam'} && $d->{'spam'} && $multi == 1) {
+		if ($config{'spam'} && $d->{'spam'} && $multiline == 1) {
 			$auto = &get_domain_spam_autoclear($d);
 			print "    Spam clearing policy: ",
 			  ($auto->{'days'} ? "$auto->{'days'} days" :
@@ -577,20 +575,14 @@ if ($multi) {
 
 		# Show PHP and suexec execution mode
 		my $p = &domain_has_website($d);
-		my $showphp = !$d->{'alias'} && $p && $multi == 1;
+		my $showphp = !$d->{'alias'} && $p && $multiline == 1;
 		if ($showphp) {
-			$p = &get_domain_php_mode($d);
-			print "    PHP execution mode: $p\n";
+			$pm = &get_domain_php_mode($d);
+			print "    PHP execution mode: $pm\n";
 			@modes = &supported_php_modes($d);
 			print "    Possible PHP execution modes: ",
 				join(" ", @modes),"\n";
-			$s = &get_domain_suexec($d);
-			print "    suEXEC for CGIs: ",
-			      ($s ? "enabled" : "disabled"),"\n";
-			if ($d->{'fcgiwrap_port'}) {
-				print "    FCGIwrap port for CGIs: ",$d->{'fcgiwrap_port'},"\n";
-				}
-			if ($p eq "fpm") {
+			if ($pm eq "fpm") {
 				($ok, $port) = &get_domain_php_fpm_port($d);
 				if ($ok >= 0) {
 					$msg = $ok == 2 ? "File $port" :
@@ -603,8 +595,17 @@ if ($multi) {
 					print "    PHP FPM config file: $cfile\n";
 					}
 				}
+			$s = &get_domain_cgi_mode($d);
+			print "    CGI script execution mode: ",
+				($s || "disabled"),"\n";
+			if ($d->{'fcgiwrap_port'} && $d->{'web'}) {
+				print "    FCGIwrap port for CGIs: ",$d->{'fcgiwrap_port'},"\n";
+				}
+			@cgimodes = &has_cgi_support($d);
+			print "    Possible CGI script execution modes: ",
+				join(" ", @cgimodes),"\n";
 			}
-		elsif (!$d->{'alias'} && $multi == 2 && $d->{'php_mode'}) {
+		elsif (!$d->{'alias'} && $multiline == 2 && $d->{'php_mode'}) {
 			print "    PHP execution mode: $d->{'php_mode'}\n";
 			}
 		if ($showphp &&
@@ -679,7 +680,7 @@ if ($multi) {
 			}
 
 		# Show default website flag
-		if (&domain_has_website($d) && $multi == 1 &&
+		if (&domain_has_website($d) && $multiline == 1 &&
 		    (!$d->{'alias'} || $d->{'alias_mode'} != 1)) {
 			print "    Default website for IP: ",
 				(&is_default_website($d) ? "Yes" : "No"),"\n";
@@ -706,7 +707,7 @@ if ($multi) {
 		if ($same) {
 			print "    SSL shared with: $same->{'dom'}\n";
 			}
-		if ($multi == 1) {
+		if ($multiline == 1) {
 			@sslhn = &get_hostnames_for_ssl($d);
 			print "    SSL candidate hostnames: ",
 				join(" ", @sslhn),"\n";
@@ -716,21 +717,40 @@ if ($multi) {
 			print "    SSL cert expiry time: ",$exp,"\n";
 			}
 		if ($d->{'letsencrypt_renew'} || $d->{'letsencrypt_last'}) {
-			print "    Lets Encrypt renewal: ",
+			print "    SSL provider renewal: ",
 			    ($d->{'letsencrypt_renew'} ? "Enabled"
 						       : "Disabled"),"\n";
+			print "    SSL provider email: ",
+			    ($d->{'letsencrypt_email'} == 0 ? "Always" :
+			     $d->{'letsencrypt_email'} == 1 ? "On error" :
+							      "Never"),"\n";
 			}
 		if ($d->{'letsencrypt_last'}) {
-			print "    Lets Encrypt cert issued: ",
+			print "    SSL provider cert issued: ",
 			    &make_date($d->{'letsencrypt_last'}),"\n";
 			}
 		if ($d->{'letsencrypt_dname'}) {
-			print "    Lets Encrypt domain: ",
+			print "    SSL provider domain: ",
 			    $d->{'letsencrypt_dname'},"\n";
+			}
+		if (defined($d->{'letsencrypt_nodnscheck'})) {
+			print "    SSL provider DNS check: ",
+			    ($d->{'letsencrypt_nodnscheck'} ? "Skip" : "Filter"),"\n";
+			}
+		if (defined($d->{'letsencrypt_subset'})) {
+			print "    SSL provider subset mode: ",
+			    ($d->{'letsencrypt_subset'} ? "Yes" : "No"),"\n";
+			}
+		if ($d->{'letsencrypt_id'} && %acmes) {
+			my $acme = $acmes{$d->{'letsencrypt_id'}};
+			print "    SSL provider ID: ",
+			      $d->{'letsencrypt_id'},"\n";
+			print "    SSL provider type: ",
+			      ($acme->{'type'} || $acme->{'url'}),"\n";
 			}
 
 		# Show SSL cert usage by other services
-		if ($multi == 1) {
+		if ($multiline == 1) {
 			foreach my $svc (&get_all_domain_service_ssl_certs($d)) {
 				print "    SSL cert used by: ",
 				      $svc->{'id'},
@@ -759,13 +779,21 @@ if ($multi) {
 
 		# Show DNS SPF mode
 		if ($config{'dns'} && $d->{'dns'} && !$d->{'dns_submode'} &&
-		    $multi == 1) {
+		    $multiline == 1) {
 			$spf = &is_domain_spf_enabled($d);
 			print "    SPF DNS record: ",
 			      ($spf ? "Enabled" : "Disabled"),"\n";
 			$dmarc = &is_domain_dmarc_enabled($d);
 			print "    DMARC DNS record: ",
 			      ($dmarc ? "Enabled" : "Disabled"),"\n";
+			}
+
+		# Show DKIM setting
+		if ($d->{'dkim_enabled'} eq '1') {
+			print "    DKIM enabled: Yes\n";
+			}
+		elsif ($d->{'dkim_enabled'} eq '0') {
+			print "    DKIM enabled: No\n";
 			}
 
 		# Slave DNS servers
@@ -778,6 +806,12 @@ if ($multi) {
 		if ($d->{'dns_submode'}) {
 			$dnsparent = &get_domain($d->{'dns_subof'});
 			print "    Parent DNS virtual server: ",$dnsparent->{'dom'},"\n";
+			}
+
+		# Alias domain mode
+		if ($d->{'alias'}) {
+			print "    Alias has own DNS records: ",
+				($d->{'aliasdns'} ? "Yes" : "No"),"\n";
 			}
 
 		# DNS registrar expiry date
@@ -797,7 +831,7 @@ if ($multi) {
 			}
 
 		# Show cloud mail setting
-		if ($config{'mail'} && $d->{'mail'} && $multi == 1) {
+		if ($config{'mail'} && $d->{'mail'} && $multiline == 1) {
 			if ($d->{'cloud_mail_provider'}) {
 				print "    Cloud mail filter: ",
 				      $d->{'cloud_mail_provider'},"\n";
@@ -874,7 +908,7 @@ if ($multi) {
 			}
 
 		# Show resource limits
-		if (!$d->{'parent'} && $resok && $multi == 1) {
+		if (!$d->{'parent'} && $resok && $multiline == 1) {
 			$rv = &get_domain_resource_limits($d);
 			print "    Maximum processes: ",
 				$rv->{'procs'} || "Unlimited","\n";
@@ -897,7 +931,7 @@ if ($multi) {
 			}
 
 		# Show allowed DB hosts
-		if (!$d->{'parent'} && $multi == 1) {
+		if (!$d->{'parent'} && $multiline == 1) {
 			foreach $f (grep { $config{$_} &&
 					   $d->{$_} } @database_features) {
 				$gfunc = "get_".$f."_allowed_hosts";
@@ -906,6 +940,19 @@ if ($multi) {
 					print "    Allowed $f hosts: ",
 					      join(" ", @hosts),"\n";
 					}
+				}
+			}
+		
+		# Last login
+		if ($config{'show_domains_lastlogin'}) {
+			if ($d->{'last_login_timestamp'}) {
+				print "    Last login: ",
+				  &make_date($d->{'last_login_timestamp'}),"\n";
+				print "    Last login time: ",
+				  $d->{'last_login_timestamp'},"\n";
+				}
+			else {
+				print "    Last login: Never\n";
 				}
 			}
 		}
@@ -967,8 +1014,9 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists the virtual servers on this system.\n";
 print "\n";
-print "virtualmin list-domains [--multiline | --name-only | --id-only |\n";
-print "                         --simple-multiline | --user-only |\n";
+print "virtualmin list-domains [--multiline | --simple-multiline |\n";
+print "                         --json | --xml]\n";
+print "                        [--name-only | --id-only | --user-only |\n";
 print "                         --home-only | --file-only | --ip-only]\n";
 print "                        [--domain name]*\n";
 print "                        [--user name]*\n";

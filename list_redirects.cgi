@@ -11,6 +11,7 @@ $d = &get_domain($in{'dom'});
 
 # Build table data
 @redirects = map { &remove_wellknown_redirect($_) } &list_redirects($d);
+$canhost = &has_web_host_redirects($d);
 foreach $r (@redirects) {
 	my @protos;
 	push(@protos, "HTTP") if ($r->{'http'});
@@ -20,14 +21,23 @@ foreach $r (@redirects) {
 	    $dest =~ /^(http|https):\/\/%\{HTTP_HOST\}(\/.*)$/) {
 		$dest = &text('redirects_with', "$2", uc($1));
 		}
+	my $iswebmail = &is_webmail_redirect($d, $r);
+	my $iswww = &is_www_redirect($d, $r);
+	my $canedit = !$iswebmail && !$iswww;
 	push(@table, [
 		{ 'type' => 'checkbox', 'name' => 'd',
-		  'value' => $r->{'id'} },
-		"<a href='edit_redirect.cgi?dom=$in{'dom'}&".
-		  "id=$r->{'id'}'>$r->{'path'}</a>",
+		  'value' => $r->{'id'}, 'disabled' => !$canedit },
+		$canedit ? 
+			&ui_link("edit_redirect.cgi?dom=$in{'dom'}&".
+				 "id=$r->{'id'}", $r->{'path'}) :
+			$r->{'path'},
+		$iswebmail == 2 ? $text{'redirects_webmin'} :
+		$iswebmail == 1 ? $text{'redirects_usermin'} :
+		$iswww ? $text{'redirects_canon'} :
 		$r->{'alias'} ? $text{'redirects_alias'}
 			      : $text{'redirects_redirect'},
 		join(", ", @protos),
+		$canhost ? ( $r->{'host'} || $text{'redirects_any'} ) : ( ),
 		$dest,
 		]);
 	}
@@ -43,6 +53,7 @@ print &ui_form_columns_table(
 	[ "", $text{'redirects_path'},
           $text{'redirects_type'},
           $text{'redirects_protos'},
+	  $canhost ? ( $text{'redirects_host'} ) : ( ),
           $text{'redirects_dest'},
 	],
 	100,

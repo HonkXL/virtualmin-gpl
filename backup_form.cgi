@@ -59,7 +59,8 @@ else {
 if ($cbmode == 3 && $sched && ($in{'sched'} || $in{'oneoff'})) {
 	# If this backup is to a domain's directory but the current
 	# user is a reseller, use that domain
-	($mode) = &parse_backup_url($sched->{'dest'});
+	my @dests = &get_scheduled_backup_dests($sched);
+	($mode) = &parse_backup_url($dests[0]);
 	if ($mode == 0) {
 		$d = &get_domain($sched->{'owner'});
 		}
@@ -73,7 +74,9 @@ $sched ||= { 'all' => 1,
 	     'onebyone' => 1,
 	     'strftime' => 1,
 	     'email' => $cbmode == 2 ? $d->{'emailto'} :
-			$cbmode == 3 ? $access{'email'} : undef };
+			$cbmode == 3 ? $access{'email'} :
+				       $gconfig{'webmin_email_to'},
+	   };
 @tds = ( "width=30% ");
 
 print &ui_hidden_table_start($text{'backup_headerdoms'}, "width=100%",
@@ -110,7 +113,8 @@ if (&can_edit_plans()) {
 			  [ [ 1, $text{'backup_anyplan'} ],
 			    [ 0, $text{'backup_selplan'} ] ])."<br>\n".
 		&ui_select("plan", [ split(/\s+/, $sched->{'plan'}) ],
-			   [ map { [ $_->{'id'}, &html_escape($_->{'name'}) ] } @plans ],
+			   [ map { [ $_->{'id'}, &html_escape($_->{'name'}) ] }
+				 @plans ],
 			   5, 1));
 	}
 
@@ -174,6 +178,11 @@ foreach $f (&list_backup_plugins()) {
 	}
 print &ui_table_row(&hlink($text{'backup_features'}, "backup_features"),
 		    $ftable);
+print &ui_hidden_table_end("features");
+
+# Show global features and plugins boxes
+print &ui_hidden_table_start($text{'backup_headerfeatures2'}, "width=100%", 2,
+			     "features2", 0, \@tds);
 
 # Show virtualmin object backup options
 if (&can_backup_virtualmin()) {
@@ -197,7 +206,7 @@ print &ui_table_row(&hlink($text{'backup_exclude'}, 'backup_exclude'),
 	&ui_checkbox("include", 1, $text{'backup_include'},
 		     $sched->{'include'}));
 
-print &ui_hidden_table_end("features");
+print &ui_hidden_table_end("features2");
 
 # Build destination field inputs
 if ($in{'sched'} || $in{'new'} || $in{'oneoff'}) {
@@ -268,58 +277,12 @@ if (@allkeys) {
 	}
 
 # Single/multiple file mode
-my $fmt_script = <<EOF;
-<script>
-(function () {
-	try {
-		let extension;
-		const modes = document.querySelectorAll('[name="fmt"]'),
-			compressions = document.querySelectorAll('[name="compression"]'),
-			inputFields = document.querySelectorAll('[name\$="path"], [name\$="file"]'),
-			strfTime = document.querySelectorAll('[name="strftime"]'),
-			strfTimeFn = function() { return strfTime && strfTime[0] && strfTime[0].checked },
-			modes_check = function() {
-				Array.from(modes).find(radio => radio.checked).dispatchEvent(new Event('input'));
-			},
-			compressions_check = function() {
-				Array.from(compressions).find(radio => radio.checked).dispatchEvent(new Event('input'));
-			};
-		modes.forEach(function(radio) {
-			radio.addEventListener('input', function() {
-				const placeholdertype = this.value,
-					filename = strfTimeFn() ? 'domains-%Y-%m-%d-%H-%M' : 'domains';
-					inputFields.forEach(function(input) {
-					if (placeholdertype == '0') {
-						input.placeholder = \`e.g. /backups/\$\{filename\}.\$\{extension\}\`;
-					} else {
-						const backupPlaceHolder = strfTimeFn() ? 'backups/backup-%Y-%m-%d' : 'backups';
-						input.placeholder = \`e.g. /\$\{backupPlaceHolder\}/\`;
-					}
-				});
-			});
-		});
-		(strfTime && strfTime[0]) && strfTime[0].addEventListener('input', modes_check);
-		compressions.forEach(function(compression) {
-			compression.addEventListener('input', function() {
-				const v = parseInt(this.value || $config{'compression'}),
-					a = {3: 'zip', 2: 'tar', 1: 'tar.bz2', 0: 'tar.gz'};
-				extension = a[v];
-				modes_check();
-			});
-		});
-		compressions_check();
-		modes_check();
-	} catch(e) {}
-})();
-</script>
-EOF
-
 print &ui_table_row(&hlink($text{'backup_fmt'}, "backup_fmt"),
 	&ui_radio("fmt", int($sched->{'fmt'}),
 		  [ [ 0, $text{'backup_fmt0'} ],
 		    $sched->{'fmt'} == 1 ?
 			( [ 1, $text{'backup_fmt1'} ] ) : ( ),
-		    [ 2, $text{'backup_fmt2'} ] ])."$fmt_script<br>".
+		    [ 2, $text{'backup_fmt2'} ] ])."<br>\n".
 	&ui_checkbox("mkdir", 1, $text{'backup_mkdir'},
 		     int($sched->{'mkdir'})));
 
@@ -344,9 +307,11 @@ print &ui_table_row(
 		    [ 0, $text{'backup_compression0'} ],
 		    [ 1, $text{'backup_compression1'} ],
 		    [ 2, $text{'backup_compression2'} ],
-		    [ 3, $text{'backup_compression3'} ] ]));
+		    [ 3, $text{'backup_compression3'} ],
+		    [ 4, $text{'backup_compression4'} ],
+		  ]));
 
-# Show incremental option
+# Show differential option
 if (&has_incremental_tar()) {
 	print &ui_table_row(
 		&hlink($text{'backup_increment'}, "backup_increment"),
@@ -377,7 +342,7 @@ if ($in{'sched'} || $in{'new'}) {
 
 	# Email input
 	print &ui_table_row(&hlink($text{'backup_email'}, "backup_email"),
-			    &ui_textbox("email", $sched->{'email'}, 40).
+			    &ui_textbox("email", $sched->{'email'}, 70).
 			    "<br>\n".
 			    &ui_checkbox("email_err", 1,
 					 $text{'backup_email_err'},
@@ -438,6 +403,7 @@ else {
 					   : ( ) ]);
 	}
 
+print &backup_fmt_javascript();
 &ui_print_footer(
 	$in{'sched'} || $in{'new'} ?
 		( "list_sched.cgi", $text{'sched_return'} ) : ( ),

@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 $d = &get_domain($in{'dom'});
 &can_edit_limits($d) || &error($text{'edit_ecannot'});
 
@@ -90,21 +91,62 @@ if (defined($in{'shell'})) {
 # Update jail
 if (!&check_jailkit_support()) {
 	my $oldjail = &get_domain_jailkit($d);
+	my $jailfeat = $virtualmin_pro;
 	my $jailupd;
+	my $jail_post_clean_enabled;
+	my $jail_post_clean_disabled;
+	my $jail_clean = $jailfeat && $in{'jail_clean'};
+	$d->{'jail_esects'} = !$jailfeat ? undef : $in{'jail_esects'};
+	$d->{'jail_ecmds'} = !$jailfeat ? undef : $in{'jail_ecmds'};
+
+	# Clear chroot first
+	if ($jail_clean) {
+		# Disable jail
+		if ($oldjail) {
+			$err = &disable_domain_jailkit($d);
+			&error(&text('limits_ejailoff2', $err)) if ($err);
+			$jail_post_clean_disabled = 1;
+			}
+
+		# Clean all previously copied files
+		my $dom_chdir = &domain_jailkit_dir($d);
+		if (-d $dom_chdir && $dom_chdir =~ /^\/.*?([\d]{6,})$/ &&
+		    $1 eq $d->{'id'}) {
+			opendir(my $dh, $dom_chdir) ||
+			    &error(&text('limits_eopenchroot', $dom_chdir, $!));
+			while (my $dir = readdir($dh)) {
+				next if ($dir eq '.' || $dir eq '..' ||
+					 $dir eq "home");
+				# Remove recursively
+				&unlink_file("$dom_chdir/$dir")
+				}
+			closedir($dh);
+			}
+		# Re-enable jail
+		if ($in{'jail'}) {
+			$err = &enable_domain_jailkit($d);
+			&error(&text('limits_ejailon2', $err)) if ($err);
+			$jail_post_clean_enabled = 1;
+			}
+		}
 	if ($in{'jail'}) {
 		# Setup or re-sync jail for this user
-		$err = &enable_domain_jailkit($d);
-		&error(&text('limits_ejailon', $err)) if ($err);
-		if (!$err) {
+		if (!$jail_post_clean_enabled) {
+			$err = &enable_domain_jailkit($d);
+			&error(&text('limits_ejailon', $err)) if ($err);
+			}
+		if (!$err || $jail_post_clean_enabled) {
 			$d->{'jail'} = 1;
 			$jailupd++
 			}
 		}
 	elsif ($oldjail && !$in{'jail'}) {
 		# Tear down jail for this user
-		$err = &disable_domain_jailkit($d);
-		&error(&text('limits_ejailoff', $err)) if ($err);
-		if (!$err) {
+		if (!$jail_post_clean_disabled) {
+			$err = &disable_domain_jailkit($d);
+			&error(&text('limits_ejailoff', $err)) if ($err);
+			}
+		if (!$err || $jail_post_clean_disabled) {
 			$d->{'jail'} = 0;
 			$jailupd++;
 			}
@@ -115,7 +157,7 @@ if (!&check_jailkit_support()) {
 	if ($jailupd) {
 		&modify_webmin($d, $d);
 		foreach my $dbt ('mysql', 'psql') {
-			&update_all_installed_scripts_database_credentials($d, $d, 'dbhost', undef, $dbt);
+			&update_scripts_creds($d, $d, 'dbhost', undef, $dbt);
 			}
 		}
 	}

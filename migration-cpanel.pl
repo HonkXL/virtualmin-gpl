@@ -5,12 +5,20 @@
 sub migration_cpanel_validate
 {
 local ($file, $dom, $user, $parent, $prefix, $pass) = @_;
+
+# Password is needed for cPanel migrations
+if (!$parent && !$pass) {
+	return ("A password must be supplied for cPanel migrations");
+	}
+
+# Extract the backup and find paths inside it
 local ($ok, $root) = &extract_cpanel_dir($file);
 $ok || return ("Not a cPanel tar.gz file : $root");
 local $daily = glob("$root/backup*/cpbackup/daily");
 local ($homedir) = glob("$root/*/homedir");
 $homedir = "$root/homedir" if (!-d $homedir);
 local $datastore = "$root/.cpanel-datastore";
+$datastore = "$root/.cpanel/datastore" if (!-d $datastore);
 -d $daily || -d $homedir || -d $datastore ||
 	return ("Not a cPanel daily or home directory backup file");
 
@@ -96,26 +104,22 @@ else {
 	$user || return ("Username must be supplied for this type of cPanel backup");
 	}
 
-# Password is needed for cPanel migrations
-if (!$parent && !$pass) {
-	return ("A password must be supplied for cPanel migrations");
-	}
-
 return (undef, $dom, $user, $pass);
 }
 
 # migration_cpanel_migrate(file, domain, username, create-webmin, template-id,
-#			   &ipinfo, pass, [&parent], [prefix], [email])
+#			   &ipinfo, pass, [&parent], [prefix], [email], [&plan])
 # Actually extract the given cPanel backup, and return the list of domains
 # created.
 sub migration_cpanel_migrate
 {
 local ($file, $dom, $user, $webmin, $template, $ipinfo, $pass, $parent,
-       $prefix, $email) = @_;
+       $prefix, $email, $plan) = @_;
 local ($ok, $root) = &extract_cpanel_dir($file);
 $ok || &error("Failed to extract backup : $root");
 local $daily = glob("$root/backup*/cpbackup/daily");
 local $datastore = "$root/.cpanel-datastore";
+$datastore = "$root/.cpanel/datastore" if (!-d $datastore);
 local $tmpl = &get_template($template);
 
 # Check for prefix clash
@@ -198,6 +202,9 @@ else {
 	if (-d "$homesrc/.cpanel/datastore") {
 		$datastore = "$homesrc/.cpanel/datastore";
 		}
+	}
+if (&indexof("mail", @got) >= 0 && -e "$homedir/.spamassassinenable") {
+	push(@got, "spam");
 	}
 
 # Work out if the original domain was a sub-server in cPanel
@@ -325,7 +332,8 @@ elsif (-r "$datastore/quota_-v") {
 # Create the virtual server object
 local %dom;
 $prefix ||= &compute_prefix($dom, $group, $parent, 1);
-local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
+$plan = $parent ? &get_plan($parent->{'plan'}) :
+        $plan ? $plan : &get_default_plan();
 %dom = ( 'id', &domain_id(),
 	 'dom', $dom,
          'user', $duser,
@@ -336,7 +344,7 @@ local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
          'ugid', $ugid,
          'owner', "Migrated cPanel server $dom",
          'email', $email ? $email : $parent ? $parent->{'email'} : undef,
-	 'dns_ip', $ipinfo->{'virt'} || $config{'all_namevirtual'} ? undef :
+	 'dns_ip', $ipinfo->{'virt'} ? undef :
 		   &get_dns_ip($parent ? $parent->{'id'} : undef),
 	 $parent ? ( 'pass', $parent->{'pass'} )
 		 : ( 'pass', $pass ),
@@ -440,7 +448,7 @@ else {
 	}
 local @rvdoms = ( \%dom );
 
-# Extra homedir.tar if needed
+# Extract homedir.tar if needed
 local $hometar = "$userdir/homedir.tar";
 if (-r $hometar) {
 	&$first_print("Extracting home directory TAR file ..");
@@ -457,6 +465,7 @@ if (-r $hometar) {
 	else {
 		&$second_print(".. done");
 		}
+	&set_home_ownership(\%dom);
 	}
 
 # Migrate Apache configuration
@@ -523,49 +532,7 @@ if ($got{&domain_has_ssl()}) {
 	}
 
 # Migrate DNS domain
-if ($got{'dns'} && -d $daily) {
-	&$first_print("Copying and fixing DNS records ..");
-	&require_bind();
-	local ($ok, $named) = &extract_cpanel_dir(
-				"$daily/dirs/_var_named.tar.gz");
-	local $zsrcfile = &bind8::find_value("file", $zone->{'members'});
-	if (-r "$named/$zsrcfile") {
-		&execute_command("cp ".quotemeta("$named/$zsrcfile")." ".
-			     quotemeta(&bind8::make_chroot($zdstfile)));
-		local ($recs, $zdstfile) =
-			&get_domain_dns_records_and_file(\%dom);
-		foreach my $r (@$recs) {
-			my $change = 0;
-			if (($r->{'name'} eq $dom."." ||
-			     $r->{'name'} eq "www.".$dom."." ||
-			     $r->{'name'} eq "ftp.".$dom."." ||
-			     $r->{'name'} eq "mail.".$dom.".") &&
-			    $r->{'type'} eq 'A') {
-				# Fix IP in domain record
-				$r->{'values'} = [ $dom{'ip'} ];
-				$change++;
-				}
-			elsif ($r->{'name'} eq $dom."." &&
-			       $r->{'type'} eq 'NS') {
-				# Set NS record to this server
-				local $master = $bconfig{'default_prins'} ||
-						&get_system_hostname();
-				$master .= "." if ($master !~ /\.$/);
-				$r->{'values'} = [ $master ];
-				$change++;
-				}
-			if ($change) {
-				&modify_dns_record($recs, $zdstfile, $r);
-				}
-			}
-		&post_records_change(\%dom, $recs, $zdstfile);
-		&$second_print(".. done");
-		&register_post_action(\&restart_bind);
-		}
-	else {
-		&$second_print(".. could not find records file in backup!");
-		}
-	}
+&cpanel_migrate_dns_zone(\%dom, $dom);
 
 local $out;
 local $ht = &public_html_dir(\%dom);
@@ -601,6 +568,7 @@ if ($?) {
 else {
 	&$second_print(".. done");
 	}
+&set_home_ownership(\%dom);
 
 # If php.ini is migrated wrong, fix it
 if ($dom{'web'}) {
@@ -759,7 +727,7 @@ if ($got{'mail'}) {
 				local $uinfo = $useremail{$name};
 				local $olduinfo = { %$uinfo };
 				local $touser = $uinfo->{'user'};
-				if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
+				if ($mail_system == 0 && $escuser =~ /\@/) {
 					$touser = &escape_replace_atsign_if_exists($touser);
 					}
 				$touser = "\\".$touser;
@@ -783,6 +751,15 @@ if ($got{'mail'}) {
 		}
 	close(VA);
 	&$second_print(".. done (migrated $acount aliases)");
+	}
+
+if ($got{'spam'}) {
+	# Migrate spam preferences
+	my $up = &read_file_contents("$homedir/.spamassassin/user_prefs");
+	my $spamdir = "$spam_config_dir/$dom{'id'}";
+	&open_tempfile(SPAMFILE, ">>$spamdir/virtualmin.cf");
+	&print_tempfile(SPAMFILE, $up);
+	&close_tempfile(SPAMFILE);
 	}
 
 # Create mailing lists
@@ -929,8 +906,7 @@ if ($got{'mysql'}) {
 if ($got{'ftp'}) {
 	&$first_print("Modifying FTP server configuration ..");
 	&require_proftpd();
-	local $conf = &proftpd::get_config();
-	local ($fvirt, $fconf, $anon, $aconf) =
+	local ($fvirt, $fconf, $conf, $anon, $aconf) =
 		&get_proftpd_virtual($ipinfo->{'ip'});
 	if ($anon) {
 		local $lref = &read_file_lines($anon->{'file'});
@@ -955,6 +931,7 @@ if (-r "$userdir/proftpdpasswd" && !$waschild) {
 		s/^\s*#.*$//;
 		local ($fuser, $fpass, $fuid, $fgid, $fdummy, $fhome, $fshell) = split(/:/, $_);
 		next if (!$fuser);
+		$fuser = &remove_userdom($fuser, \%dom);
 		next if ($fuser eq "ftp" || $fuser eq $user ||
 			 $fuser eq $user."_logs");	# skip cpanel users
 		local $fullfuser = &userdom_name(lc($fuser), \%dom);
@@ -973,7 +950,7 @@ if (-r "$userdir/proftpdpasswd" && !$waschild) {
 		else {
 			# Create new FTP-only user
 			local $fuinfo = &create_initial_user(\%dom, 0,
-							     $fhome eq $ht);
+			     $fhome eq $ht || $fhome eq $dom{'home'});
 			$fuinfo->{'user'} = $fullfuser;
 			$fuinfo->{'pass'} = $fpass;
 			if ($fuinfo->{'webowner'}) {
@@ -1054,6 +1031,7 @@ foreach my $pdom (&unique(@parked)) {
 			 'email', $dom{'email'},
 			 'name', 1,
 			 'ip', $dom{'ip'},
+			 'dns_ip', $dom{'dns_ip'},
 			 'virt', 0,
 			 'source', $dom{'source'},
 			 'parent', $dom{'id'},
@@ -1105,7 +1083,6 @@ foreach my $l (@$lref) {
 
 # Create sub-domains again, to catch those for which an addon target exists now
 &create_sub_domains(0);
-
 
 if ($got{'webalizer'}) {
 	# Copy existing Weblizer stats to ~/public_html/stats
@@ -1267,6 +1244,7 @@ foreach my $vf (readdir(VF)) {
 			 'email', $dom{'email'},
 			 'name', 1,
 			 'ip', $target->{'ip'},
+			 'dns_ip', $target->{'dns_ip'},
 			 'virt', 0,
 			 'source', $dom{'source'},
 			 'parent', $dom{'id'},
@@ -1350,6 +1328,7 @@ foreach my $vf (readdir(VF)) {
 				'email', $dom{'email'},
 				'name', 1,
 				'ip', $dom{'ip'},
+				'dns_ip', $dom{'dns_ip'},
 				'virt', 0,
 				'source', $dom{'source'},
 				'parent', $dom{'id'},
@@ -1391,6 +1370,7 @@ foreach my $vf (readdir(VF)) {
 			else {
 				&$second_print(".. done");
 				}
+			&set_home_ownership(\%subs);
 			}
 
 		&$outdent_print();
@@ -1417,6 +1397,7 @@ foreach my $vf (readdir(VF)) {
 				'email', $dom{'email'},
 				'name', 1,
 				'ip', $dom{'ip'},
+				'dns_ip', $dom{'dns_ip'},
 				'virt', 0,
 				'source', $dom{'source'},
 				'parent', $dom{'id'},
@@ -1516,6 +1497,7 @@ while(<PASSWD>) {
 	local ($muser, $mdummy, $muid, $mgid, $mreal, $mdir, $mshell) =
 		split(/:/, $_);
 	next if (!$muser);
+	$muser = &remove_userdom($muser, $d);
 	next if ($muser =~ /_logs$/);		# Special logs user
 	next if ($muser eq $user && !$parent);	# Domain owner
 	local $uinfo = &create_initial_user($d);
@@ -1528,7 +1510,6 @@ while(<PASSWD>) {
 			   lc($muser);
 	$uinfo->{'shell'} = $nologin_shell->{'shell'};
 	$uinfo->{'email'} = lc($muser)."\@$dom";
-	$uinfo->{'qquota'} = $quota{$muser};
 	$uinfo->{'quota'} = $quota{$muser};
 	$uinfo->{'mquota'} = $quota{$muser};
 	&create_user_home($uinfo, $d, 1);
@@ -1713,6 +1694,56 @@ while(<VA>) {
 	}
 close(VA);
 return $acount;
+}
+
+# cpanel_migrate_dns_zone(&domain, dname)
+# Migrate DNS records for a cPanel domain
+sub cpanel_migrate_dns_zone
+{
+my ($d, $dom) = @_;
+my ($zsrc) = glob("$root/backup*/dnszones/$dom.db");
+if (!$zsrc && $d->{'dns'} && -d $daily) {
+	&require_bind();
+	my ($ok, $named) = &extract_cpanel_dir(
+				"$daily/dirs/_var_named.tar.gz");
+	my $zsrcfile = &bind8::find_value("file", $zone->{'members'});
+	if (-r "$named/$zsrcfile") {
+		$zsrc = "$named/$zsrcfile";
+		}
+	}
+if ($zsrc) {
+	&$first_print("Copying and fixing DNS records for $dom ..");
+	my $zdstfile = &get_domain_dns_file_from_bind($d);
+	&copy_source_dest($zsrc, &bind8::make_chroot($zdstfile));
+	my ($recs, $zdstfile) = &get_domain_dns_records_and_file($d, 1);
+	foreach my $r (@$recs) {
+		my $change = 0;
+		if (($r->{'name'} eq $dom."." ||
+		     $r->{'name'} eq "www.".$dom."." ||
+		     $r->{'name'} eq "ftp.".$dom."." ||
+		     $r->{'name'} eq "mail.".$dom.".") &&
+		    $r->{'type'} eq 'A') {
+			# Fix IP in domain record
+			$r->{'values'} = [ $d->{'dns_ip'} || $d->{'ip'} ];
+			$change++;
+			}
+		elsif ($r->{'name'} eq $dom."." &&
+		       $r->{'type'} eq 'NS') {
+			# Set NS record to this server
+			local $master = $bconfig{'default_prins'} ||
+					&get_system_hostname();
+			$master .= "." if ($master !~ /\.$/);
+			$r->{'values'} = [ $master ];
+			$change++;
+			}
+		if ($change) {
+			&modify_dns_record($recs, $zdstfile, $r);
+			}
+		}
+	&post_records_change($d, $recs, $zdstfile);
+	&$second_print(".. done");
+	&register_post_action(\&restart_bind);
+	}
 }
 
 # get_cpanel_db_list(file, user, origuser)

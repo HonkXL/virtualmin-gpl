@@ -8,6 +8,9 @@ This command deletes one redirect from the virtual server identified
 by the C<--domain> flag. The redirect to remove must be identified by the 
 C<--path> parameter.
 
+If there are multiple redirects for the same path but with different hostnames,
+you can select the one to remove with the C<--host> flag.
+
 =cut
 
 package virtual_server;
@@ -25,6 +28,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "delete-redirect.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 
 # Parse command-line args
@@ -36,6 +40,9 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--path") {
 		$path = shift(@ARGV);
+		}
+	elsif ($a eq "--host") {
+		$host = shift(@ARGV);
 		}
 	elsif ($a eq "--multiline") {
 		$multiline = 1;
@@ -57,8 +64,15 @@ $d || usage("Virtual server $domain does not exist");
 # Get the redirect
 &obtain_lock_web($d);
 @redirects = &list_redirects($d);
-($r) = grep { $_->{'path'} eq $path } @redirects;
-$r || &usage("No redirect for the path $path was found");
+@r = grep { $_->{'path'} eq $path } @redirects;
+if ($host) {
+	@r = grep { $_->{'host'} eq $host } @r;
+	}
+@r || &usage("No redirect for path $path".
+	     ($host ? " and host $host" : "")." was found");
+@r > 1 && &usage("Multiple redirects for path $path".
+		 ($host ? " and host $host" : "")." found!");
+$r = $r[0];
 
 # Delete it
 $err = &delete_redirect($d, $r);
@@ -71,7 +85,8 @@ else {
 	&set_all_null_print();
 	&run_post_actions();
 	&virtualmin_api_log(\@OLDARGV, $d);
-	print "Redirect for $path deleted successfully\n";
+	print "Redirect for $path".
+	      ($host ? " and host $host" : "")." deleted successfully\n";
 	}
 
 sub usage
@@ -81,6 +96,7 @@ print "Removes a web redirect or alias from some domain.\n";
 print "\n";
 print "virtualmin delete-redirect --domain domain.name\n";
 print "                           --path url-path\n";
+print "                          [--host hostname]\n";
 exit(1);
 }
 

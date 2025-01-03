@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'phpmode_err2'});
 $d = &get_domain($in{'dom'});
 &can_edit_domain($d) || &error($text{'edit_ecannot'});
@@ -11,6 +12,7 @@ $canv = &can_edit_phpver($d);
 $can || $canv || &error($text{'phpmode_ecannot'});
 &require_apache();
 $p = &domain_has_website($d);
+$p || &error($text{'phpmode_ewebsite'});
 @modes = &supported_php_modes($d);
 $newmode = $in{'mode'};
 $dom_limits = {};
@@ -18,12 +20,20 @@ if (defined(&supports_resource_limits) && &supports_resource_limits()) {
 	$dom_limits = &get_domain_resource_limits($d);
 	}
 if ($can) {
+	# Save sanity check option if set
+	my $nophpsanity_check = $in{'nophpsanity_check'};
+	$d->{'phpnosanity_check'} = $nophpsanity_check;
+
 	# Check for option clashes
 	if (!$d->{'alias'} && $can && !$dom_limits->{'procs'}) {
-		if (defined($in{'children_def'}) && !$in{'children_def'} &&
-		    ($in{'children'} < 1 ||
-		     $in{'children'} > $max_php_fcgid_children)) {
-			&error(&text('phpmode_echildren', $max_php_fcgid_children));
+		if (defined($in{'children_def'}) && !$in{'children_def'}) {
+			if ($in{'children'} < 1) {
+				&error($text{'phpmode_echildren'});
+				}
+			elsif (!$nophpsanity_check &&
+			        $in{'children'} > $max_php_fcgid_children) {
+				&error(&text('phpmode_echildren2', $max_php_fcgid_children));
+				}
 			}
 		}
 	if (!$d->{'alias'}) {
@@ -33,12 +43,11 @@ if ($can) {
 			}
 		}
 
-	# Check for working Apache suexec for PHP
+	# Check for working Apache CGI when PHP scripts are run via CGI
 	if (!$d->{'alias'} && ($newmode eq 'cgi' || $newmode eq 'fcgid') &&
 	    $can && $p eq 'web') {
-		$tmpl = &get_template($d->{'template'});
-		$err = &check_suexec_install($tmpl);
-		&error($err) if ($err);
+		&get_domain_cgi_mode($d) ||
+			&error($text{'phpmode_ecgimode'});
 		}
 	}
 
@@ -78,9 +87,9 @@ if ($can) {
 
 # Switch off FPM mode and back again to re-allocate port
 if ($in{'fixport'} && $mode eq "fpm") {
-	&$first_print($text{'phpmode_fixport'});
 	# Toggle mode off PHP-FPM and back on again
-	&save_domain_php_mode($d, "cgi");
+	&$first_print($text{'phpmode_fixport'});
+	&save_domain_php_mode($d, "none");
 	&save_domain_php_mode($d, "fpm");
 	&$second_print($text{'setup_done'});
 	}
@@ -187,11 +196,31 @@ if (&can_php_error_log($mode)) {
 		}
 	}
 
+# Save PHP mail option
+my $phpmail = &get_php_can_send_mail($d);
+if (defined($phpmail) && defined($in{'mail'})) {
+	&save_php_can_send_mail($d, $in{'mail'});
+	}
+
 if ($can) {
+	# Save PHP-FPM process manager mode
+	my $fpmtype = $in{'fpmtype'};
+	if ($mode eq 'fpm' && $fpmtype) {
+		$fpmtype =~ /^(dynamic|static|ondemand)$/ ||
+			&error($text{'phpmode_efpmtype'});
+		my $fpmtype_curr = &get_domain_php_fpm_mode($d);
+		if ($fpmtype ne $fpmtype_curr) {
+			&$first_print(&text('phpmode_fpmtypeing', $fpmtype));
+			&save_domain_php_fpm_mode($d, $fpmtype);
+			&$second_print($text{'setup_done'});
+			$anything++;
+			}
+		}
+
 	# Save PHP fcgi children
 	$nc = $in{'children_def'} ? 0 : $in{'children'};
 	if (defined($in{'children_def'}) && !$dom_limits->{'procs'} &&
-	    $nc != &get_domain_php_children($d) && $can) {
+	    $nc != &get_domain_php_children($d) && $can && $mode ne "none") {
 		&$first_print($nc || $mode eq "fpm" ?
 		    &text('phpmode_kidding', $nc || &get_php_max_childred_allowed()) :
 		    $text{'phpmode_nokids'});

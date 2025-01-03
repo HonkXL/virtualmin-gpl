@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 $d = &get_domain($in{'dom'});
 &error_setup($text{'defaults_err'});
 &can_edit_domain($d) || &error($text{'users_ecannot'});
@@ -34,17 +35,6 @@ if (&has_mail_quotas()) {
 		$in{'mquota'} =~ /^[0-9\.]+$/ ||
 			&error($text{'defaults_emquota'});
 		$user->{'mquota'} = &quota_parse("mquota", "mail");
-		}
-	}
-
-# Save mail server quota
-if (&has_server_quotas()) {
-	if ($in{'qquota_def'} == 1) {
-		$user->{'qquota'} = "none";
-		}
-	else {
-		$in{'qquota'} =~ /^\d+$/ || &error($text{'defaults_eqquota'});
-		$user->{'qquota'} = $in{'qquota'};
 		}
 	}
 

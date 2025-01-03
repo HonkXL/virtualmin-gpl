@@ -36,6 +36,19 @@ if (&domain_has_ssl($d) && &can_edit_redirect() && &has_web_redirects($d)) {
 		&ui_yesno_radio("sslredir", $defredir ? 1 : 0));
 	}
 
+# Redirect www to non-www or vice-versa
+if (!$d->{'alias'} && &can_edit_redirect() &&
+    &has_web_redirects($d) && &has_web_host_redirects($d)) {
+	my ($r) = grep { $_ } map { &is_www_redirect($d, $_) }
+				  &list_redirects($d);
+	$r ||= 0;
+	print &ui_table_row(
+		&hlink($text{'phpmode_wwwredir'}, "wwwredir"),
+		&ui_radio("wwwredir", $r,
+			  [ map { [ $_, &text('phpmode_wwwredir'.$_,
+					$d->{'dom'})."<br>" ] } (0.. 3) ]));
+	}
+
 # Match all sub-domains
 if ($p eq 'web' || &plugin_defined($p, "feature_get_web_domain_star")) {
 	print &ui_table_row(&hlink($text{'phpmode_matchall'}, "matchall"),
@@ -88,6 +101,16 @@ if (!$d->{'alias'} && &can_log_paths() &&
 			&ui_textbox("elog", $elog, 60));
 		}
 	}
+# CGI execution mode
+my @cgimodes = &has_cgi_support($d);
+if (@cgimodes > 0) {
+	print &ui_table_row(
+		&hlink($text{'tmpl_web_cgimode'}, "web_cgimode"),
+		&ui_radio_table("cgimode", &get_domain_cgi_mode($d),
+			  [ [ '', $text{'tmpl_web_cgimodenone'} ],
+			    map { [ $_, $text{'tmpl_web_cgimode'.$_} ] }
+				reverse(@cgimodes) ]));
+	}
 
 # Ruby execution mode
 if (defined(&supported_ruby_modes)) {
@@ -123,7 +146,7 @@ if (!$d->{'alias'}) {
 			$inp = &ui_radio("http2",
 				@$prots == 0 ? 2 :
 				&indexof("h2", @$prots) >= 0 ? 1 : 0,
-				[ [ 2, $text{'default'}." ($def)" ],
+				[ [ 2, $text{'newweb_http2_def'}." ($def)" ],
 				  [ 1, $text{'yes'} ],
 				  [ 0, $text{'no'} ] ]);
 			}

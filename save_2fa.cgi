@@ -3,8 +3,9 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'2fa_err'});
-&can_2fa() || &error($text{'2fa_ecannot'});
+&can_user_2fa() || &can_master_reseller_2fa() || &error($text{'2fa_ecannot'});
 
 # Get current status
 &foreign_require("acl");

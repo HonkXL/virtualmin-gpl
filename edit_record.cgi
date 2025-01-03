@@ -7,6 +7,7 @@ $d = &get_domain($in{'dom'});
 $d || &error($text{'edit_egone'});
 &can_edit_domain($d) || &error($text{'edit_ecannot'});
 &can_edit_records($d) || &error($text{'records_ecannot'});
+&copy_alias_records($d) && &error($text{'records_ecannot2'});
 &require_bind();
 $tmpl = &get_template($d->{'template'});
 
@@ -125,6 +126,11 @@ else {
 		if ($vals[$i]->{'size'}) {
 			$field = &ui_textbox("value_$i", $r->{'values'}->[$i],
 					     $vals[$i]->{'size'});
+			}
+		elsif ($vals[$i]->{'opts'}) {
+			$field = &ui_select("value_$i", $r->{'values'}->[$i],
+					    $vals[$i]->{'opts'}, 1, 0,
+					    $in{'type'} ? 0 : 1);
 			}
 		else {
 			$field = &ui_textarea("value_$i", $r->{'values'}->[$i],

@@ -7,6 +7,7 @@ require './virtual-server-lib.pl';
 &require_useradmin();
 &require_mail() if ($config{'mail'});
 &ReadParse();
+&licence_status();
 $d = &get_domain($in{'dom'});
 $d || &error($text{'edit_egone'});
 $d->{'dom'} || &error("Domain $in{'dom'} is not valid!");
@@ -45,7 +46,9 @@ if (!$in{'confirm'}) {
 		if ($d->{$f} && ($config{$f} || $f eq 'unix')) {
 			my $msg = $d->{'parent'} ? $text{"sublosing_$f"}
 						 : undef;
-			$msg ||= $text{"losing_$f"};
+			my $msuf = $f eq 'dir' && $d->{'alias'} ? 4 : 
+				   $f eq 'dir' && $d->{'parent'} ? 2 : "";
+			$msg ||= $text{"losing_$f$msuf"};
 			print "<li>",$text{'feature_'.$f}," - ",$msg,"<br>\n";
 			}
 		}

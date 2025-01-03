@@ -219,11 +219,11 @@ if ($tmpl->{'mysql_nopass'}) {
 return $ok;
 }
 
-# add_db_table(&domain, host, db, user, preserve)
+# add_db_table(&domain, host, db, user, [enable-access-to-all-domain-dbs])
 # Adds an entry to the db table, with all permission columns set to Y
 sub add_db_table
 {
-local ($d, $host, $db, $user, $preserve) = @_;
+local ($d, $host, $db, $user, $dbs_enall) = @_;
 local $mod = &require_dom_mysql($d);
 local @str = &foreign_call($mod, "table_structure", $mysql::master_db, 'db');
 local ($s, @fields, @yeses);
@@ -240,13 +240,13 @@ if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0 ||
 	# Use the grant command
 
 	# Preserve all other domain's database permissions (useful on restore)
-	if ($preserve) {
+	if ($dbs_enall) {
 		foreach my $ddb (&domain_databases($d, [ "mysql" ])) {
 			my $qddb = &quote_mysql_database($ddb->{'name'});
 			if ($qddb ne $qdb) {
 				eval {
 					local $main::error_must_die = 1;
-					&execute_dom_sql($d, $mysql::master_db, "grant all on `$qddb`.* to '$user'\@'$host' with grant option");
+					&execute_dom_sql($d, $mysql::master_db, "grant all privileges on `$qddb`.* to '$user'\@'$host'");
 					}
 				}
 			}
@@ -254,7 +254,7 @@ if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0 ||
 	# Update given database
 	eval {
 		local $main::error_must_die = 1;
-		&execute_dom_sql($d, $mysql::master_db, "grant all on `$qdb`.* to '$user'\@'$host' with grant option");
+		&execute_dom_sql($d, $mysql::master_db, "grant all privileges on `$qdb`.* to '$user'\@'$host'");
 		}
 	}
 else {
@@ -277,13 +277,32 @@ if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0 ||
 	# Use the revoke command
 	local $rv = &execute_dom_sql($d, $mysql::master_db,
 		"select host from user where user = ?", $user);
-	my $dbs = "*.*";
-	$dbs = "`$qdb`.*" if ($db);
-	foreach my $r (@{$rv->{'data'}}) {
-		eval {
-			local $main::error_must_die = 1;
-			&execute_dom_sql($d, $mysql::master_db, "revoke grant option on $dbs from '$user'\@'$r->[0]'");
-			&execute_dom_sql($d, $mysql::master_db, "revoke all on $dbs from '$user'\@'$r->[0]'");
+	
+	# Specific database that was passed
+	my @dbs = ("`$qdb`.*");
+
+	# All databases belonging to the given user because
+	# *.* simply won't work without deleting the user
+	if (!$db) {
+		@dbs = ();
+		my @user_dbs = &list_domain_users($d, 1, 1, 1, 0);
+		my ($dbuser) = grep { $_->{'user'} eq $user } @user_dbs;
+		if ($dbuser && $dbuser->{'dbs'} && ref($dbuser->{'dbs'}) eq 'ARRAY' && scalar(@{$dbuser->{'dbs'}}) > 0) {
+			my @user_db_names = map { $_->{'name'} } grep { $_->{'type'} eq 'mysql' } @{$dbuser->{'dbs'}};
+			@user_db_names = map { "`$_`.*" } @user_db_names;
+			@dbs = @user_db_names if (@user_db_names);
+			}
+		}
+	foreach my $dbs (@dbs) {
+		foreach my $r (@{$rv->{'data'}}) {
+			eval {
+				local $main::error_must_die = 1;
+				&execute_dom_sql($d, $mysql::master_db, "revoke all privileges on $dbs from '$user'\@'$r->[0]'");
+				};
+			eval {
+				local $main::error_must_die = 1;
+				&execute_dom_sql($d, $mysql::master_db, "revoke grant option on $dbs from '$user'\@'$r->[0]'");
+				};
 			}
 		}
 	}
@@ -462,7 +481,7 @@ if ($encpass ne $oldencpass && !$d->{'parent'} && !$oldd->{'parent'} &&
 			&$second_print($text{'setup_done'});
 
 			# Update all installed scripts database password which are using MySQL
-			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbpass', &mysql_pass($d), 'mysql');
+			&update_scripts_creds($d, $oldd, 'dbpass', &mysql_pass($d), 'mysql');
 			}
 		$rv++;
 		}
@@ -477,7 +496,7 @@ if ($encpass ne $oldencpass && !$d->{'parent'} && !$oldd->{'parent'} &&
 			&$second_print($text{'setup_done'});
 
 			# Update all installed scripts database password which are using MySQL
-			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbpass', &mysql_pass($d), 'mysql');
+			&update_scripts_creds($d, $oldd, 'dbpass', &mysql_pass($d), 'mysql');
 
 			$rv++;
 			}
@@ -661,7 +680,7 @@ elsif ($user ne $olduser && !$d->{'parent'}) {
 			&$second_print($text{'setup_done'});
 
 			# Update all installed scripts database username which are using MySQL
-			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbuser', $user, 'mysql');
+			&update_scripts_creds($d, $oldd, 'dbuser', $user, 'mysql');
 			}
 		$rv++;
 		}
@@ -677,7 +696,7 @@ elsif ($user ne $olduser && !$d->{'parent'}) {
 			&$second_print($text{'setup_done'});
 
 			# Update all installed scripts database username which are using MySQL
-			&update_all_installed_scripts_database_credentials($d, $oldd, 'dbuser', $user, 'mysql');
+			&update_scripts_creds($d, $oldd, 'dbuser', $user, 'mysql');
 
 			$rv++;
 			}
@@ -1077,7 +1096,7 @@ else {
 return undef;
 }
 
-# backup_mysql(&domain, file, &options, home-format, incremental, [&as-domain],
+# backup_mysql(&domain, file, &options, home-format, differential, [&as-domain],
 #              &all-options, &key)
 # Dumps this domain's mysql database to a backup file
 sub backup_mysql
@@ -1109,6 +1128,16 @@ local @hosts = &get_mysql_allowed_hosts($d);
 my $mymod = &get_domain_mysql_module($d);
 local %info = ( 'hosts' => join(' ', @hosts),
 		'remote' => $mymod->{'config'}->{'host'} );
+foreach $db (@dbs) {
+	if (&foreign_defined($mymod, "get_character_set")) {
+		$info{'charset_'.$db} = &foreign_call(
+			$mymod, "get_character_set", $db);
+		}
+	if (&foreign_defined($mymod, "get_collation_order")) {
+		$info{'collate_'.$db} = &foreign_call(
+			$mymod, "get_collation_order", $db);
+		}
+	}
 &write_as_domain_user($d, sub { &write_file($file, \%info) });
 
 # Back them all up
@@ -1129,10 +1158,7 @@ foreach $db (@dbs) {
 		}
 
 	my $mymod = &require_dom_mysql($d);
-	my $cs;
-	if (&foreign_defined($mymod, "get_character_set")) {
-		$cs = &foreign_call($mymod, "get_character_set", $db);
-		}
+	my $cs = $info{'charset_'.$db};
 	my $err = &foreign_call(
 		$mymod, "backup_database", $db, $dbfile, 0, 1, undef,
 		$cs, undef, $tables, $d->{'user'},
@@ -1291,7 +1317,10 @@ foreach my $db (@dbs) {
 		}
 	&$indent_print();
 	if (!$clash) {
-		&create_mysql_database($d, $db->[0]);
+		my $opts = { 'charset' => $info{'charset_'.$db->[0]},
+			     'collate' => $info{'collate_'.$db->[0]},
+			   };
+		&create_mysql_database($d, $db->[0], $info);
 		$created{$db->[0]} = 1;
 		}
 	&$outdent_print();
@@ -1348,6 +1377,34 @@ foreach my $uname (keys %userdbs) {
 		&create_mysql_database_user($d, \@grant, $uname, undef,
 					    $userpasses{$uname}, 1);
 		}
+	}
+
+# Restoring virtual MySQL users
+my @dbusers_virt = &list_extra_db_users($d);
+if (@dbusers_virt) {
+	&$first_print($text{'restore_mysqludummy'});
+	&$indent_print();
+	foreach my $dbuser_virt (@dbusers_virt) {
+		&$first_print(&text('restore_mysqludummy2', $dbuser_virt->{'user'}));	
+		# If restored user not under the same domain already
+		# exists, delete extra user record, and skip it
+		if (&check_any_database_user_clash($d, $dbuser_virt->{'user'}) &&
+		    $dbuser_virt->{'user'} eq &remove_userdom($dbuser_virt->{'user'}, $d)) {
+			&$second_print($text{'restore_emysqluimport2'});
+			&delete_extra_user($d, $dbuser_virt);
+			next;
+			}
+		my $err = &create_databases_user($d, $dbuser_virt, 'mysql');
+		if ($err) {
+			&$second_print(&text('restore_emysqluimport', $err));
+			}
+		else {
+			&$second_print($text{'setup_done'});
+			}
+
+		}
+	&$outdent_print();
+	&$second_print($text{'setup_done'});
 	}
 
 # Put quotas back
@@ -1869,11 +1926,11 @@ else {
 	}
 }
 
-# create_mysql_database_user(&domain, &dbs, username, plain-pass, [enc-pass])
+# create_mysql_database_user(&domain, &dbs, username, plain-pass, [enc-pass], [enable-access-to-all-domain-dbs])
 # Adds one mysql user, who can access multiple databases
 sub create_mysql_database_user
 {
-local ($d, $dbs, $user, $pass, $encpass, $restored) = @_;
+local ($d, $dbs, $user, $pass, $encpass, $dbs_enall) = @_;
 &require_mysql();
 &obtain_lock_mysql($d);
 if ($d->{'provision_mysql'}) {
@@ -1909,7 +1966,7 @@ else {
 			      $pass);
 			local $db;
 			foreach $db (@$dbs) {
-				&add_db_table($d, $h, $db, $myuser, $restored);
+				&add_db_table($d, $h, $db, $myuser, $dbs_enall);
 				}
 			&set_mysql_user_connections($d, $h, $myuser, 1);
 			}
@@ -1985,12 +2042,7 @@ else {
 	local $mfunc = sub {
 		if ($olduser ne $user) {
 			# Change the username
-			&execute_dom_sql($d, $mysql::master_db,
-				"update user set user = ? where user = ?",
-				$myuser, $myolduser);
-			&execute_dom_sql($d, $mysql::master_db,
-				"update db set user = ? where user = ?",
-				$myuser, $myolduser);
+			&execute_user_rename_sql($d, $myolduser, $myuser);
 			}
 		if (defined($pass)) {
 			# Change the password
@@ -2038,6 +2090,16 @@ my ($d) = @_;
 my $mymod = &require_dom_mysql($d);
 my %myconfig = &foreign_config($mymod);
 return $myconfig{'host'} || 'localhost';
+}
+
+# get_database_port_mysql([&domain])
+# Returns the port on the server on which MySQL is actually running
+sub get_database_port_mysql
+{
+my ($d) = @_;
+my $mymod = &require_dom_mysql($d);
+my %myconfig = &foreign_config($mymod);
+return $myconfig{'port'} || 3306;
 }
 
 # get_database_ssl_mysql([&domain])
@@ -2102,6 +2164,26 @@ sub start_service_mysql
 {
 &require_mysql();
 return &mysql::start_mysql();
+}
+
+# restart_mysql_server()
+# Called from post-actions to restart MySQL and print stuff
+sub restart_mysql_server
+{
+&$first_print($text{'mysql_restarting'});
+if (&mysql::is_mysql_running() <= 0) {
+	&$second_print($text{'mysql_erestarting'});
+	}
+else {
+	&mysql::stop_mysql();
+	my $err = &mysql::start_mysql();
+	if ($err) {
+		&$second_print(&text('copycert_emysqlstart', $err));
+		}
+	else {
+		&$second_print($text{'setup_done'});
+		}
+	}
 }
 
 # unquote_mysql_database(name)
@@ -2711,7 +2793,8 @@ local ($d, $host, $user, $mailbox) = @_;
 local $conns = &get_mysql_user_connections($d, $mailbox);
 if ($conns) {
 	my ($ver, $variant) = &get_dom_remote_mysql_version($d);
-	if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0) {
+	if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0 ||
+	    $variant eq "mysql" && &compare_versions($ver, 8) >= 0) {
 		# Need to use the alter user command
 		&execute_dom_sql($d, $mysql::master_db,
 			"alter user '$user'\@'$host' ".
@@ -2905,10 +2988,16 @@ if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0 ||
 	foreach my $r (@{$rv->{'data'}}) {
 		eval {
 			local $main::error_must_die = 1;
+			&execute_dom_sql($d, $mysql::master_db, "revoke all privileges on $dbs from '$olduser'\@'$r->[0]'");
+			};
+		eval {
+			local $main::error_must_die = 1;
 			&execute_dom_sql($d, $mysql::master_db, "revoke grant option on $dbs from '$olduser'\@'$r->[0]'");
-			&execute_dom_sql($d, $mysql::master_db, "revoke all on $dbs from '$olduser'\@'$r->[0]'");
-			&execute_dom_sql($d, $mysql::master_db, "grant all on $dbs to '$user'\@'$r->[0]' with grant option");
-			}
+			};
+		eval {
+			local $main::error_must_die = 1;
+			&execute_dom_sql($d, $mysql::master_db, "grant all privileges on $dbs to '$user'\@'$r->[0]'");
+			};
 		}
 	}
 else {
@@ -2932,7 +3021,8 @@ my $plugin = &get_mysql_plugin($d, 1);
 if (!$encpass && $plainpass) {
 	$encpass = &encrypt_plain_mysql_pass($d, $plainpass) 
 	}
-if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0) {
+if ($variant eq "mariadb" && &compare_versions($ver, "10.4") >= 0 ||
+    $variant eq "mysql" && &compare_versions($ver, 8) >= 0) {
 	# Need to use new 'create user' command
 	return ("create user '$user'\@'$host' identified $plugin by ".
 		($plainpass ? "'".&mysql_escape($plainpass)."'"
@@ -3573,7 +3663,7 @@ return $plugin;
 # permissions. Prints progress, and returns 1 on success or 0 on failure.
 sub move_mysql_server
 {
-my ($d, $newmod) = @_;
+my ($d, $newmod, $newhost) = @_;
 return 1 if (&require_dom_mysql($d) eq $newmod);	# Already using it
 
 # Get all the domain objects being moved
@@ -3642,7 +3732,10 @@ foreach my $ad (@doms) {
 		&modify_user($u, $beforeu, $ad);
 		}
 	}
-
+# Update all installed scripts database host which are using MySQL
+$newhost ||= 'localhost';
+&update_scripts_creds(
+	$d, $oldd, 'dbhost', $newhost, 'mysql');
 foreach my $sd (@doms) {
 	&save_domain($sd);
 	}

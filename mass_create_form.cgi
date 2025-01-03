@@ -6,6 +6,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &can_create_master_servers() || &can_create_sub_servers() ||
 	&error($text{'form_ecannot'});
 &can_create_batch() || &error($text{'cmass_ecannot'});
@@ -68,6 +69,11 @@ if (@resels && &master_admin()) {
 			  map { [ $_->{'name'} ] } @resels ]),
 	    	    1, \@tds);
 	}
+
+# Creation detail to show
+print &ui_table_row($text{'cmass_detail'},
+	&ui_radio("detail", 0, [ [ 0, $text{'cmass_detail0'} ],
+				 [ 1, $text{'cmass_detail1'} ] ]));
 
 # Show checkboxes for features
 print &ui_table_hr();

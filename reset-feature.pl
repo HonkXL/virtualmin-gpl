@@ -92,6 +92,7 @@ foreach $d (sort { ($b->{'alias'} ? 2 : $b->{'parent'} ? 1 : 0) <=>
 		}
 
 	# Check if resetting is even possible
+	my %canmap;
 	foreach $f (@dom_features) {
 		my $can = 1;
 		my $fn = &feature_name($f, $d);
@@ -108,6 +109,7 @@ foreach $d (sort { ($b->{'alias'} ? 2 : $b->{'parent'} ? 1 : 0) <=>
 			$failed = 1;
 			next DOMAIN;
 			}
+		$canmap{$f} = $can;
 		}
 
 	# Check if resetting could cause any data loss
@@ -152,31 +154,49 @@ foreach $d (sort { ($b->{'alias'} ? 2 : $b->{'parent'} ? 1 : 0) <=>
 		if ($feature{$f}) {
 			# Core feature of Virtualmin
 			my $rfunc = "reset_".$f;
-			if (defined(&$rfunc) && !$fullreset) {
-				# A reset function exists
+			my $afunc = "reset_also_".$f;
+			if (defined(&$rfunc) &&
+			    (!$fullreset || $canmap{$f} == 2)) {
+				# A reset function exists and should be used
 				&try_function($f, $rfunc, $d);
 				}
 			else {
 				# Turn on and off via delete and setup calls
-				$d->{$f} = 0;
-				&call_feature_func($f, $d, $oldd);
-				my $newoldd = { %$d };
-				$d->{$f} = 1;
-				&call_feature_func($f, $d, $newoldd);
+				my @allf = ($f);
+				push(@allf, &$afunc($d)) if (defined(&$afunc));
+				foreach my $ff (reverse(@allf)) {
+					$d->{$ff} = 0;
+					&call_feature_func($ff, $d, $oldd);
+					}
+				foreach my $ff (@allf) {
+					my $newoldd = { %$d };
+					$d->{$ff} = 1;
+					&call_feature_func($ff, $d, $newoldd);
+					}
 				}
 			}
-		if ($plugin{$f}) {
+		elsif ($plugin{$f}) {
 			# Defined by a plugin
-			if (&plugin_defined($f, "feature_reset") && !$fullreset) {
+			if (&plugin_defined($f, "feature_reset") &&
+			    (!$fullreset || $canmap{$f} == 2)) {
 				# Call the reset function
 				&plugin_call($f, "feature_reset", $d);
 				}
 			else {
 				# Turn off and on again
-				$d->{$f} = 0;
-				&plugin_call($f, "feature_delete", $d);
-				$d->{$f} = 1;
-				&plugin_call($f, "feature_setup", $d);
+				my @allf = ($f);
+				if (&plugin_defined($f, "feature_reset_also")) {
+					push(@allf, &plugin_call($f,
+						"feature_reset_also", $d));
+					}
+				foreach my $ff (reverse(@allf)) {
+					$d->{$ff} = 0;
+					&plugin_call($ff, "feature_delete", $d);
+					}
+				foreach my $ff (@allf) {
+					$d->{$ff} = 1;
+					&plugin_call($ff, "feature_setup", $d);
+					}
 				}
 			}
 		}
@@ -210,10 +230,14 @@ print "Reset some virtual server feature back to it's default.\n";
 print "\n";
 print "virtualmin reset-feature --domain name | --user name\n";
 foreach $f (@features) {
-	print "                         [--$f]\n" if ($config{$f});
+	my $crfunc = "can_reset_".$f;
+	$can = defined(&$crfunc) ? &$crfunc() : 1;
+	print "                         [--$f]\n" if ($config{$f} && $can);
 	}
 foreach $f (&list_feature_plugins()) {
-	print "                         [--$f]\n";
+	$can = &plugin_defined($f, "feature_can_reset") ?
+		&plugin_call($f, "feature_can_reset") : 1;
+	print "                         [--$f]\n" if ($can);
 	}
 print "                         [--skip-warnings]\n";
 print "                         [--full-reset]\n";

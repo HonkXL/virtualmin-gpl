@@ -20,15 +20,21 @@ default, he will only be given an email account. The C<--noemail> option turns
 off the default email account, which is useful for creating FTP or
 database-only users.
 
-Extra email addresses for the new user can be specified with the C<--extra>
-option, followed by an email address within the virtual server. This option
-can be given multiple times if you wish.
+The C<--db-only> flag is used to create a database-only user, with no Unix user,
+email or FTP access. The C<--webserver-only> flag is used to create a webserver-only
+user, with no Unix user, email, database or FTP access, and the C<--webserver-dir>
+option can be used to specify directories to which the webserver user will have access
+to. This option can be given multiple times to specify multiple directories.
 
 The new user can be granted access to MySQL databases associated with the
 virtual server with the C<--mysql> option, which must be followed by a database
 name. This option can occur multiple times in order to grant access to more
 than one database. Unfortunately, there is no way to grant access to
 PostgreSQL databases.
+
+Extra email addresses for the new user can be specified with the C<--extra>
+option, followed by an email address within the virtual server. This option
+can be given multiple times if you wish.
 
 To create a user who has only FTP access to the domain's website, use the
 C<--web> flag. To turn off spam checking for the new user, include
@@ -38,7 +44,7 @@ multiple times.
 
 For more control over the user's login abilities (FTP, SSH or email only),
 use the C<--shell> parameter followed by a full path to a Unix shell, such
-as C</usr/bin/scponly>. Available shells can be displayed using the 
+as C</bin/false>. Available shells can be displayed using the 
 C<list-available-shells> command.
 
 If you only have a pre-encrypted password that you want the new user
@@ -49,6 +55,14 @@ as it needs to know the plaintext password to re-hash it for MySQL.
 All mail users can have a password recovery address set, used by the forgotten
 password feature in Virtualmin. For new users, this can be set with the 
 C<--recovery> flag followed by an address.
+
+To add a SSH public key to a user's account, use the C<--ssh-pubkey> flag
+followed by the key's content enclosed in quotes, or by the file name containing
+the key.
+
+If the given file contains multiple keys, only the key on the first line will be
+used, unless C<--ssh-pubkey-id> flag is also given, which will pick the key with
+the given ID by matching the key's comment.
 
 =cut
 
@@ -67,10 +81,10 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "create-user.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 
 # Get shells
-@ashells = grep { $_->{'mailbox'} && $_->{'avail'} } &list_available_shells();
 ($nologin_shell, $ftp_shell, $jailed_shell, $shell) =
 	&get_common_available_shells();
 
@@ -99,8 +113,22 @@ while(@ARGV > 0) {
 	elsif ($a eq "--encpass") {
 		$encpass = shift(@ARGV);
 		}
+	elsif ($a eq "--ssh-pubkey") {
+		$sshpubkey = shift(@ARGV);
+		}
+	elsif ($a eq "--ssh-pubkey-id") {
+		$sshpubkeyid = shift(@ARGV);
+		}
 	elsif ($a eq "--real" || $a eq "--desc") {
 		$real = shift(@ARGV);
+		}
+	elsif ($a eq "--firstname") {
+		$firstname = shift(@ARGV);
+		&supports_firstname() || &usage("This system does not support setting first names for users");
+		}
+	elsif ($a eq "--surname") {
+		$surname = shift(@ARGV);
+		&supports_firstname() || &usage("This system does not support setting surnames for users");
 		}
 	elsif ($a eq "--ftp") {
 		$shell = $ftp_shell;
@@ -126,13 +154,19 @@ while(@ARGV > 0) {
 		$mquota = shift(@ARGV);
 		$mquota = 0 if ($mquota eq "UNLIMITED");
 		}
-	elsif ($a eq "--qmail-quota") {
-		$qquota = shift(@ARGV);
-		$qquota = 0 if ($qquota eq "UNLIMITED");
-		}
 	elsif ($a eq "--mysql") {
 		$db = shift(@ARGV);
 		push(@dbs, { 'type' => 'mysql', 'name' => $db });
+		}
+	elsif ($a eq "--db-only") {
+		$db_only++;
+		}
+	elsif ($a eq "--webserver-only") {
+		$webserver_only++;
+		}
+	elsif ($a eq "--webserver-dir") {
+		$webdir = shift(@ARGV);
+		push(@webdirs, $webdir);
 		}
 	elsif ($a eq "--group") {
 		$group = shift(@ARGV);
@@ -181,9 +215,10 @@ $d || usage("Virtual server $domain does not exist");
 &obtain_lock_unix($d);
 &obtain_lock_mail($d);
 $user = &create_initial_user($d, 0, $web);
+$username = &remove_userdom($username, $d);
 
 # Make sure all needed args are set
-if ($user->{'unix'} && !$user->{'noquota'}) {
+if (!$user->{'noquota'}) {
 	if (&has_home_quotas() && defined($quota)) {
 		$quota =~ /^\d+$/ || &usage("Quota must be a number");
 		}
@@ -191,14 +226,9 @@ if ($user->{'unix'} && !$user->{'noquota'}) {
 		$mquota =~ /^\d+$/ || &usage("Quota must be a number");
 		}
 	}
-if ($user->{'mailquota'}) {
-	!$qquota || $qquota =~ /^\d+$/ || usage("Mail quota must be a number");
-	}
 $err = &valid_mailbox_name($username);
 &usage($err) if ($err);
-if ($user->{'person'}) {
-	$real =~ /^[^:]*$/ || usage($text{'user_ereal'});
-	}
+$real =~ /^[^:]*$/ || usage($text{'user_ereal'});
 foreach $e (@extra) {
 	$user->{'noextra'} && &usage("This user cannot have extra email addresses");
 	$e = lc($e);
@@ -232,19 +262,17 @@ foreach $g (@groups) {
 &build_taken(\%taken, \%utaken);
 
 # Construct user object
-if ($user->{'unix'} && !$user->{'webowner'}) {
+if (!$user->{'webowner'}) {
 	$user->{'uid'} = &allocate_uid(\%taken);
 	}
 else {
 	$user->{'uid'} = $d->{'uid'};
 	}
 $user->{'gid'} = $d->{'gid'} || $d->{'ugid'};
-if ($user->{'person'}) {
-	$user->{'real'} = $real;
-	}
-if ($user->{'unix'}) {
-	$user->{'shell'} = $shell->{'shell'};
-	}
+$user->{'real'} = $real;
+$user->{'firstname'} = $firstname;
+$user->{'surname'} = $surname;
+$user->{'shell'} = $shell->{'shell'};
 if (!$user->{'fixedhome'}) {
 	if (defined($home)) {
 		# Home was set manually
@@ -274,6 +302,19 @@ else {
 	$user->{'passmode'} = 2;
 	$user->{'pass'} = $encpass;
 	}
+# SSH public key
+my $pubkey;
+if ($sshpubkey) {
+	my $sshpubkeyfile = -r $sshpubkey ? $sshpubkey : undef;
+	if ($sshpubkeyfile) {
+		$pubkey = &get_ssh_pubkey_from_file($sshpubkeyfile, $sshpubkeyid);
+		}
+	else {
+		$pubkey = $sshpubkey;
+		}
+	my $pubkeyerr = &validate_ssh_pubkey($pubkey);
+	&usage($pubkeyerr) if ($pubkeyerr);
+	}
 if ($disable) {
 	&set_pass_disable($user, 1);
 	}
@@ -298,10 +339,7 @@ if (!$user->{'noprimary'}) {
 if (defined($recovery)) {
 	$user->{'recovery'} = $recovery;
 	}
-if ($user->{'mailquota'}) {
-	$user->{'qquota'} = $qquota;
-	}
-if ($user->{'unix'} && !$user->{'noquota'}) {
+if (!$user->{'noquota'}) {
 	# Set quotas, if not using the defaults
 	$pd = $d->{'parent'} ? &get_domain($d->{'parent'}) : $d;
 	if (defined($quota)) {
@@ -321,20 +359,17 @@ $user->{'dbs'} = \@dbs if (@dbs);
 $user->{'secs'} = \@groups;
 $user->{'nospam'} = $nospam;
 
-if ($user->{'unix'}) {
-	# Check for a Unix clash
-	$mclash = &check_clash($username, $d->{'dom'});
-	if ($utaken{$user->{'user'}} ||
-	    $user->{'email'} && $mclash ||
-	    !$user->{'email'} && $mclash == 2) {
-		usage($text{'user_eclash'});
-		}
+# Check for a Unix clash
+$mclash = &check_clash($username, $d->{'dom'});
+if ($utaken{$user->{'user'}} ||
+    $user->{'email'} && $mclash ||
+    !$user->{'email'} && $mclash == 2) {
+	usage($text{'user_eclash'});
 	}
 
 # Check for clash within this domain
-($clash) = grep { $_->{'user'} eq $username &&
-		  $_->{'unix'} == $user->{'unix'} } @users;
-$clash && &error($text{'user_eclash2'});
+($clash) = grep { $_->{'user'} eq $username } @users;
+$clash && &usage($text{'user_eclash2'});
 
 if (!$user->{'noextra'}) {
 	# Check if any extras clash
@@ -361,8 +396,40 @@ if ($user->{'home'} && !$user->{'nocreatehome'} &&
 	&create_user_home($user, $d);
 	}
 
-# Create the user and virtusers and alias
-&create_user($user, $d);
+if ($db_only) {
+	# Create database user only
+	my $dbuserclash = &check_extra_user_clash($d, $user->{'user'}, 'db');
+        !$dbuserclash || &usage($dbuserclash);
+	$user->{'pass'} = $pass;
+	# Create database user
+        my $err = &create_databases_user($d, $user);
+        &usage($err) if ($err);
+        # Add user to domain list
+	$user->{'extra'} = 1;
+        $user->{'type'} = 'db';
+        &update_extra_user($d, $user);
+	}
+elsif ($webserver_only) {
+	# Create web-only user
+	# Create initial user
+        $user->{'extra'} = 1;
+        $user->{'type'} = 'web';
+        my $userclash = &check_extra_user_clash($d, $user->{'user'}, 'web');
+        !$userclash || &usage($userclash);
+        # Set initial password
+        $user->{'pass'} = $pass;
+        $user->{'pass_crypt'} = $encpass, delete($user->{'pass'}) if ($encpass);
+        $user->{'pass'} || $user->{'pass_crypt'} || &usage($text{'user_epasswebnotset'});
+        &modify_webserver_user($user, undef, $d, { 'virtualmin_htpasswd' => join("\n", @webdirs) });
+	}
+else {
+	# Create the user and virtusers and alias
+	&create_user($user, $d);
+	if ($pubkey) {
+		my $err = &add_domain_user_ssh_pubkey($d, $user, $pubkey);
+		&usage($err) if ($err);
+		}
+	}
 
 # Create an empty mail file, if needed
 if ($user->{'email'} && !$user->{'nomailfile'}) {
@@ -392,29 +459,29 @@ print "                       --pass \"password-for-new-user\" |\n";
 print "                       --encpass encrypted-password |\n";
 print "                       --random-pass |\n";
 print "                       --passfile password-file\n";
+print "                      [--ssh-pubkey \"key\" | pubkey-file <--ssh-pubkey-id id]\n";
 if (&has_home_quotas()) {
 	print "                      [--quota quota-in-blocks|\"UNLIMITED\"]\n";
 	}
 if (&has_mail_quotas()) {
 	print "                      [--mail-quota quota-in-blocks|\"UNLIMITED\"]\n";
 	}
-if (&has_server_quotas()) {
-	print "                       --qmail-quota quota-in-bytes|\"UNLIMITED\"\n";
+print "                      [--real real-name-for-new-user]\n";
+if (&supports_firstname()) {
+	print "                      [--firstname first-name]\n";
+	print "                      [--surname surname]\n";
 	}
-if (!$user || $user->{'person'}) {
-	print "                      [--real real-name-for-new-user]\n";
+print "                      [--ftp]\n";
+if ($jailed_shell) {
+	print "                      [--jail-ftp]\n";
 	}
-if (!$user || $user->{'unix'}) {
-	print "                      [--ftp]\n";
-	if ($jailed_shell) {
-		print "                      [--jail-ftp]\n";
-		}
-	print "                      [--shell /path/to/shell]\n";
-	}
+print "                      [--shell /path/to/shell]\n";
 print "                      [--noemail]\n";
+print "                      [--db-only <--mysql db>*]\n";
+print "                      [--webserver-only <--webserver-dir path>*]\n";
+print "                      [--mysql db]*\n";
 print "                      [--extra email.address\@some.domain]\n";
 print "                      [--recovery address\@offsite.com]\n";
-print "                      [--mysql db]*\n";
 print "                      [--group name]*\n";
 print "                      [--web]\n";
 if ($config{'spam'}) {

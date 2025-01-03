@@ -32,19 +32,11 @@ $state = &cloud_google_get_state();
 $state->{'ok'} || &usage("Google Cloud Storage has not been configured yet");
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--bucket") {
+	if ($a eq "--bucket") {
 		$bucket = shift(@ARGV);
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -59,7 +51,7 @@ if (!ref($files)) {
 	exit(1);
 	}
 
-if ($multi) {
+if ($multiline) {
 	# Full details
 	foreach $st (@$files) {
 		print $st->{'name'},"\n";
@@ -93,7 +85,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists all files in a Google Cloud Storage bucket.\n";
 print "\n";
-print "virtualmin list-gcs-files [--multiline | --name-only]\n";
+print "virtualmin list-gcs-files [--multiline | --json | --xml | --name-only]\n";
 print "                           --bucket name\n";
 exit(1);
 }

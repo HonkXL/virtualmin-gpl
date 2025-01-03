@@ -4,6 +4,7 @@
 require './virtual-server-lib.pl';
 &error_setup($text{'newdynip_err'});
 &ReadParse();
+&licence_status();
 &can_edit_templates() || &error($text{'newdynip_ecannot'});
 
 # Validate inputs
@@ -19,9 +20,13 @@ $config{'dynip_service'} = $in{'service'};
 if ($in{'service'} eq 'external') {
 	$in{'external'} =~ /^\// || &error($text{'newdynip_eexternal'});
 	}
+elsif ($in{'service'} eq 'webmin') {
+	&to_ipaddress($in{'external'}) || &error($text{'newdynip_eexternal2'});
+	}
 $config{'dynip_external'} = $in{'external'};
 $config{'dynip_host'} = $in{'host'};
 $config{'dynip_auto'} = $in{'auto'};
+$config{'dynip_update'} = $in{'update'};
 $config{'dynip_user'} = $in{'duser'};
 $config{'dynip_pass'} = $in{'dpass'};
 $config{'dynip_email'} = $in{'email_def'} ? undef : $in{'email'};
@@ -50,7 +55,7 @@ elsif (!$in{'enabled'} && $job) {
 &ui_print_header(undef, $text{'newdynip_title'}, "");
 
 if ($in{'enabled'}) {
-	$ip = $in{'auto'} ? &get_external_ip_address() : &get_default_ip();
+	$ip = $in{'auto'} ? &get_any_external_ip_address() : &get_default_ip();
 	print &text('newdynip_on', "<tt>$ip</tt>"),"<p>\n";
 	}
 else {

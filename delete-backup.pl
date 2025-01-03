@@ -26,6 +26,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "delete-backup.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 
 # Parse command-line args
@@ -38,7 +39,7 @@ while(@ARGV > 0) {
 		$dest = shift(@ARGV);
 		}
 	elsif ($a eq "--multiline") {
-		$multi = 1;
+		$multiline = 1;
 		}
 	elsif ($a eq "--help") {
 		&usage();

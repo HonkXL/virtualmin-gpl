@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 $d = &get_domain($in{'dom'});
 $tmpl = &get_template($d->{'template'});
 &can_change_ip($d) && &can_edit_domain($d) || &error($text{'newip_ecannot'});
@@ -57,7 +58,7 @@ if ($in{'convert'}) {
 if (!&can_use_feature("virt")) {
 	# Cannot change anything, so no validation needed
 	}
-elsif ($in{'mode'} == 0 || $config{'all_namevirtual'}) {
+elsif ($in{'mode'} == 0) {
 	# Switching to shared address
 	$ip = $in{'ip'};
 	&check_ipaddress($ip) || &error($text{'setup_eip'});
@@ -192,10 +193,6 @@ if (&domain_has_website($d)) {
 $oldd = { %$d };
 if (!&can_use_feature("virt")) {
 	# Cannot change anything, so do nothing
-	}
-elsif ($config{'all_namevirtual'}) {
-	# Can only set IP
-	$d->{'ip'} = $ip;
 	}
 elsif ($virt && !$d->{'virt'}) {
 	# Bringing up IP

@@ -25,6 +25,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "delete-user.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 
 # Parse command-line args
@@ -54,7 +55,7 @@ $d = &get_domain_by("dom", $domain);
 $d || usage("Virtual server $domain does not exist");
 &obtain_lock_mail($d);
 &obtain_lock_unix($d);
-@users = &list_domain_users($d);
+@users = &list_domain_users($d, 0, 0, 0, 0, 1);
 ($user) = grep { $_->{'user'} eq $username ||
 		 &remove_userdom($_->{'user'}, $d) eq $username } @users;
 $user || usage("No user named $username was found in the server $domain");
@@ -70,6 +71,9 @@ if (defined(&get_simple_alias)) {
 	$simple = &get_simple_alias($d, $user);
 	&delete_simple_autoreply($d, $simple) if ($simple);
 	}
+
+# Delete SSH public key
+&delete_domain_user_ssh_pubkey($d, $user);
 
 # Delete the user, his virtusers and aliases
 &delete_user($user, $d);

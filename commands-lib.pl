@@ -1,8 +1,11 @@
 # Functions for use by the command-line API
 
+our ($convert_multiline, $convert_idonly, $convert_nameonly, $convert_emailonly,
+     $convert_format);
+
 sub list_api_categories
 {
-return ([ "Backup and restore", "backup-domain.pl", "list-scheduled-backups.pl",
+return ([ "Backup and restore", "backup-domain.pl", "*-scheduled-backup*.pl",
 				"restore-domain.pl", "list-backup-keys.pl" ],
 	[ "Virtual servers", "*-domain.pl", "*-domains.pl",
 			     "enable-feature.pl", "disable-feature.pl",
@@ -197,12 +200,13 @@ if ($bash) {
 #!$bash
 WEBMIN_CONFIG=$config_directory
 WEBMIN_VAR=$var_directory
-PERLLIB=$root_directory
+PERLLIB=${root_directory}:${root_directory}/vendor_perl
+WRAPPER_ORIGINAL_PWD=`pwd`
 unset SCRIPT_NAME
 unset FOREIGN_MODULE_NAME
 unset SERVER_ROOT
 unset SCRIPT_FILENAME
-export WEBMIN_CONFIG WEBMIN_VAR PERLLIB SCRIPT_NAME FOREIGN_MODULE_NAME SERVER_ROOT SCRIPT_FILENAME
+export WEBMIN_CONFIG WEBMIN_VAR PERLLIB SCRIPT_NAME FOREIGN_MODULE_NAME SERVER_ROOT SCRIPT_FILENAME WRAPPER_ORIGINAL_PWD
 cd $module_root_directory
 id -a | grep -i uid=0 >/dev/null
 if [ "\$?" != 0 ]; then
@@ -253,6 +257,107 @@ EOF
 else {
 	return (0, "bash was not found");
 	}
+}
+
+# parse_common_cli_flags(&argv)
+# Parses and updates the provided argv, and sets global variables $multiline,
+# $idonly, $nameonly. May also start capturing output for XML and JSON.
+sub parse_common_cli_flags
+{
+my ($argv) = @_;
+my $i = 0;
+while($i < @$argv) {
+	if ($argv->[$i] eq "--multiline") {
+		$convert_multiline = $multiline = 1;
+		splice(@$argv, $i, 1);
+		}
+	elsif ($argv->[$i] eq "--simple-multiline") {
+		$convert_multiline = $multiline = 2;
+		splice(@$argv, $i, 1);
+		}
+	elsif ($argv->[$i] eq "--id-only") {
+		$convert_idonly = $idonly = 1;
+		splice(@$argv, $i, 1);
+		}
+	elsif ($argv->[$i] eq "--name-only") {
+		$convert_nameonly = $nameonly = 1;
+		splice(@$argv, $i, 1);
+		}
+	elsif ($argv->[$i] eq "--email-only") {
+		$convert_emailonly = $emailonly = 1;
+		splice(@$argv, $i, 1);
+		}
+	elsif ($argv->[$i] =~ /^--(xml|json)$/) {
+		&cli_convert_remote_format($1);
+		$convert_format = $1;
+		splice(@$argv, $i, 1);
+		if (!$multiline && !$idonly && !$nameonly && !$emailonly) {
+			$convert_multiline = $multiline = 1;
+			}
+		}
+	elsif ($argv->[$i] eq "--help") {
+		&usage();
+		}
+	else {
+		$i++;
+		}
+	}
+}
+
+# cli_convert_remote_format(format)
+# Catches and displays Virtualmin CLI standard listing
+# commands in JSON or XML format. Returns 1 if the output
+# should be multiline, 0 if not.
+sub cli_convert_remote_format
+{
+my ($format) = @_;
+return 0 if ($convert_remote_format_pid);
+
+my ($lines, $fh, $ofh);
+# Redirect STDOUT to a variable
+open ($fh, '>', \$lines) || return;
+# Save the original STDOUT
+$ofh = select($fh);
+$convert_remote_format_pid = $$;
+
+# Setup end handler to convert saved output
+END {
+	return if ($$ != $convert_remote_format_pid);
+	no warnings 'closure';
+	# Restore the original STDOUT
+	select($ofh);
+
+	# Convert output to XML or JSON
+	my $program = $0;
+	$program =~ s/^.*\///;
+	my %fakein = ( 'multiline' => $convert_multiline,
+		       'id-only' => $convert_idonly,
+		       'name-only' => $convert_nameonly,
+		       'email-only' => $convert_emailonly );
+	print &convert_remote_format($lines, $?, $program,
+				     \%fakein, $convert_format);
+	}
+return 1;
+}
+
+# can_remote(program-name)
+# Returns 1 if the current user can execute remote commands
+sub can_remote
+{
+my ($program) = @_;
+return &master_admin() || &can_remote_as_user($program);
+}
+
+# can_remote_as_user(program-name)
+# Returns 1 if given API supports remote commands
+# as the current user (not root)
+sub can_remote_as_user
+{
+my ($program) = @_;
+if ($program eq "configure-script") {
+	return 1;
+	}
+return 0;
 }
 
 1;

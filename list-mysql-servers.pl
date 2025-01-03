@@ -27,24 +27,14 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
-		}
-	else {
-		&usage("Unknown parameter $a");
-		}
+	&usage("Unknown parameter $a");
 	}
 @mods = &list_remote_mysql_modules();
 
-if ($multi) {
+if ($multiline) {
 	# Show full details
 	foreach $m (@mods) {
 		print $m->{'minfo'}->{'dir'},"\n";
@@ -85,7 +75,7 @@ sub usage
 print "$_[0]\n\n" if ($_[0]);
 print "Lists all registered remote MySQL servers.\n";
 print "\n";
-print "virtualmin list-mysql-servers [--multiline]\n";
+print "virtualmin list-mysql-servers [--multiline | --json | --xml]\n";
 print "                              [--name-only]\n";
 exit(1);
 }

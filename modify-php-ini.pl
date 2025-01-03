@@ -5,14 +5,14 @@
 Changes PHP variables for some or all domains.
 
 This command can be used to change the value of a PHP configuration variable
-(set in the php.ini file and Apache configuration) for one or many virtual
-servers at once. The servers to update can be selected with the C<--domain> or
-C<--user> flags, or you can choose to modify them all with the C<--all-domains>
-option.
+(set in the php.ini file, FPM .conf file and Apache configuration) for one or
+many virtual servers at once. The servers to update can be selected with the
+C<--domain> or C<--user> flags, or you can choose to modify them all with the
+C<--all-domains> option.
 
 If your system supports multiple PHP versions, you can limit the changes
 to the config for a specific version with the C<--php-version> flag followed
-by a number, like 4 or 5.
+by a number, like 7.4 or 8.2.
 
 The variables to change are set with the C<--ini-name> flag, which can be
 given multiple times to change more than one variable. The new values are
@@ -36,6 +36,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "modify-php-ini.pl must be run as root";
 	}
+&licence_status();
 &foreign_require("phpini");
 @OLDARGV = @ARGV;
 &set_all_text_print();
@@ -113,15 +114,28 @@ foreach my $d (@doms) {
 			}
 
 		# Update settings in each one
-		foreach $ini (@inis) {
-			&lock_file($ini->[1]);
-			$conf = &phpini::get_config($ini->[1]);
-			for(my $i=0; $i<@ini_names; $i++) {
-				&phpini::save_directive($conf, $ini_names[$i],
-							       $ini_values[$i]);
+		my ($inifile, $ininame, $inivalue);
+		eval {
+			local $main::error_must_die = 1;
+			foreach $ini (@inis) {
+				$inifile = $ini->[1];
+				&lock_file($ini->[1]);
+				$conf = &phpini::get_config($ini->[1]);
+				for(my $i=0; $i<@ini_names; $i++) {
+					$ininame = $ini_names[$i];
+					$inivalue = $ini_values[$i];
+					&phpini::save_directive(
+						$conf, $ini_names[$i],
+						$ini_values[$i]);
+					}
+				&flush_file_lines($ini->[1], undef, 1);
+				&unlock_file($ini->[1]);
 				}
-			&flush_file_lines($ini->[1], undef, 1);
-			&unlock_file($ini->[1]);
+			};
+		if ($@) {
+			&$second_print(".. failed to update \"$inifile\" with ".
+				"setting \"$ininame\" to \"$inivalue\": $@");
+			next;
 			}
 		}
 

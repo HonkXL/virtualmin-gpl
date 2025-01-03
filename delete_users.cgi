@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'users_derr'});
 
 $d = &get_domain($in{'dom'});
@@ -15,13 +16,11 @@ if ($in{'confirm'}) {
 	&obtain_lock_unix($d);
 	&obtain_lock_mail($d);
 	}
-@users = &list_domain_users($d);
+@users = &list_domain_users($d, 0, 0, 0, 0, 1);
 
 # Get the users
 foreach $du (@del) {
-	($unix, $name) = split(/\//, $du, 2);
-	($user) = grep { $_->{'user'} eq $name &&
-			 $_->{'unix'} == $unix } @users;
+	($user) = grep { $_->{'user'} eq $du } @users;
 	if ($user) {
 		push(@dusers, $user);
 		&error($text{'users_edunix'}) if ($user->{'domainowner'});
@@ -41,6 +40,9 @@ if ($in{'confirm'}) {
 			$simple = &get_simple_alias($d, $user);
 			&delete_simple_autoreply($d, $simple) if ($simple);
 			}
+
+		# Delete SSH public key
+		&delete_domain_user_ssh_pubkey($d, $user);
 
 		# Delete the user, his virtusers and aliases
 		&delete_user($user, $d);

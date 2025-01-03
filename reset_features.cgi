@@ -15,9 +15,10 @@ my @dom_features = grep { $d->{$_} && $sel{$_} }
 		 &list_ordered_features($d);
 @dom_features || &error($text{'reset_efeatures2'});
 my %feature = map { $_, 1 } grep { $sel{$_} } @features;
-my %plugins = map { $_, 1 } grep { $sel{$_} } &list_feature_plugins();
+my %plugin = map { $_, 1 } grep { $sel{$_} } &list_feature_plugins();
 
 # Can each be reset?
+my %canmap;
 foreach $f (@dom_features) {
 	my $can = 1;
 	my $fn = &feature_name($f, $d);
@@ -30,6 +31,7 @@ foreach $f (@dom_features) {
 			&plugin_call($f, "feature_can_reset", $d) : 1;
 		}
 	$can || &error(&text('reset_enoreset', $fn));
+	$canmap{$f} = $can;
 	}
 
 # Run the before command
@@ -43,7 +45,8 @@ if (defined($merr)) {
 &ui_print_header(&domain_in($d), $text{'reset_title'}, "");
 
 # Reset each feature or plugin that was selected
-$oldd = { %$d };
+my $oldd = { %$d };
+my $dataloss;
 foreach $f (@dom_features) {
 	my $err;
 	my $fn = &feature_name($f, $d);
@@ -66,6 +69,7 @@ foreach $f (@dom_features) {
 			}
 		else {
 			&$second_print(&text('reset_dataloss', $err));
+			$dataloss = 1;
 			next;
 			}
 		}
@@ -75,31 +79,48 @@ foreach $f (@dom_features) {
 	if ($feature{$f}) {
 		# Core feature of Virtualmin
 		my $rfunc = "reset_".$f;
-		if (defined(&$rfunc) && !$in{'fullreset'}) {
+		my $afunc = "reset_also_".$f;
+		if (defined(&$rfunc) &&
+		    (!$in{'fullreset'} || $canmap{$f} == 2)) {
 			# A reset function exists
 			&try_function($f, $rfunc, $d);
 			}
 		else {
 			# Turn on and off via delete and setup calls
-			$d->{$f} = 0;
-			&call_feature_func($f, $d, $oldd);
-			my $newoldd = { %$d };
-			$d->{$f} = 1;
-			&call_feature_func($f, $d, $newoldd);
+			my @allf = ($f);
+			push(@allf, &$afunc($d)) if (defined(&$afunc));
+			foreach my $ff (reverse(@allf)) {
+				$d->{$ff} = 0;
+				&call_feature_func($ff, $d, $oldd);
+				}
+			foreach my $ff (@allf) {
+				my $newoldd = { %$d };
+				$d->{$ff} = 1;
+				&call_feature_func($ff, $d, $newoldd);
+				}
 			}
 		}
-	if ($plugin{$f}) {
+	elsif ($plugin{$f}) {
 		# Defined by a plugin
-		if (&plugin_defined($f, "feature_reset") && !$in{'fullreset'}) {
+		if (&plugin_defined($f, "feature_reset") &&
+		    (!$in{'fullreset'} || $canmap{$f} == 2)) {
 			# Call the reset function
 			&plugin_call($f, "feature_reset", $d);
 			}
 		else {
 			# Turn off and on again
-			$d->{$f} = 0;
-			&plugin_call($f, "feature_delete", $d);
-			$d->{$f} = 1;
-			&plugin_call($f, "feature_setup", $d);
+			my @allf = ($f);
+			if (&plugin_defined($f, "feature_reset_also")) {
+				push(@allf, &plugin_call($f, "feature_reset_also", $d));
+				}
+			foreach my $ff (reverse(@allf)) {
+				$d->{$ff} = 0;
+				&plugin_call($ff, "feature_delete", $d);
+				}
+			foreach my $ff (@allf) {
+				$d->{$ff} = 1;
+				&plugin_call($ff, "feature_setup", $d);
+				}
 			}
 		}
 	&$outdent_print();
@@ -108,6 +129,16 @@ foreach $f (@dom_features) {
 	}
 
 &run_post_actions();
+
+# Offer to reset anyway
+if ($dataloss) {
+	print &ui_form_start("reset_features.cgi", "post");
+	print &ui_hidden("server", $in{'server'});
+	foreach my $f (keys %sel) {
+		print &ui_hidden("features", $f);
+		}
+	print &ui_form_end( [ [ 'skipwarnings', $text{'reset_override'} ] ]);
+	}
 
 &ui_print_footer("", $text{'index_return'},
 	 "edit_newvalidate.cgi?mode=reset", $text{'newvalidate_return'});

@@ -6,7 +6,7 @@ Lists API scripts available
 
 This command lists all API commands available, categorized by type and
 with a brief summary of each. It is used to produce the output from the
-virtualmin --help command. By default the output is in a human-readable format,
+Virtualmin C<--help> command. By default the output is in a human-readable format,
 but you can switch to a more parsable format with the C<--multiline> flag.
 
 =cut
@@ -29,6 +29,7 @@ if (!$module_name) {
 
 # Parse command-line args
 my $short = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--short") {
@@ -36,15 +37,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--long") {
 		$short = 0;
-		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -71,11 +63,15 @@ foreach my $c (&list_api_categories()) {
 	my ($cname, @cglobs) = @$c;
 	@cglobs = map { my $g = $_; ($g, "pro/$g", map { "$root_directory/$_/$g" } @plugins) } @cglobs;
 	my @cmds = map { glob($_) } @cglobs;
-	@cmds = grep { &indexof($_, @skips) < 0 && !$done{$_} } @cmds;
 
 	# Print a line for each command
 	my $donehead = 0;
 	foreach my $cmd (@cmds) {
+		next if (-l $cmd);
+		next if (&indexof($cmd, @skips) >= 0);
+		my $spellcmd = $cmd;
+		$spellcmd =~ s/licence/license/g;
+		next if ($done{$spellcmd}++);
 		my $src = &read_file_contents($cmd);
 		next if ($src !~ /=head1\s+(.*)\n\n(.*)\n/);
 		my $desc = $2;
@@ -113,7 +109,6 @@ foreach my $c (&list_api_categories()) {
 			printf $fmt, $scmd, $desc;
 			printf $fmt, "", $wrap if ($wrap);
 			}
-		$done{$cmd}++;
 		}
 	if ($donehead && !$multiline && !$nameonly) {
 		print "\n";
@@ -126,7 +121,7 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists available command-line API scripts.\n";
 print "\n";
 print "virtualmin list-commands [--short]\n";
-print "                         [--multiline | --nameonly]\n";
+print "                         [--multiline | --name-only]\n";
 exit(1);
 }
 

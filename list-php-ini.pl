@@ -10,8 +10,8 @@ servers to update can be selected with the C<--domain> or C<--user> flags,
 or you can choose to modify them all with the C<--all-domains> option.
 
 If your system supports multiple PHP versions, you can limit the changes
-to the config for a specific version with the C<--php-version> flag folowed
-by a number, like 4 or 5.
+to the config for a specific version with the C<--php-version> flag followed
+by a number, like 7.4 or 8.2.
 
 The variables to show are set with the C<--ini-name> flag, which can be
 given multiple times to list more than one variable.
@@ -38,6 +38,7 @@ if (!$module_name) {
 &set_all_text_print();
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -54,15 +55,6 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--php-version") {
 		$php_ver = shift(@ARGV);
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");

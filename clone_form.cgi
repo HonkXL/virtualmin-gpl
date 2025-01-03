@@ -13,7 +13,7 @@ if ($d->{'parent'} && !&can_create_sub_servers() ||
 ($dleft, $dreason, $dmax) = &count_domains(
 	$d->{'alias'} ? "aliasdoms" :
 	$d->{'parent'} ? "realdoms" : "topdoms");
-&error(&text('setup_emax', $dmax, $virtualmin_shop_link)) if ($dleft == 0);
+&error(&text('setup_emax', $dmax, $virtualmin_account_subscriptions)) if ($dleft == 0);
 
 &ui_print_header(&domain_in($d), $text{'clone_title'}, "", "clone");
 
@@ -33,14 +33,12 @@ print &ui_table_row($text{'clone_newdom'},
 # New username and password
 if (!$d->{'parent'}) {
 	print &ui_table_row($text{'clone_newuser'},
-		&ui_textbox("newuser", undef, 20, undef, undef, undef,
-		  &vui_ui_input_noauto_attrs()));
+		&vui_noauto_textbox("newuser", undef, 20));
 
 	print &ui_table_row($text{'clone_newpass'},
 		&ui_radio("newpass_def", 1,
-			  [ [ 1, $text{'clone_samepass'} ],
-			    [ 0, &ui_password("newpass", undef, 20, 0, undef,
-			           &vui_ui_input_noauto_attrs()) ] ]));
+		  [ [ 1, $text{'clone_samepass'} ],
+		    [ 0, &vui_noauto_password("newpass", undef, 20) ] ]));
 	}
 
 # IP address

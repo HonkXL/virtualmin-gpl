@@ -142,9 +142,12 @@ foreach $f (&list_backup_plugins()) {
 	}
 $ftable .= &ui_links_row(\@links);
 print &ui_table_row($text{'restore_features'}, $ftable);
+print &ui_hidden_table_end("features");
 
 if (&can_backup_virtualmin()) {
 	# Show virtualmin object backup options
+	print &ui_hidden_table_start($text{'backup_headerfeatures2'},
+		"width=100%", 2, "features2", 0, \@tds);
 	$vtable = "";
 	%virts = map { $_, 1 } split(/\s+/, $sched->{'virtualmin'});
 	foreach $vo (@virtualmin_backups) {
@@ -155,8 +158,8 @@ if (&can_backup_virtualmin()) {
 		   &select_invert_link("virtualmin") );
 	$vtable .= &ui_links_row(\@links);
 	print &ui_table_row($text{'restore_virtualmin'}, $vtable);
+	print &ui_hidden_table_end("features2");
 	}
-print &ui_hidden_table_end("features");
 
 if ($crmode == 1) {
 	# Creation options
@@ -166,6 +169,10 @@ if ($crmode == 1) {
 	# Re-allocate UIDs
 	print &ui_table_row(&hlink($text{'restore_reuid'}, "restore_reuid"),
 			    &ui_yesno_radio("reuid", 1));
+
+	# Re-allocate user and group
+	print &ui_table_row(&hlink($text{'restore_reuser'}, "restore_reuser"),
+			    &ui_yesno_radio("reuser", 0));
 
 	# Just re-import, to fix missing domains file
 	print &ui_table_row(&hlink($text{'restore_fix'}, "restore_fix"),

@@ -252,8 +252,8 @@ if ($pass ne $oldpass && !$d->{'parent'} &&
 
 		# Update all installed scripts database password which are
 		# using PostgreSQL
-		&update_all_installed_scripts_database_credentials(
-			$d, $oldd, 'dbpass', &postgres_pass($d), 'postgres');
+		&update_scripts_creds(
+			$d, $oldd, 'dbpass', &postgres_pass($d), 'psql');
 		}
 	else {
 		&$second_print($text{'save_nopostgres'});
@@ -318,8 +318,8 @@ elsif ($user ne $olduser && !$d->{'parent'}) {
 
 			# Update all installed scripts database username which
 			# are using PostgreSQL
-			&update_all_installed_scripts_database_credentials(
-				$d, $oldd, 'dbuser', $user, 'postgres');
+			&update_scripts_creds(
+				$d, $oldd, 'dbuser', $user, 'psql');
 			}
 		else {
 			# Cannot
@@ -512,7 +512,7 @@ if ($d->{'parent'}) {
 elsif (&postgres_user_exists($d)) {
 	&require_postgres();
 	my $date = localtime(0);
-	&execute_dom_pgsql($d, undef,
+	&execute_dom_psql($d, undef,
 		"alter user ".&postgres_uquote($user).
 		" valid until ".&postgres_quote($date));
 	&$second_print($text{'setup_done'});
@@ -537,7 +537,7 @@ if ($d->{'parent'}) {
 	}
 elsif (&postgres_user_exists($d)) {
 	&require_postgres();
-	&execute_dom_pgsql($d, undef,
+	&execute_dom_psql($d, undef,
 		"alter user ".&postgres_uquote($user).
 		" valid until ".&postgres_quote("Jan 1 2038"));
 	&$second_print($text{'setup_done'});
@@ -717,6 +717,34 @@ foreach $db (@dbs) {
 	else {
 		&$second_print($text{'setup_done'});
 		}
+	}
+
+# Restoring virtual PostgreSQL users 
+my @dbusers_virt = &list_extra_db_users($d);
+if (@dbusers_virt) {
+	&$first_print($text{'restore_postgresudummy'});
+	&$indent_print();
+	foreach my $dbuser_virt (@dbusers_virt) {
+		&$first_print(&text('restore_mysqludummy2', $dbuser_virt->{'user'}));
+		# If restored user not under the same domain already
+		# exists, delete extra user record, and skip it
+		if (&check_any_database_user_clash($d, $dbuser_virt->{'user'}) &&
+		    $dbuser_virt->{'user'} eq &remove_userdom($dbuser_virt->{'user'}, $d)) {
+			&$second_print($text{'restore_emysqluimport2'});
+			&delete_extra_user($d, $dbuser_virt);
+			next;
+			}
+		my $err = &create_databases_user($d, $dbuser_virt, 'postgres');
+		if ($err) {
+			&$second_print(&text('restore_emysqluimport', $err));
+			}
+		else {
+			&$second_print($text{'setup_done'});
+			}
+
+		}
+	&$outdent_print();
+	&$second_print($text{'setup_done'});
 	}
 
 # If the restore re-created a domain, the list of databases should be synced
@@ -950,6 +978,16 @@ my ($d) = @_;
 my $pgmod = &require_dom_postgres($d);
 my %pgconfig = &foreign_config($pgmod);
 return $pgconfig{'host'} || 'localhost';
+}
+
+# get_database_port_postgres([&domain])
+# Returns the port number the server on which PostgreSQL is actually running
+sub get_database_port_postgres
+{
+my ($d) = @_;
+my $pgmod = &require_dom_postgres($d);
+my %pgconfig = &foreign_config($pgmod);
+return $pgconfig{'port'} || 5432;
 }
 
 # sysinfo_postgres()

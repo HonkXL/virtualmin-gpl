@@ -5,6 +5,7 @@ require './virtual-server-lib.pl';
 &can_edit_templates() || &error($text{'provision_ecannot'});
 &error_setup($text{'provision_err'});
 &ReadParse();
+&licence_status();
 %oldconfig = %config;
 
 # Validate and store inputs
@@ -170,5 +171,6 @@ foreach $f (@$feats) {
 &$second_print($text{'setup_done'});
 
 FAILED:
-&ui_print_footer("", $text{'index_return'});
+&ui_print_footer("provision.cgi", $text{'provision_return'},
+		 "", $text{'index_return'});
 

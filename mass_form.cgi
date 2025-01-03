@@ -3,6 +3,7 @@
 
 require './virtual-server-lib.pl';
 &ReadParse();
+&licence_status();
 &error_setup($text{'mass_err'});
 $d = &get_domain($in{'dom'});
 &can_edit_domain($d) || &error($text{'users_ecannot'});
@@ -24,7 +25,6 @@ print &ui_table_start($text{'mass_header'}, undef, 2);
 @qtypes = ( );
 push(@qtypes, "quota") if (&has_home_quotas());
 push(@qtypes, "mquota") if (&has_mail_quotas());
-push(@qtypes, "qquota") if (&has_server_quotas());
 foreach $quota (@qtypes) {
 	print &ui_table_row($text{'mass_'.$quota},
 	    &opt_quota_input($quota, "none",

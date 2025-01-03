@@ -13,9 +13,38 @@ parameter followed by one of C<none>, C<mod_php>, C<cgi>, C<fcgid> or C<fpm>.
 Or you can use C<--default-mode> to switch to the default defined in the 
 domain's template.
 
-When using FPM mode, you can configure Apache to use a socket file
+When using FPM mode, you can configure process manager mode, like C<dynamic>,
+C<static> or C<ondemand> with the C<--php-fpm-mode> flag.
+
+Additionally, when using FPM mode, you can configure webserver to use a socket file
 for communication with the FPM server with the C<--php-fpm-socket> flag.
 Or switch back to using a TCP port with the C<--php-fpm-port> flag.
+
+If your system has more than one version of PHP installed, the version to use
+for a domain can be set with the C<--php-version> parameter, followed by a
+number (7.4 or 8.2).
+
+If Virtualmin runs PHP via FastCGI, you can set the number of PHP sub-processes
+with the C<--php-children> parameter or using C<--php-children-no-check> parameter
+to skip recommended checks, or turn off the automatic startup of
+sub-processes with C<--no-php-children>. Similarly, the maximum run-time of 
+a PHP script can be set with C<--php-timeout>, or set to unlimited with
+C<--no-php-timeout>.
+
+PHP error logging can be enabled with the C<--php-log> flag, followed by
+a path like C<logs/php.log>. Alternately you can opt to use the default
+path with the C<--default-php-log> flag, or turn logging off with the flag
+C<--no-php-log>.
+
+By default PHP scripts can send email, but you can prevent this with the 
+C<--no-php-mail> flag. This can provide some protection against a PHP script
+vulnerability being used to send spam. Or to re-enable email again, use the
+C<--php-mail> flag.
+
+If your Apache configuration contains unsupported C<mod_php> directives,
+the C<--cleanup-mod-php> flag can be used to remove them from a virtual server.
+This is primarily useful if the Apache module has been disabled, but not all
+directives have been cleaned up.
 
 The C<--proxy> parameter can be used to have the website proxy all requests
 to another URL, which must follow C<--proxy>. To disable this, the
@@ -26,23 +55,14 @@ virtual server to another URL, using a hidden frame rather than proxying. To
 turn it off, using the C<--no-framefwd> option. To specify a title for the
 forwarding frame page, use C<--frametitle>.
 
-If your system has more than one version of PHP installed, the version to use
-for a domain can be set with the C<--php-version> parameter, followed by a
-number (4 or 5).
-
-If Virtualmin runs PHP via fastCGI, you can set the number of PHP sub-processes
-with the C<--php-children> parameter, or turn off the automatic startup of
-sub-processes with C<--no-php-children>. Similarly, the maximum run-time of 
-a PHP script can be set with C<--php-timeout>, or set to unlimited with
-C<--no-php-timeout>.
-
 If Ruby is installed, the execution mode for scripts in that language can be
 set with the C<--ruby-mode> flag, followed by either C<--mod_ruby>, C<--cgi> or
 C<--fcgid>. This has no effect on scripts using the Rails framework though,
 as they always run via a Mongrel proxy.
 
-You can also replace a website's pages using Virtualmin's content style, 
-If C<--content> parameter is given, it will be used in default style web page.
+To replace the website's default page, use the C<--content> parameter, followed
+by the path to a file containing the HTML content or the content itself. If no
+content is provided, a Virtualmin default website page will be created.
 
 To enable the webmail and admin DNS entries for the selected domains
 (which redirect to Usermin and Webmin by default), the C<--webmail> flag
@@ -81,34 +101,45 @@ sharing and allow this domain's cert to be re-generated. Conversely, if the
 server isn't sharing a cert but could, the C<--link-ssl-cert> flag can be used
 to enable sharing.
 
+To move the SSL cert, key or CA cert files to a new location, use the
+C<--ssl-cert>, C<--ssl-key> or C<--ssl-ca> flags respectively, followed
+by an absolute or relative path. To switch to the default locations set in the
+server's template, use the C<--default-ssl-cert>, C<--default-ssl-key> or
+C<--default-ssl-ca> flags. Or to switch all SSL paths to match the template,
+simply use C<--default-ssl-paths>.
+
 To change the domain's HTML directory, use the C<--document-dir> flag followed
 by a path relative to the domain's home. Alternately, if the Apache config has
 been modified outside of Virtualmin and you just want to detect the new path,
-use the C<--fix-document-dir> flag. If you want the directory to be renames
+use the C<--fix-document-dir> flag. If you want the directory to be renamed
 as well as updated in the webserver configuration, use the
-C<--move-document-dir> flag.
+C<--move-document-dir> flag. Note that this flag cannot be used for sub-domains,
+as their HTML directory is under the parent's HTML dir.
+
+However, for sub-domains you can adjust the HTML sub-directory with the 
+C<--subprefix> path followed by a directory relative to the parent's
+C<public_html> dir. Or use C<--move-subprefix> to actually move the directory
+as well.
 
 To force re-generated of TLSA DNS records after the SSL cert is manually
 modified, use the C<--sync-tlsa> flag.
 
-If your system supports FCGIwrap for running CGI scripts, you can use the 
-C<--enable-fcgiwrap> flag to switch to it instead of using suEXEC, or 
-C<--disable-fcgiwrap> to switch back.
+You can select which mode is used for running CGI scripts with one of the
+flags C<--enable-fcgiwrap> or C<--enable-suexec>. Or you can turn off CGIs
+entirely (not recommended) with C<--disable-cgi>.
 
 If your webserver supports multiple HTTP protocols, you can use the 
 C<--protocols> flag to choose which are enabled for the website. This flag must
 be followed by some combination of C<http/1.1>, C<h2> and C<h2c>. To revert to
 the default protocols for your webserver, use the C<--default-protocols> flag.
 
-If your Apache configuration contains unsupported C<mod_php> directives,
-the C<--cleanup-mod-php> flag can be used to remove them from a virtual server.
-This is primarily useful if the Apache module has been disabled, but not all
-directives have been cleaned up.
-
-PHP error logging can be enabled with the C<--php-log> flag, followed by
-a path like C<logs/php.log>. Alternately you can opt to use the default
-path with the C<--default-php-log> flag, or turn logging off with the flag
-C<--no-php-log>.
+Although the C<create-redirect> API command can be used to create arbitrary
+redirects, you can use this command to setup some canonical domain redirects.
+To redirect all requests from www.domain.com to domain.com, use the 
+C<--www-to-domain> flag. Or to go in the other direction, use the flag
+C<--domain-to-www>. Or to redirect all sub-domains to domain.com you can use
+C<--subdomain-to-domain>. Finally to turn off canonical domain redirects,
+use C<--no-redirect>.
 
 =cut
 
@@ -127,6 +158,7 @@ if (!$module_name) {
 	require './virtual-server-lib.pl';
 	$< == 0 || die "modify-web.pl must be run as root";
 	}
+&licence_status();
 @OLDARGV = @ARGV;
 &set_all_text_print();
 
@@ -146,13 +178,11 @@ while(@ARGV > 0) {
 	elsif ($a eq "--default-mode") {
 		$defmode = 1;
 		}
-	elsif ($a eq "--ruby-mode" && $supports_ruby) {
-		$rubymode = shift(@ARGV);
-		}
-	elsif ($a eq "--php-children") {
+	elsif ($a =~ /--php-children/) {
 		$children = shift(@ARGV);
+		$children_no_check = 1 if ($a =~ /no-check/);
 		$children > 0 || &usage("Invalid number of PHP sub-processes");
-		$children > $max_php_fcgid_children && &usage("Too many PHP sub-processes - maximum is $max_php_fcgid_children");
+		(!$children_no_check && $children > $max_php_fcgid_children) && &usage("Too many PHP sub-processes -  maximum recommended is $max_php_fcgid_children");
 		}
 	elsif ($a eq "--no-php-children") {
 		$children = 0;
@@ -186,6 +216,9 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--no-framefwd") {
 		$framefwd = "";
+		}
+	elsif ($a eq "--ruby-mode" && $supports_ruby) {
+		$rubymode = shift(@ARGV);
 		}
 	elsif ($a eq "--content") {
 		$content = shift(@ARGV);
@@ -222,6 +255,13 @@ while(@ARGV > 0) {
 		}
 	elsif ($a eq "--move-document-dir") {
 		$htmldir = shift(@ARGV);
+		$htmldirmove = 1;
+		}
+	elsif ($a eq "--subprefix") {
+		$subprefix = shift(@ARGV);
+		}
+	elsif ($a eq "--move-subprefix") {
+		$subprefix = shift(@ARGV);
 		$htmldirmove = 1;
 		}
 	elsif ($a eq "--fix-document-dir") {
@@ -270,6 +310,27 @@ while(@ARGV > 0) {
 	elsif ($a eq "--link-ssl-cert") {
 		$linkcert = 1;
 		}
+	elsif ($a eq "--ssl-cert") {
+		$ssl_cert = shift(@ARGV);
+		}
+	elsif ($a eq "--default-ssl-cert") {
+		$ssl_cert = "default";
+		}
+	elsif ($a eq "--ssl-key") {
+		$ssl_key = shift(@ARGV);
+		}
+	elsif ($a eq "--default-ssl-key") {
+		$ssl_key = "default";
+		}
+	elsif ($a eq "--ssl-ca") {
+		$ssl_ca = shift(@ARGV);
+		}
+	elsif ($a eq "--default-ssl-ca") {
+		$ssl_ca = "default";
+		}
+	elsif ($a eq "--default-ssl-paths") {
+		$ssl_cert = $ssl_key = $ssl_ca = "default";
+		}
 	elsif ($a eq "--sync-tlsa") {
 		$tlsa = 1;
 		}
@@ -279,11 +340,17 @@ while(@ARGV > 0) {
 	elsif ($a eq "--php-fpm-socket") {
 		$fpmsock = 1;
 		}
-	elsif ($a eq "--enable-fcgiwrap") {
-		$fcgiwrap = 1;
+	elsif ($a eq "--php-fpm-mode") {
+		$fpmtype = shift(@ARGV);
 		}
-	elsif ($a eq "--disable-fcgiwrap") {
-		$fcgiwrap = 0;
+	elsif ($a eq "--enable-fcgiwrap") {
+		$cgimode = 'fcgiwrap';
+		}
+	elsif ($a eq "--disable-fcgiwrap" || $a eq "--enable-suexec") {
+		$cgimode = 'suexec';
+		}
+	elsif ($a eq "--disable-cgi") {
+		$cgimode = '';
 		}
 	elsif ($a eq "--add-directive") {
 		my ($n, $v) = split(/\s+/, shift(@ARGV));
@@ -318,6 +385,24 @@ while(@ARGV > 0) {
 	elsif ($a eq "--no-php-log") {
 		$phplog = "";
 		}
+	elsif ($a eq "--no-php-mail") {
+		$phpmail = 0;
+		}
+	elsif ($a eq "--php-mail") {
+		$phpmail = 1;
+		}
+	elsif ($a eq "--no-redirect") {
+		$wwwredir = 0;
+		}
+	elsif ($a eq "--www-to-domain") {
+		$wwwredir = 1;
+		}
+	elsif ($a eq "--domain-to-www") {
+		$wwwredir = 2;
+		}
+	elsif ($a eq "--subdomain-to-domain") {
+		$wwwredir = 3;
+		}
 	elsif ($a eq "--help") {
 		&usage();
 		}
@@ -326,17 +411,19 @@ while(@ARGV > 0) {
 		}
 	}
 @dnames || $all_doms || usage("No domains to modify specified");
-$mode || $rubymode || defined($proxy) || defined($framefwd) || $tlsa ||
-  $content || defined($children) || defined($phplog) ||
+$mode || defined($proxy) || defined($framefwd) || $tlsa || $rubymode ||
+  defined($content) || defined($children) || defined($phplog) ||
   $version || defined($webmail) || defined($matchall) || defined($timeout) ||
   $defwebsite || $accesslog || $errorlog || $htmldir || $port || $sslport ||
   $urlport || $sslurlport || defined($includes) || defined($fixoptions) ||
   defined($renew) || $fixhtmldir || $breakcert || $linkcert || $fpmport ||
-  $fpmsock || $defmode || defined($fcgiwrap) || @add_dirs || @remove_dirs ||
-  $protocols || $fix_mod_php || &usage("Nothing to do");
+  $fpmsock || $fpmtype || $defmode || defined($cgimode) || $subprefix ||
+  @add_dirs || @remove_dirs || $protocols || $fix_mod_php ||
+  $ssl_cert || $ssl_key || $ssl_ca || defined($phpmail) || defined($wwwredir) ||
+	&usage("Nothing to do");
 $proxy && $framefwd && &usage("Both proxying and frame forwarding cannot be enabled at once");
 
-# Validate fastCGI options
+# Validate FastCGI options
 @modes = &supported_php_modes();
 if (defined($timeout)) {
 	grep(/^fcgid|fpm$/, @modes) ||
@@ -396,7 +483,7 @@ foreach $d (@doms) {
 		}
 	@supp = &supported_php_modes($d);
 	!$mode || &indexof($mode, @supp) >= 0 ||
-		&usage("The selected PHP exection mode cannot be used with $d->{'dom'}");
+		&usage("The selected PHP execution mode cannot be used with $d->{'dom'}");
 	if ($version) {
 		$mode eq "mod_php" &&
 			&usage("The PHP version cannot be set for $d->{'dom'}, as it is using mod_php");
@@ -408,7 +495,7 @@ foreach $d (@doms) {
 						   : ( );
 	!$rubymode || $rubymode eq "none" ||
 	    &indexof($rubymode, @rubysupp) >= 0 ||
-		&usage("The selected Ruby exection mode cannot be used with $d->{'dom'}");
+		&usage("The selected Ruby execution mode cannot be used with $d->{'dom'}");
 	}
 
 if ($defaultwebsite && @doms > 1) {
@@ -421,12 +508,11 @@ if ($includes ne "") {
 	    &usage("--includes must be followed by an extension like .html");
 	}
 
-# Validate fcgiwrap change
-if (defined($fcgiwrap)) {
-	$fcgiwrap && !&supports_fcgiwrap() &&
-		&usage("FCGIwrap is not supported on this system");
-	!$fcgiwrap && !&supports_suexec() &&
-		&usage("suEXEC is not supported on this system");
+# Validate CGI script mode
+if ($cgimode) {
+	@cgimodes = &has_cgi_support();
+	&indexof($cgimode, @cgimodes) >= 0 ||
+	    &usage("CGI script mode $cgimode is not supported on this system");
 	}
 
 # Validate SSI change
@@ -436,6 +522,7 @@ if (defined($includes) && !&supports_ssi()) {
 
 # Lock them all
 foreach $d (@doms) {
+	&lock_domain($d);
 	&obtain_lock_web($d) if ($d->{'web'});
 	&obtain_lock_dns($d) if ($d->{'dns'} &&
 				 (defined($webmail) || defined($matchall)));
@@ -461,18 +548,35 @@ foreach $d (@doms) {
 		&$second_print($err ? ".. failed : $err" : ".. done");
 		}
 
+	# Save PHP-FPM process manager mode
+	my $curr_phpmode = &get_domain_php_mode($d);
+	if ($curr_phpmode eq 'fpm' && $fpmtype) {
+		$fpmtype =~ /^(dynamic|static|ondemand)$/ ||
+			&usage("Unknown PHP-FPM process manager mode : $fpmtype. Valid modes are dynamic, static and ondemand");
+		my $fpmtype_curr = &get_domain_php_fpm_mode($d);
+		if ($fpmtype ne $fpmtype_curr) {
+			&$first_print(&text('phpmode_fpmtypeing', $fpmtype));
+			&save_domain_php_fpm_mode($d, $fpmtype);
+			&$second_print($text{'setup_done'});
+			}
+		}
+
 	# Update PHP fCGId children
 	if (defined($children) && !$d->{'alias'}) {
 		&$first_print("Updating PHP child processes ..");
 		$oldchildren = &get_domain_php_children($d);
+		$d->{'phpnosanity_check'} = $children_no_check;
 		if ($oldchildren == -2) {
 			&$second_print(".. not supported by this PHP mode");
 			}
-		elsif ($err = &save_domain_php_children($d, $children)) {
-			&$second_print(".. failed : $err");
-			}
 		else {
-			&$second_print(".. done");
+			my $ok = &save_domain_php_children($d, $children);
+			if (!$ok) {
+				&$second_print(".. failed");
+				}
+			else {
+				&$second_print(".. done");
+				}
 			}
 		}
 
@@ -480,8 +584,10 @@ foreach $d (@doms) {
 	if (defined($timeout) && !$d->{'alias'}) {
 		$oldtimeout = &get_fcgid_max_execution_time($d);
 		if ($timeout != $oldtimeout) {
+			&$first_print("Updating PHP maximum run-time ..");
 			&set_fcgid_max_execution_time($d, $timeout);
 			&set_php_max_execution_time($d, $timeout);
+			&$second_print(".. done");
 			}
 		}
 
@@ -560,7 +666,7 @@ foreach $d (@doms) {
 		&$second_print($text{'setup_done'});
 		}
 
-	if (!$d->{'alias'} && $content) {
+	if (!$d->{'alias'} && defined($content)) {
 		# Just create index.html page with content
 		&$first_print($text{'setup_contenting'});
 		&create_index_content($d, 
@@ -668,10 +774,26 @@ foreach $d (@doms) {
 		&refresh_webmin_user($d);
 		}
 
-	if ($htmldir && !$d->{'alias'} && $d->{'public_html_dir'} !~ /\.\./) {
-		# Change HTML directory
+	if ($htmldir && !$d->{'alias'} && !$d->{'subdom'} &&
+	    $d->{'public_html_dir'} !~ /\.\./) {
+		# Change HTML directory for a regular domain
 		&$first_print("Changing documents directory to $htmldir ..");
 		$err = &set_public_html_dir($d, $htmldir, $htmldirmove);
+		&$second_print($err ? ".. failed : $err" : ".. done");
+		}
+	elsif ($subprefix && $d->{'subdom'}) {
+		# Change HTML directory for a sub-domain
+		&$first_print(
+		  "Changing sub-domain documents directory to $subprefix ..");
+		my $newd = { %$d };
+		$newd->{'subprefix'} = $subprefix;
+		delete($newd->{'public_html_dir'});
+		delete($newd->{'public_html_path'});
+		$htmldir = &public_html_dir($newd, 1);
+		$err = &set_public_html_dir($d, $htmldir, $htmldirmove);
+		if (!$err) {
+			$d->{'subprefix'} = $subprefix;
+			}
 		&$second_print($err ? ".. failed : $err" : ".. done");
 		}
 
@@ -789,6 +911,66 @@ foreach $d (@doms) {
 			}
 		}
 
+	# Update SSL cert, key and CA paths
+	my $ssl_changed = 0;
+	my @beforecerts = &get_all_domain_service_ssl_certs($d);
+	if (&domain_has_ssl_cert($d) && $ssl_cert) {
+		my $dom_cert = $ssl_cert eq "default" ?
+			&default_certificate_file($d, "cert") :
+			&absolute_domain_path($d, $ssl_cert);
+		&$first_print("Moving SSL cert to $dom_cert ..");
+		if ($d->{'ssl_same'}) {
+			&$second_print(".. not possible for shared certs");
+			}
+		elsif (&move_website_ssl_file($d, "cert", $dom_cert)) {
+			$ssl_changed = 1;
+			&$second_print(".. done");
+			}
+		else {
+			&$second_print(".. no change needed");
+			}
+		}
+	if (&domain_has_ssl_cert($d) && $ssl_key) {
+		my $dom_key = $ssl_key eq "default" ?
+			&default_certificate_file($d, "key") :
+			&absolute_domain_path($d, $ssl_key);
+		&$first_print("Moving SSL key to $dom_key ..");
+		if ($d->{'ssl_same'}) {
+			&$second_print(".. not possible for shared certs");
+			}
+		elsif (&move_website_ssl_file($d, "key", $dom_key)) {
+			&move_website_ssl_file($d, "combined",
+				&relative_certificate_file($dom_key, "combined"));
+			&move_website_ssl_file($d, "everything",
+				&relative_certificate_file($dom_key, "everything"));
+			$ssl_changed = 1;
+			&$second_print(".. done");
+			}
+		else {
+			&$second_print(".. no change needed");
+			}
+		}
+	if (&domain_has_ssl_cert($d) && $ssl_ca) {
+		my $dom_ca = $ssl_ca eq "default" ?
+			&default_certificate_file($d, "ca") :
+			&absolute_domain_path($d, $ssl_ca);
+		&$first_print("Moving SSL CA cert to $dom_ca ..");
+		if ($d->{'ssl_same'}) {
+			&$second_print(".. not possible for shared certs");
+			}
+		elsif (&move_website_ssl_file($d, "ca", $dom_ca)) {
+			$ssl_changed = 1;
+			&$second_print(".. done");
+			}
+		else {
+			&$second_print(".. no change needed");
+			}
+		}
+	if ($ssl_changed) {
+		# Update other services using the cert
+		&update_all_domain_service_ssl_certs($d, \@beforecerts);
+		}
+
 	if ($tlsa && $d->{'dns'}) {
 		# Resync TLSA records
 		&$first_print("Updating TLSA DNS records ..");
@@ -796,33 +978,21 @@ foreach $d (@doms) {
 		&$second_print(".. done");
 		}
 
-	if (defined($fcgiwrap)) {
-		# Turn fcgiwrap on or off
-		if ($fcgiwrap) {
+	if (defined($cgimode)) {
+		# Switch to fcgiwrap or suexec mode
+		if ($cgimode) {
 			&$first_print(
-				"Switching to fcgiwrap for CGI scripts ..");
-			if ($d->{'fcgiwrap_port'}) {
-				&$second_print(".. already enabled");
-				}
-			elsif ($err = &enable_apache_fcgiwrap($d)) {
-				&$second_print(".. failed : $err");
-				}
-			else {
-				&$second_print(
-				  ".. done, using port $d->{'fcgiwrap_port'}");
-				}
+				"Switching to $cgimode for CGI scripts ..");
 			}
 		else {
-			&$first_print("Switching to suEXEC for CGI scripts ..");
-			if (!$d->{'fcgiwrap_port'}) {
-				&$second_print(".. already enabled");
-				}
-			elsif ($err = &disable_apache_fcgiwrap($d)) {
-				&$second_print(".. failed : $err");
-				}
-			else {
-				&$second_print(".. done");
-				}
+			&$first_print("Turning off support for CGI scripts ..");
+			}
+		$err = &save_domain_cgi_mode($d, $cgimode);
+		if ($err) {
+			&$second_print(".. failed : $err");
+			}
+		else {
+			&$second_print(".. done");
 			}
 		}
 
@@ -918,10 +1088,53 @@ foreach $d (@doms) {
 			}
 		}
 
+	# Update PHP mail setting
+	if (defined($phpmail)) {
+		if ($phpmail) {
+			&$first_print("Allowing PHP scripts to send email ..");
+			}
+		else {
+			&$first_print("Disallowing PHP scripts from sending email ..");
+			}
+		my $err = &save_php_can_send_mail($d, $phpmail);
+		if ($err) {
+			&$second_print(".. failed : $err");
+			}
+		else {
+			&$second_print(".. done");
+			}
+		}
+
+	# Update www redirect
+	if (defined($wwwredir)) {
+		my @r = grep { &is_www_redirect($d, $_) } &list_redirects($d);
+		my $oldredir = @r ? &is_www_redirect($d, $r[0]) : undef;
+		if ($oldredir != $wwwredir) {
+			&$first_print(
+			    $wwwredir == 0 ?
+			      "Disabling redirect to canonical domain .." :
+			    $wwwredir == 1 ?
+			      "Adding redirect to non-www domain .." :
+			    $wwwredir == 2 ?
+			      "Adding redirect to www domain .." :
+			      "Adding redirect from sub-domains to domain ..");
+			foreach my $r (@r) {
+				$err ||= &delete_redirect($d, $r);
+				last if ($err);
+				}
+			foreach my $r (&get_redirect_by_mode($d, $wwwredir)) {
+				$err ||= &create_redirect($d, $r);
+				last if ($err);
+				}
+			&$second_print($err ? ".. failed : $err" : ".. done");
+			}
+		}
+
 	if (defined($proxy) || defined($framefwd) || $htmldir ||
 	    $port || $sslport || $urlport || $sslurlport || $mode || $version ||
-	    defined($renew) || $breakcert || $linkcert || $fixhtmldir ||
-	    defined($fcgiwrap) || defined($phplog)) {
+	    defined($children_no_check) || defined($renew) || $breakcert ||
+	    $linkcert || $fixhtmldir || defined($fcgiwrap) ||
+	    defined($phplog) || defined($fcgiwrap) || $ssl_changed) {
 		# Save the domain
 		&$first_print($text{'save_domain'});
 		&save_domain($d);
@@ -938,6 +1151,7 @@ foreach $d (@doms) {
 	&release_lock_dns($d) if ($d->{'dns'} && 
 				  (defined($webmail) || defined($matchall)));
 	&release_lock_web($d) if ($d->{'web'});
+	&unlock_domain($d);
 	}
 &run_post_actions();
 &virtualmin_api_log(\@OLDARGV);
@@ -949,16 +1163,20 @@ print "Changes web server settings for one or more domains.\n";
 print "\n";
 print "virtualmin modify-web --domain name | --all-domains\n";
 print "                     [--mode mod_php|cgi|fcgid|fpm | --default-mode]\n";
-print "                     [--php-children number | --no-php-children]\n";
+print "                     [--php-children|--php-children-no-check number | --no-php-children]\n";
 print "                     [--php-version num]\n";
 print "                     [--php-timeout seconds | --no-php-timeout]\n";
 print "                     [--php-fpm-port | --php-fpm-socket]\n";
-if ($supports_ruby) {
-	print "                     [--ruby-mode none|mod_ruby|cgi|fcgid]\n";
-	}
+print "                     [--php-fpm-mode dynamic|static|ondemand]\n";
+print "                     [--php-log filename | --no-php-log | --default-php-log]\n";
+print "                     [--php-mail | --no-php-mail]\n";
+print "                     [--cleanup-mod-php]\n";
 print "                     [--proxy http://... | --no-proxy]\n";
 print "                     [--framefwd http://... | --no-framefwd]\n";
 print "                     [--frametitle \"title\" ]\n";
+if ($supports_ruby) {
+	print "                     [--ruby-mode none|mod_ruby|cgi|fcgid]\n";
+	}
 if ($virtualmin_pro) {
 	print "                     [--content text|filename]\n";
 	}
@@ -972,20 +1190,26 @@ print "                     [--access-log log-path]\n";
 print "                     [--error-log log-path]\n";
 print "                     [--document-dir subdirectory |\n";
 print "                      --move-document-dir subdirectory |\n";
+print "                      --subprefix subdirectory |\n";
+print "                      --move-subprefix subdirectory |\n";
 print "                      --fix-document-dir]\n";
 print "                     [--port number] [--ssl-port number]\n";
 print "                     [--url-port number] [--ssl-url-port number]\n";
 print "                     [--fix-options]\n";
 print "                     [--letsencrypt-renew | --no-letsencrypt-renew]\n";
 print "                     [--break-ssl-cert | --link-ssl-cert]\n";
-print "                     [--enable-fcgiwrap | --disable-fcgiwrap]\n";
+print "                     [--enable-fcgiwrap | --enable-suexec |\n";
+print "                      --disable-cgi]\n";
 print "                     [--sync-tlsa]\n";
 print "                     [--add-directive \"name value\"]\n";
 print "                     [--remove-directive \"name value\"]\n";
 print "                     [--protocols \"proto ..\" | --default-protocols]\n";
-print "                     [--cleanup-mod-php]\n";
-print "                     [--php-log filename | --no-php-log |\n";
-print "                      --default-php-log]\n";
+print "                     [--ssl-cert file | --default-ssl-cert]\n";
+print "                     [--ssl-key file | --default-ssl-key]\n";
+print "                     [--ssl-ca file | --default-ssl-ca]\n";
+print "                     [--default-ssl-paths]\n";
+print "                     [--www-to-domain | --domain-to-www |\n";
+print "                      --subdomain-to-domain | --no-redirect]\n";
 exit(1);
 }
 

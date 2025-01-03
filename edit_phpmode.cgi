@@ -13,7 +13,7 @@ if (!$d->{'alias'}) {
 	$mode = &get_domain_php_mode($d);
 	}
 $p = &domain_has_website($d);
-my $ng = $p =~ /nginx/;
+$p || &error($text{'phpmode_ewebsite'});
 
 &ui_print_header(&domain_in($d), $text{'phpmode_title2'}, "");
 
@@ -64,7 +64,15 @@ if ($can) {
 				      [ map { [ $_, &$dmode($_) ] }
 					    @modes ]));
 		}
-
+	# FPM mode
+	print &ui_table_row(
+		&hlink($text{'phpmode_fpmtype'}, "phpmode_fpmtype"),
+		&ui_radio("fpmtype", &get_domain_php_fpm_mode($d),
+			[ ['dynamic', '<tt>dynamic</tt>'],
+				['static', '<tt>static</tt>'],
+				['ondemand', '<tt>ondemand</tt>'] ] ),
+				undef, undef, ['data-row-name="phpmode"'.
+				               ($mode eq 'fpm' ? '' : ' style="display: none;"')]);
 	# PHP fcgi sub-processes
 	if (!$d->{'alias'} && $can &&
 	    ($p eq 'web' || &plugin_defined($p, "feature_get_web_php_children"))) {
@@ -80,7 +88,9 @@ if ($can) {
 					    &ui_opt_textbox("children", $children > 0 ? $children : '', 5,
 					        $mode eq 'fcgid' ?
 					        $text{'tmpl_phpchildrenauto'} : 
-					        &text('tmpl_phpchildrennone', &get_php_max_childred_allowed())));
+					        &text('tmpl_phpchildrennone', &get_php_max_childred_allowed())).
+						" &nbsp; ".&ui_checkbox("nophpsanity_check", 1, $text{'phpmode_sanitycheck'},
+					                $d->{'phpnosanity_check'}));
 				}
 			}
 		}
@@ -128,18 +138,17 @@ if (&can_php_error_log($mode)) {
 		}
 	}
 
+# Show PHP mail option
+my $phpmail = &get_php_can_send_mail($d);
+if (defined($phpmail)) {
+	print &ui_table_row(&hlink($text{'phpmode_mail'}, 'phpmail'),
+		&ui_yesno_radio("mail", $phpmail));
+	}
+
 # PHP versions
-if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
+if ($canv && !$d->{'alias'} && $mode ne "mod_php" && $mode ne "none") {
 	# Build versions list
 	my @avail = &list_available_php_versions($d, $mode);
-	my $get_php_info_bubble = sub {
-		my ($placement_type, $subdir) = @_;
-		$placement_type ||= 'cell';
-		return "&nbsp;&nbsp;" .
-		       &ui_link("showphpinfo.cgi?dom=$in{'dom'}&dir=$subdir",
-		       	&ui_help(&text('phpmode_phpinfo_show' . ($subdir ? '_dir' : ''), $subdir)),
-		       	          undef, "target=_blank data-placement=\"$placement_type\"");
-	};
 	my @vlist = ( );
 	foreach my $v (@avail) {
 		if ($v->[1]) {
@@ -147,7 +156,7 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 			push(@vlist, [ $v->[0], $fullver ]);
 			}
 		else {
-			push(@vlist, $v->[0]);
+			push(@vlist, [ $v->[0], $v->[0] ]);
 			}
 		}
 
@@ -159,15 +168,22 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 		# System has only one version
 		$fullver = $avail[0]->[1] ? &get_php_version($avail[0]->[1], $d)
 					  : $avail[0]->[0];
-		print &ui_table_row($text{'phpmode_version'}, $fullver . &$get_php_info_bubble('label'))
-		    if ($mode ne 'none');
+		print &ui_table_row($text{'phpmode_version'},
+			$fullver.&get_php_info_link($d->{'id'}, 'label'));
 		}
 	elsif ($mode eq "fpm" && @dirs == 1 ||
-	       $mode eq "fcgid" && $ng) {
+	       $mode eq "fcgid" && $p ne "web") {
 		# Only one version can be set
+		my $v = $dirs[0]->{'version'};
+		my ($got) = grep { $_->[0] eq $v } @vlist;
 		print &ui_table_row(
 			&hlink($text{'phpmode_version'}, "phpmode_version"),
-			&ui_select("ver_0", $dirs[0]->{'version'}, \@vlist) . &$get_php_info_bubble('label'));
+			&ui_select("ver_0", $v, \@vlist, 1, 0, 1).
+			&get_php_info_link($d->{'id'}, 'label'));
+		if (!$got) {
+			print &ui_table_row("", &ui_text_color(
+				$text{'phpmode_verswarn'}, 'warn'));
+			}
 		print &ui_hidden("dir_0", $dirs[0]->{'dir'});
 		print &ui_hidden("d", $dirs[0]->{'dir'});
 		}
@@ -188,7 +204,8 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 					  'value' => $i,
 					  'disabled' => 1,
 					  'checked' => 1, },
-					"<i>$text{'phpver_pub'}</i>" . &$get_php_info_bubble(),
+					"<i>$text{'phpver_pub'}</i>".
+					  &get_php_info_link($d->{'id'}),
 					$sel
 					]);
 				}
@@ -199,7 +216,8 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 					{ 'type' => 'checkbox', 'name' => 'd',
 					  'value' => $i,
 					  'checked' => 1, },
-					"<tt>$subdir</tt>" . &$get_php_info_bubble('cell', $subdir),
+					"<tt>$subdir</tt>".
+					  &get_php_info_link($d->{'id'}, 'cell', $subdir),
 					$sel
 					]);
 				$anydelete++;
@@ -226,13 +244,15 @@ if ($canv && !$d->{'alias'} && $mode ne "mod_php") {
 			   $text{'phpver_ver'} );
 		print &ui_table_row(
 			&hlink($text{'phpmode_versions'}, "phpmode_versions"),
-			&ui_columns_table(\@heads, 100, \@table), undef, undef, ["data-table-id='php-multi'"]);
+			&ui_columns_table(\@heads, 100, \@table), undef, undef,
+			["data-table-id='php-multi'"]);
 
 		# Warn if changing mode would remove per-dir versions
 		if ($mode eq "cgi" || $mode eq "fcgid") {
 			@dirs = &list_domain_php_directories($d);
 			if (@dirs > 1) {
-				print &ui_table_row("", &ui_text_color($text{'phpmode_dirswarn'}, 'warn'));
+				print &ui_table_row("", &ui_text_color(
+					$text{'phpmode_dirswarn'}, 'warn'));
 				}
 			}
 		}

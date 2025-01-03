@@ -32,7 +32,7 @@ foreach $w (@what) {
 	# Show fields for dest
 	($pfx, $vmode, $vdest) = @$w;
 	$folder = $vmode == 4 || $vmode == 6 ? $vdest :
-		  $pfx eq "spam" ? "Junk" : "Virus";
+		  $pfx eq "spam" ? &default_spam_folder_suffix($d) : "Virus";
 	print &ui_table_row(&hlink($text{'spam_'.$pfx}, 'spam_'.$pfx),
 	 &ui_radio($pfx."_mode", $vmode,
 	  [ [ 0, $text{'spam_'.$pfx.'0'}."<br>" ],
@@ -81,6 +81,10 @@ print &ui_table_row(&hlink($text{'spam_trashclear'}, 'spam_trashclear'),
 		  [ 2, &text('spam_clearsize',
 		    &ui_bytesbox("trashsize", $auto->{'trashsize'})) ],
 		]));
+
+# Show option to also clear spam and trash subfolders
+print &ui_table_row(&hlink($text{'spam_subfolders'}, 'spam_subfolders'),
+	&ui_yesno_radio("subfolders", $auto->{'subfolders'}));
 
 # Show spamtrap option
 $st = &get_spamtrap_aliases($d);

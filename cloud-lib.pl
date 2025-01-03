@@ -6,11 +6,13 @@ sub list_cloud_providers
 {
 my @rv = ( { 'name' => 's3',
 	     'prefix' => [ 's3', 's3rrs' ],
+	     'clear' => 0,
 	     'url' => 'https://aws.amazon.com/s3/',
 	     'desc' => $text{'cloud_s3desc'},
 	     'longdesc' => \&cloud_s3_longdesc },
 	   { 'name' => 'rs',
 	     'prefix' => [ 'rs' ],
+	     'clear' => 0,
 	     'url' => 'https://www.rackspace.com/openstack/public/files',
 	     'desc' => $text{'cloud_rsdesc'},
 	     'longdesc' => $text{'cloud_rs_longdesc'} } );
@@ -18,25 +20,37 @@ if ($virtualmin_pro) {
 	my $ourl = &get_miniserv_base_url()."/$module_name/oauth.cgi";
 	push(@rv, { 'name' => 'google',
 		    'prefix' => [ 'gcs' ],
+		    'clear' => 1,
 		    'url' => 'https://cloud.google.com/storage',
 		    'desc' => $text{'cloud_googledesc'},
 		    'longdesc' => \&cloud_google_longdesc });
 	push(@rv, { 'name' => 'dropbox',
 		    'prefix' => [ 'dropbox' ],
+		    'clear' => 1,
 		    'url' => 'https://www.dropbox.com/',
 		    'desc' => $text{'cloud_dropboxdesc'},
 		    'longdesc' => $text{'cloud_dropbox_longdesc'} });
 	push(@rv, { 'name' => 'bb',
 		    'prefix' => [ 'bb' ],
+		    'clear' => 1,
 		    'url' => 'https://www.backblaze.com/',
 		    'desc' => $text{'cloud_bbdesc'},
 		    'longdesc' => $text{'cloud_bb_longdesc'} });
 	push(@rv, { 'name' => 'azure',
 		    'prefix' => [ 'azure' ],
+		    'clear' => 1,
 		    'url' => 'https://azure.microsoft.com/',
 		    'desc' => $text{'cloud_azdesc'},
 		    'longdesc' => $text{'cloud_az_longdesc'} });
+	push(@rv, { 'name' => 'drive',
+		    'prefix' => [ 'drive' ],
+		    'clear' => 1,
+		    'url' => 'https://drive.google.com/',
+		    'desc' => $text{'cloud_drivedesc'},
+		    'longdesc' => \&cloud_drive_longdesc });
 	}
+# Sort based on hash desc key
+@rv = sort { $a->{'desc'} cmp $b->{'desc'} } @rv;
 return @rv;
 }
 
@@ -61,15 +75,18 @@ return wantarray ? @rv : $rv[0];
 
 sub cloud_s3_get_state
 {
-if ($config{'s3_akey'}) {
+my @s3s = &list_s3_accounts();
+if (@s3s == 1) {
+	my $desc = $s3s[0]->{'iam'} ? $text{'cloud_s3creds'} :
+			&text('cloud_s3account',
+                              "<tt>$s3s[0]->{'access'}</tt>");
 	return { 'ok' => 1,
-		 'desc' => &text('cloud_s3account',
-				 "<tt>$config{'s3_akey'}</tt>"),
+		 'desc' => $desc,
 	       };
 	}
-elsif (&can_use_aws_s3_creds()) {
+elsif (@s3s > 1) {
 	return { 'ok' => 1,
-		 'desc' => $text{'cloud_s3creds'},
+		 'desc' => &text('cloud_s3accounts', scalar(@s3s)),
 	       };
 	}
 else {
@@ -79,59 +96,34 @@ else {
 
 sub cloud_s3_longdesc
 {
-if (!$config{'s3_akey'} && &can_use_aws_s3_creds()) {
-	return $text{'cloud_s3_creds'};
-	}
-else {
-	return $text{'cloud_s3_longdesc'};
-	}
+my @s3s = &list_s3_accounts();
+return &text('cloud_s3_longdesc2', 'list_s3s.cgi');
 }
 
 sub cloud_s3_show_inputs
 {
 my $rv;
 
-# Default login
-if ($config{'s3_akey'} || !&can_use_aws_s3_creds()) {
-	# Prompt for login
-	$rv .= &ui_table_row($text{'cloud_s3_akey'},
-		&ui_radio("s3_akey_def", $config{'s3_akey'} ? 0 : 1,
-			  [ [ 1, $text{'cloud_noneset'} ],
-			    [ 0, $text{'cloud_below'} ] ])."<br>\n".
-		&ui_grid_table([ "<b>$text{'cloud_s3_access'}</b>",
-			 &ui_textbox("s3_akey", $config{'s3_akey'}, 50),
-			 "<b>$text{'cloud_s3_secret'}</b>",
-			 &ui_textbox("s3_skey", $config{'s3_skey'}, 50) ], 2));
-	}
-
-# S3 endpoint hostname, for non-amazon implementations
-$rv .= &ui_table_row($text{'cloud_s3_endpoint'},
-	&ui_opt_textbox("s3_endpoint", $config{'s3_endpoint'}, 40,
-			$text{'cloud_s3_amazon'}));
-
 # Upload chunk size
 $rv .= &ui_table_row($text{'cloud_s3_chunk'},
 	&ui_opt_textbox("s3_chunk", $config{'s3_chunk'}, 6,
 			$text{'default'}." (5 MB)"));
 
-# Location for new buckets
-my $l = $config{'s3_location'};
-if ($config{'s3_endpoint'}) {
-	$rv .= &ui_table_row($text{'cloud_s3_location'},
-		&ui_opt_textbox("s3_location", $l, 30,
-				$text{'default'}));
+# Available accounts
+my @s3s = &list_s3_accounts();
+my $ac;
+if (@s3s) {
+	$ac = &ui_columns_start([ $text{'s3s_access'},
+                                  $text{'s3s_desc'} ]);
+	foreach my $s3 (@s3s) {
+		$ac .= &ui_columns_row([ $s3->{'access'}, $s3->{'desc'} ]);
+		}
+	$ac .= &ui_columns_end();
 	}
 else {
-	my @locs = &s3_list_locations();
-	my $found = !$l || &indexof($l, @locs) >= 0;
-	$rv .= &ui_table_row($text{'cloud_s3_location'},
-		&ui_select("s3_location", $found ? $l : "*",
-			   [ [ "", $text{'default'} ],
-			     @locs,
-			     [ "*", $text{'cloud_s3_lother'} ] ],
-			   1, 0, 1)." ".
-		&ui_textbox("s3_location_other", $found ? "" : $l, 20));
+	$ac = "<i>$text{'cloud_s3_noaccounts'}</i>";
 	}
+$rv .= &ui_table_row($text{'cloud_s3_accounts'}, $ac);
 
 return $rv;
 }
@@ -139,33 +131,6 @@ return $rv;
 sub cloud_s3_parse_inputs
 {
 my ($in) = @_;
-
-# Parse default login
-if ($config{'s3_akey'} || !&can_use_aws_s3_creds()) {
-	if ($in->{'s3_akey_def'}) {
-		delete($config{'s3_akey'});
-		delete($config{'s3_skey'});
-		}
-	else {
-		$in->{'s3_akey'} =~ /^\S+$/ || &error($text{'backup_eakey'});
-		$in->{'s3_skey'} =~ /^\S+$/ || &error($text{'backup_eskey'});
-		$config{'s3_akey'} = $in->{'s3_akey'};
-		$config{'s3_skey'} = $in->{'s3_skey'};
-		}
-	}
-
-# Parse endpoint hostname
-if ($in->{'s3_endpoint_def'}) {
-	delete($config{'s3_endpoint'});
-	}
-else {
-	my ($host, $port) = split(/:/, $in->{'s3_endpoint'});
-	&to_ipaddress($host) ||
-		&error($text{'cloud_es3_endpoint'});
-	!$port || $port =~ /^\d+$/ ||
-		&error($text{'cloud_es3_endport'});
-	$config{'s3_endpoint'} = $in->{'s3_endpoint'};
-	}
 
 # Parse chunk size
 if ($in->{'s3_chunk_def'}) {
@@ -177,61 +142,11 @@ else {
 	$config{'s3_chunk'} = $in->{'s3_chunk'};
 	}
 
-# Parse new bucket location
-if ($in->{'s3_location_def'}) {
-	$config{'s3_location'} = '';
-	}
-else {
-	my $l = $in->{'s3_location'};
-	$l = $in->{'s3_location_other'} if ($l eq "*");
-	$l =~ /^[a-z0-9\.\-]*/i || &error($text{'cloud_es3_location'});
-	$config{'s3_location'} = $l;
-	}
-
 &lock_file($module_config_file);
 &save_module_config();
 &unlock_file($module_config_file);
 
 return undef;
-}
-
-# cloud_s3_clear()
-# Reset the S3 account to the default
-sub cloud_s3_clear
-{
-# Clear Virtualmin's credentials
-my $akey = $config{'s3_akey'};
-&lock_file($module_config_file);
-delete($config{'s3_akey'});
-delete($config{'s3_skey'});
-delete($config{'s3_location'});
-&save_module_config();
-&unlock_file($module_config_file);
-
-# Also clear the AWS creds
-my @uinfo = getpwnam("root");
-foreach my $f ("$uinfo[7]/.aws/config", "$uinfo[7]/.aws/credentials") {
-	&lock_file($f);
-	my $lref = &read_file_lines($f);
-	my ($start, $end, $inside) = (-1, -1, 0);
-	for(my $i=0; $i<@$lref; $i++) {
-		if ($lref->[$i] =~ /^\[(profile\s+)?\Q$akey\E\]$/) {
-			$start = $end = $i;
-			$inside = 1;
-			}
-		elsif ($lref->[$i] =~ /^\S+\s*=\s*\S+/ && $inside) {
-			$end = $i;
-			}
-		else {
-			$inside = 0;
-			}
-		}
-	if ($start >= 0) {
-		splice(@$lref, $start, $end-$start+1);
-		}
-	&flush_file_lines($f);
-	&unlock_file($f);
-	}
 }
 
 ######## Functions for Rackspace Cloud Files ########
@@ -334,7 +249,8 @@ sub list_rackspace_endpoints
 return ( [ 'https://identity.api.rackspacecloud.com/v1.0', 'US default' ],
 	 [ 'https://lon.auth.api.rackspacecloud.com/v1.0', 'UK default' ],
 	 [ 'https://identity.api.rackspacecloud.com/v1.0;DFW', 'US - Dallas' ],
-	 [ 'https://identity.api.rackspacecloud.com/v1.0;ORD', 'US - Chicago' ] );
+	 [ 'https://identity.api.rackspacecloud.com/v1.0;ORD', 'US - Chicago' ],
+       );
 }
 
 
@@ -795,6 +711,171 @@ delete($config{'azure_id'});
 &unlock_file($module_config_file);
 }
 
+######## Functions for Google Drive ########
 
+sub cloud_drive_get_state
+{
+if ($config{'drive_account'} &&
+    ($config{'drive_oauth'} || $config{'drive_rtoken'})) {
+	return { 'ok' => 1,
+		 'desc' => &text('cloud_gaccount',
+				 "<tt>$config{'drive_account'}</tt>",
+				 "<tt>$config{'drive_project'}</tt>"),
+	       };
+	}
+elsif ($virtualmin_pro && &can_use_gcloud_storage_creds()) {
+	return { 'ok' => 1,
+		 'desc' => $text{'cloud_gcpcreds'},
+	       };
+	}
+else {
+	return { 'ok' => 0 };
+	}
+}
+
+sub cloud_drive_longdesc
+{
+if (!$config{'drive_account'} && $virtualmin_pro &&
+    &can_use_gcloud_storage_creds()) {
+	return $text{'cloud_drive_creds'};
+	}
+else {
+	my $ourl = &get_miniserv_base_url()."/$module_name/oauth.cgi";
+	return &text('cloud_drive_longdesc', $ourl);
+	}
+}
+
+sub cloud_drive_show_inputs
+{
+my $rv;
+
+if ($virtualmin_pro && &can_use_gcloud_storage_creds() &&
+   !$config{'drive_account'}) {
+	$rv .= &ui_table_row($text{'cloud_drive_account'},
+		&get_gcloud_account());
+
+	# Optional GCE project name
+	$rv .= &ui_table_row($text{'cloud_google_project'},
+		&ui_opt_textbox("drive_project", $config{'drive_project'}, 40,
+			$text{'default'}." (".&get_gcloud_project().")"));
+	}
+else {
+	# Google account
+	$rv .= &ui_table_row($text{'cloud_google_account'},
+		&ui_textbox("drive_account", $config{'drive_account'}, 40));
+
+	# Google OAuth2 client ID
+	$rv .= &ui_table_row($text{'cloud_google_clientid'},
+		&ui_textbox("drive_clientid", $config{'drive_clientid'}, 80));
+
+	# Google client secret
+	$rv .= &ui_table_row($text{'cloud_google_secret'},
+		&ui_textbox("drive_secret", $config{'drive_secret'}, 60));
+
+	# GCE project name
+	$rv .= &ui_table_row($text{'cloud_google_project'},
+		&ui_textbox("drive_project", $config{'drive_project'}, 40));
+	}
+
+# OAuth2 code
+if ($config{'drive_oauth'}) {
+	$rv .= &ui_table_row($text{'cloud_google_oauth'},
+		             "<tt>$config{'drive_oauth'}</tt>");
+	}
+
+return $rv;
+}
+
+sub cloud_drive_parse_inputs
+{
+my ($in) = @_;
+my $reauth = 0;
+my $authed = 0;
+
+if ($virtualmin_pro && &can_use_gcloud_storage_creds() &&
+   !$config{'drive_account'}) {
+	# Just parse project name
+	$authed = 1;
+	if ($in->{'drive_project_def'}) {
+		$config{'drive_project'} = '';
+		}
+	else {
+		$in->{'drive_project'} =~ /^\S+$/ ||
+			&error($text{'cloud_egoogle_project'});
+		$config{'drive_project'} = $in->{'drive_project'};
+		}
+	}
+else {
+	# Parse google account
+	$in->{'drive_account'} =~ /^\S+\@\S+$/ ||
+		&error($text{'cloud_egoogle_account'});
+	$reauth++ if ($config{'drive_account'} ne $in->{'drive_account'});
+	$config{'drive_account'} = $in->{'drive_account'};
+
+	# Parse client ID
+	$in->{'drive_clientid'} =~ /^\S+$/ ||
+		&error($text{'cloud_egoogle_clientid'});
+	$reauth++ if ($config{'drive_clientid'} ne $in->{'drive_clientid'});
+	$config{'drive_clientid'} = $in->{'drive_clientid'};
+
+	# Parse client secret
+	$in->{'drive_secret'} =~ /^\S+$/ ||
+		&error($text{'cloud_egoogle_secret'});
+	$reauth++ if ($config{'drive_secret'} ne $in->{'drive_secret'});
+	$config{'drive_secret'} = $in->{'drive_secret'};
+
+	# Parse project name
+	$in->{'drive_project'} =~ /^\S+$/ ||
+		&error($text{'cloud_egoogle_project'});
+	$reauth++ if ($config{'drive_project'} ne $in->{'drive_project'});
+	$config{'drive_project'} = $in->{'drive_project'};
+	}
+
+&lock_file($module_config_file);
+if (!$authed) {
+	$reauth++ if (!$config{'drive_oauth'});
+	$config{'cloud_oauth_mode'} = $reauth ? 'drive' : undef;
+	}
+&save_module_config();
+&unlock_file($module_config_file);
+
+if (!$reauth) {
+	# Nothing more to do - either the OAuth2 token was just set, or the
+	# settings were saved with no change
+	return undef;
+	}
+if ($authed) {
+	# Nothing to do, because token comes from the gcloud command
+	return undef;
+	}
+
+my $url = &get_miniserv_base_url()."/virtual-server/oauth.cgi";
+return $text{'cloud_descoauth'}."<p>\n".
+       &ui_link("https://accounts.google.com/o/oauth2/auth?".
+                "scope=https://www.googleapis.com/auth/drive&".
+                "redirect_uri=".&urlize($url)."&".
+                "response_type=code&".
+                "client_id=".&urlize($in->{'drive_clientid'})."&".
+                "login_hint=".&urlize($in->{'drive_account'})."&".
+                "access_type=offline&".
+                "prompt=consent", $text{'cloud_openoauth'},
+                undef, "target=_blank")."<p>\n".
+       $text{'cloud_descoauth2'}."<p>\n";
+}
+
+# cloud_drive_clear()
+# Reset the GCS account to the default
+sub cloud_drive_clear
+{
+delete($config{'drive_account'});
+delete($config{'drive_clientid'});
+delete($config{'drive_secret'});
+delete($config{'drive_oauth'});
+delete($config{'drive_token'});
+delete($config{'drive_rtoken'});
+&lock_file($module_config_file);
+&save_module_config();
+&unlock_file($module_config_file);
+}
 
 1;

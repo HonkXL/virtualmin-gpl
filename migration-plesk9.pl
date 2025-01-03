@@ -14,7 +14,6 @@ $xfile && -r $xfile || return ("Not a complete Plesk 9, 10 or 11 backup file - m
 # Check if the domain is in there
 local $dump = &read_plesk_xml($xfile);
 ref($dump) || return ($dump);
-use Data::Dumper;
 local $domain;
 local $domains = $dump->{'admin'} ? $dump->{'admin'}->{'domains'}
 				  : $dump->{'domains'};
@@ -92,13 +91,13 @@ return (undef, $dom, $user, $pass);
 }
 
 # migration_plesk9_migrate(file, domain, username, create-webmin, template-id,
-#			   &ipinfo, pass, [&parent], [prefix], [email])
+#			   &ipinfo, pass, [&parent], [prefix], [email], [&plan])
 # Actually extract the given Plesk backup, and return the list of domains
 # created.
 sub migration_plesk9_migrate
 {
 local ($file, $dom, $user, $webmin, $template, $ipinfo, $pass, $parent,
-       $prefix, $email) = @_;
+       $prefix, $email, $plan) = @_;
 
 # Check for prefix clash
 $prefix ||= &compute_prefix($dom, undef, $parent, 1);
@@ -286,7 +285,8 @@ if (!$parent && !$pass) {
 # Create the virtual server object
 local %dom;
 $prefix ||= &compute_prefix($dom, $group, $parent, 1);
-local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
+$plan = $parent ? &get_plan($parent->{'plan'}) :
+        $plan ? $plan : &get_default_plan();
 %dom = ( 'id', &domain_id(),
 	 'dom', $dom,
          'user', $duser,
@@ -297,7 +297,7 @@ local $plan = $parent ? &get_plan($parent->{'plan'}) : &get_default_plan();
          'ugid', $ugid,
          'owner', "Migrated Plesk server $dom",
          'email', $email ? $email : $parent ? $parent->{'email'} : undef,
-	 'dns_ip', $ipinfo->{'virt'} || $config{'all_namevirtual'} ? undef :
+	 'dns_ip', $ipinfo->{'virt'} ? undef :
 		   &get_dns_ip($parent ? $parent->{'id'} : undef),
 	 $parent ? ( 'pass', $parent->{'pass'} )
 		 : ( 'pass', $pass ),
@@ -370,9 +370,10 @@ if (defined(&set_php_wrappers_writable)) {
 	}
 local $hdir = &public_html_dir(\%dom);
 local $phdir = $hdir;
+local $user_data_files;
 if ($cids) {
+	$user_data_files = &extract_plesk9_cid($root, $cids, "user-data");
 	local $docroot_files = &extract_plesk9_cid($root, $cids, "docroot");
-	local $user_data_files = &extract_plesk9_cid($root, $cids, "user-data");
 	local $httpdocs = $domain->{'phosting'}->{'www-root'} || "httpdocs";
 	local $cgidocs = "cgi-bin";
 	if ($docroot_files) {
@@ -505,7 +506,6 @@ local (%taken, %utaken);
 &foreign_require("mailboxes");
 $mailboxes::no_permanent_index = 1;
 local $mcount = 0;
-# Linux mailboxes
 foreach my $name (keys %$mailusers) {
 	next if ($windows);
 	local $mailuser = $mailusers->{$name};
@@ -528,7 +528,7 @@ foreach my $name (keys %$mailusers) {
 	if ($mailuser->{'mailbox'}->{'enabled'} eq 'true') {
 		# Add delivery to user's mailbox
 		local $escuser = $uinfo->{'user'};
-		if ($config{'mail_system'} == 0 && $escuser =~ /\@/) {
+		if ($mail_system == 0 && $escuser =~ /\@/) {
 			$escuser = &escape_replace_atsign_if_exists($escuser);
 			}
 		else {
@@ -538,8 +538,7 @@ foreach my $name (keys %$mailusers) {
 		}
 	if (&has_home_quotas()) {
 		local $q = $mailuser->{'mailbox-quota'} < 0 ? undef :
-				$mailuser->{'mailbox-quota'}*1024;
-		$uinfo->{'qquota'} = $q;
+				$mailuser->{'mailbox-quota'};
 		$uinfo->{'quota'} = $q / &quota_bsize("home");
 		$uinfo->{'mquota'} = $q / &quota_bsize("home");
 		}
@@ -645,20 +644,24 @@ if ($got{'mysql'}) {
 		local $cids = [ $database->{'content'}->{'cid'} ];
 		local $sqldir = &extract_plesk9_cid($root, $cids, "sqldump");
 		local ($sqlfile) = glob("$sqldir/*$name*");
+		&$first_print("Restoring database $name ..");
 		if (!$sqlfile || !-f $sqlfile) {
 			($sqlfile) = glob("$sqldir/backup_*");
 			}
 		if (!$sqldir) {
-			&$first_print("No database content found");
+			&$second_print(".. no database content found");
 			}
 		elsif (!$sqlfile || !-f $sqlfile) {
-			&$first_print("Database content missing SQL file");
+			&$second_print(".. database content missing SQL file");
 			}
 		else {
 			local ($ex, $out) = &execute_dom_sql_file(\%dom, $name,
 								  $sqlfile);
 			if ($ex) {
-				&$first_print("Error loading $db : $out");
+				&$second_print(".. error loading $db : $out");
+				}
+			else {
+				&$second_print(".. done");
 				}
 			}
 
@@ -837,6 +840,7 @@ foreach my $adom (keys %$aliasdoms) {
 			 'email', $dom{'email'},
 			 'name', 1,
 			 'ip', $dom{'ip'},
+			 'dns_ip', $dom{'dns_ip'},
 			 'virt', 0,
 			 'source', $dom{'source'},
 			 'parent', $dom{'id'},
@@ -844,6 +848,7 @@ foreach my $adom (keys %$aliasdoms) {
 			 'reseller', $dom{'reseller'},
 			 'nocreationmail', 1,
 			 'nocopyskel', 1,
+			 'nocreationscripts', 1,
 			);
 	$alias{'dom'} =~ s/^www\.//;
 	foreach my $f (@alias_features) {
@@ -905,13 +910,14 @@ foreach my $sdom (keys %$subdoms) {
 			'email', $dom{'email'},
 			'name', 1,
 			'ip', $dom{'ip'},
+			'dns_ip', $dom{'dns_ip'},
 			'virt', 0,
 			'source', $dom{'source'},
-			'parent', $dom{'id'},
 			'template', $dom{'template'},
 			'reseller', $dom{'reseller'},
 			'nocreationmail', 1,
 			'nocopyskel', 1,
+			'nocreationscripts', 1,
 			);
 	foreach my $f (@subdom_features) {
 		local $want = $f eq 'ssl' ? 0 : 1;
@@ -950,6 +956,13 @@ foreach my $sdom (keys %$subdoms) {
 			"Moving web pages for sub-domain $subd{'dom'} ..");
 		&unlink_file_as_domain_user(\%subd, $hdir);
 		&rename_as_domain_user(\%subd, "$phdir/$wwwroot", $hdir);
+		&set_home_ownership(\%subd);
+		&$second_print(".. done");
+		}
+	elsif (-d $user_data_files."/".$subd{'dom'}) {
+		&$first_print(
+			"Copying web pages for sub-domain $subd{'dom'} ..");
+		&copy_source_dest($user_data_files."/".$subd{'dom'}, $hdir);
 		&set_home_ownership(\%subd);
 		&$second_print(".. done");
 		}

@@ -10,12 +10,15 @@ $canplans || &error($text{'plans_ecannot'});
 $bsize = &quota_bsize("home");
 @plans = &list_editable_plans();
 @table = ( );
+$defplan = &get_default_plan(1);
 foreach $plan (@plans) {
 	local @cols;
 	push(@cols, { 'type' => 'checkbox', 'name' => 'd',
 		      'value' => $plan->{'id'} });
 	push(@cols, ui_link("edit_plan.cgi?id=$plan->{'id'}'",
-		    &html_escape($plan->{'name'})));
+		    &html_escape($plan->{'name'} || $plan->{'id'})).
+		    	($defplan && $defplan->{'id'} == $plan->{'id'} ? 
+		    		&vui_inline_label('plans_default', 1) : ""));
 	if ($canplans == 2) {
 		push(@cols, $plan->{'owner'} ||
 			    "<i>$text{'plans_noresel'}</i>");
@@ -34,9 +37,12 @@ foreach $plan (@plans) {
 	}
 
 # Show the table
+@aplans = &list_available_plans();
 print &ui_form_columns_table(
 	"delete_plans.cgi",
-	[ [ "delete", $text{'plans_delete'} ] ],
+	[ [ "delete", $text{'plans_delete'} ],
+	  @aplans ? ( [ "default", $text{'plans_setdefault'} ] ) : ( ),
+	],
 	1,
 	[ [ "edit_plan.cgi?new=1", $text{'plans_add'} ] ],
 	undef,
@@ -51,20 +57,5 @@ print &ui_form_columns_table(
 	0,
 	undef,
 	$canplans == 2 ? $text{'plans_none'} : $text{'plans_none2'});
-
-# Show form for setting the default
-@aplans = &list_available_plans();
-if (@aplans) {
-	print &ui_hr();
-	$defplan = &get_default_plan(1);
-	print &ui_form_start("save_defplan.cgi");
-	print "<b>$text{'plans_setdef'}</b>\n";
-	print &ui_select("plan", $defplan ? $defplan->{'id'} : '',
-			 [ [ '', "&lt;$text{'plans_nodef'}&gt;" ],
-			   map { [ $_->{'id'}, &html_escape($_->{'name'}) ] }
-			       @aplans ]);
-	print &ui_submit($text{'plans_savedef'});
-	print &ui_form_end();
-	}
 
 &ui_print_footer("", $text{'index_return'});

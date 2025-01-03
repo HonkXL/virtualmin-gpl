@@ -7,7 +7,7 @@ Dump inbox email for one user
 This program is primarily for debugging and testing. It finds the email inbox
 for the user in the virtual server identified by the C<--domain> flag whose
 login is set with the C<--user> parameter, and outputs the contents in
-C<mbox> format. Alternatley you can use the C<--filesonly> flag to just have
+C<mbox> format. Alternately you can use the C<--filesonly> flag to just have
 it print all the files containing the user's mail (typically just one if
 the system using C<mbox> format, or many if C<Maildir> is in use).
 
@@ -35,6 +35,7 @@ if (!$module_name) {
 
 # Parse command-line args
 $owner = 1;
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -46,19 +47,14 @@ while(@ARGV > 0) {
 	elsif ($a eq "--filesonly") {
 		$filesonly = 1;
 		}
-	elsif ($a eq "--multiline") {
-		$multiline = 1;
-		}
 	elsif ($a eq "--folder") {
 		$folderid = shift(@ARGV);
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
 		}
 	}
+$convert_format && &usage("XML or JSON conversion is not supported");
 
 # Parse args and get domain
 $dname || &usage("No domain specified");

@@ -29,19 +29,11 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
 		$domain = shift(@ARGV);
-		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
-	elsif ($a eq "--name-only") {
-		$nameonly = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -52,7 +44,7 @@ $domain || &usage("No domain specified");
 $d = &get_domain_by("dom", $domain);
 $d || usage("Virtual server $domain does not exist");
 @admins = &list_extra_admins($d);
-if ($multi) {
+if ($multiline) {
 	# Show each admin on a separate line
 	foreach $admin (@admins) {
 		print "$admin->{'name'}\n";
@@ -98,7 +90,7 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists the extra administrators associated with some virtual server.\n";
 print "\n";
 print "virtualmin list-admins --domain domain.name\n";
-print "                      [--multiline]\n";
+print "                      [--multiline | --json | --xml]\n";
 exit(1);
 }
 

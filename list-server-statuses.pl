@@ -26,17 +26,10 @@ if (!$module_name) {
 	}
 @OLDARGV = @ARGV;
 
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
         local $a = shift(@ARGV);
-	if ($a eq "--multiline") {
-		$multiline = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
-		}
-	else {
-		&usage("Unknown parameter $a");
-		}
+	&usage("Unknown parameter $a");
 	}
 
 @ss = &get_startstop_links();

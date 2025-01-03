@@ -12,6 +12,19 @@ return &plugin_defined($p, "feature_supports_web_redirects") &&
 	&plugin_call($p, "feature_supports_web_redirects", $d);
 }
 
+# has_web_host_redirects(&domain)
+# Returns 1 if redirect editing by hostname is supported for this domain's
+# webserver
+sub has_web_host_redirects
+{
+my ($d) = @_;
+return 1 if ($d->{'web'});
+my $p = &domain_has_website($d);
+return 0 if (!$p);
+return &plugin_defined($p, "feature_supports_web_host_redirects") &&
+	&plugin_call($p, "feature_supports_web_host_redirects", $d);
+}
+
 # list_redirects(&domain)
 # Returns a list of URL paths and destinations for redirects and aliases. Each
 # is a hash ref with keys :
@@ -24,7 +37,7 @@ return &plugin_defined($p, "feature_supports_web_redirects") &&
 sub list_redirects
 {
 my ($d) = @_;
-local $p = &domain_has_website($d);
+my $p = &domain_has_website($d);
 if ($p && $p ne 'web') {
         my @rv = &plugin_call($p, "feature_list_web_redirects", $d);
 	foreach my $r (@rv) {
@@ -40,16 +53,16 @@ my @ports = ( $d->{'web_port'},
 	      $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
 my @rv;
 foreach my $p (@ports) {
-	local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $p);
+	my ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $p);
 	next if (!$virt);
+	my $proto = $p == $d->{'web_port'} ? 'http' : 'https';
 	foreach my $al (&apache::find_directive_struct("Alias", $vconf),
 			&apache::find_directive_struct("AliasMatch", $vconf),
 			&apache::find_directive_struct("Redirect", $vconf),
 			&apache::find_directive_struct("RedirectMatch", $vconf),
 		       ) {
-		my $proto = $p == $d->{'web_port'} ? 'http' : 'https';
 		my $rd = { 'alias' => $al->{'name'} =~ /^Alias/i ? 1 : 0,
-			   'dir' => $al,
+			   'dirs' => [ $al ],
 			   $proto => 1 };
 		my @w = @{$al->{'words'}};
 		if (@w == 3) {
@@ -90,35 +103,79 @@ foreach my $p (@ports) {
 		my ($already) = grep { $_->{'path'} eq $rd->{'path'} } @rv;
 		if ($already) {
 			$already->{$proto} = 1;
+			push(@{$already->{'dirs'}}, @{$rd->{'dirs'}});
 			}
 		else {
 			push(@rv, $rd);
 			}
 		}
 
-	# Find rewrite rules used for redirects that preserve the hostname
+	# Find rewrite rules used for redirects that preserve the hostname.
+	# We expect that the config be formatted like :
+	# RewriteCond ...
+	# RewriteCond ...
+	# RewriteRule ...
 	my @rws = (&apache::find_directive_struct("RewriteCond", $vconf),
 		   &apache::find_directive_struct("RewriteRule", $vconf));
 	@rws = sort { $a->{'line'} <=> $b->{'line'} } @rws;
 	for(my $i=0; $i<@rws; $i++) {
-		my $rwc = $rws[$i];
-		next if ($rwc->{'name'} ne 'RewriteCond');
-		my $rwr = $i+1 < @rws ? $rws[$i+1] : undef;
-		next if (!$rwr || $rwr->{'name'} ne 'RewriteRule');
-		next if ($rwc->{'words'}->[0] ne '%{HTTPS}');
-		next if ($rwr->{'words'}->[2] !~ /^\[R(=\d+)?\]$/);
-		my $rd = { 'alias' => 0,
-			   'dir' => $rwc,
-			   'dir2' => $rwr,
-			 };
-		if (lc($rwc->{'words'}->[1]) eq 'on') {
-			$rd->{'https'} = 1;
+		next if ($rws[$i]->{'name'} ne 'RewriteCond');
+		my $j = $i;
+		my $rwr;
+		my ($rwc, $rwh);
+		while($j < @rws) {
+			if ($rws[$j]->{'name'} eq 'RewriteRule') {
+				# Found final rule
+				$rwr = $rws[$j];
+				last;
+				}
+			if ($rws[$j]->{'words'}->[0] eq '%{HTTPS}') {
+				# Found protocol selector condition
+				$rwc = $rws[$j];
+				}
+			if ($rws[$j]->{'words'}->[0] eq '%{HTTP_HOST}') {
+				# Found host selector condition
+				$rwh = $rws[$j];
+				}
+			$j++;
 			}
-		elsif (lc($rwc->{'words'}->[1]) eq 'off') {
-			$rd->{'http'} = 1;
+		next if (!$rwr || !$rwc && !$rwh);
+		next if ($rwr->{'words'}->[2] !~ /^\[R(=\d+)?\]$/);
+		my @dirs = ( $rwr );
+		push(@dirs, $rwc) if ($rwc);
+		push(@dirs, $rwh) if ($rwh);
+		my $rd = { 'alias' => 0,
+			   'dirs' => \@dirs,
+			 };
+		if ($rwc) {
+			# Has HTTP / HTTPS condition
+			if (lc($rwc->{'words'}->[1]) eq 'on') {
+				$rd->{'https'} = 1;
+				}
+			elsif (lc($rwc->{'words'}->[1]) eq 'off') {
+				$rd->{'http'} = 1;
+				}
+			else {
+				next;
+				}
 			}
 		else {
-			next;
+			# Protocol comes from port
+			$rd->{$proto} = 1;
+			}
+		if ($rwh) {
+			# Has hostname condition
+			if ($rwh->{'words'}->[1] =~ /^=(.*)$/) {
+				$rd->{'host'} = $1;
+				$rd->{'hostregexp'} = 0;
+				}
+			elsif ($rwh->{'words'}->[1] =~ /\S/) {
+				$rd->{'host'} = $rwh->{'words'}->[1];
+				$rd->{'hostregexp'} = 1;
+				}
+			else {
+				next;
+				}
 			}
 		$rd->{'path'} = $rwr->{'words'}->[0];
 		$rd->{'dest'} = $rwr->{'words'}->[1];
@@ -135,7 +192,16 @@ foreach my $p (@ports) {
 			$rd->{'code'} = $1;
 			}
 		$rd->{'id'} = $rwc->{'name'}.'_'.$rd->{'path'};
-		push(@rv, $rd);
+		$rd->{'id'} .= '_'.$rd->{'host'} if ($rd->{'host'});
+		my ($already) = grep { $_->{'path'} eq $rd->{'path'} &&
+				       $_->{'host'} eq $rd->{'host'} } @rv;
+		if ($already) {
+			$already->{$proto} = 1;
+			push(@{$already->{'dirs'}}, @{$rd->{'dirs'}});
+			}
+		else {
+			push(@rv, $rd);
+			}
 		}
 	}
 return @rv;
@@ -159,19 +225,28 @@ if ($redirect->{'dest'} =~ /%\{HTTP_/ &&
 	return "Redirects using HTTP_ variables cannot be applied to both ".
 	       "HTTP and HTTPS modes";
 	}
+if ($redirect->{'host'} && $redirect->{'alias'}) {
+	return "Redirects to a directory cannot be limited to a ".
+	       "specific hostname";
+	}
 foreach my $p (@ports) {
 	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $p);
 	my $proto = $p == $d->{'web_port'} ? 'http' : 'https';
 	next if (!$redirect->{$proto});
 	next if (!$virt);
-	if ($redirect->{'dest'} =~ /%\{HTTP_/) {
-		# Destination uses variables, so RewriteRule is needed
+	if ($redirect->{'dest'} =~ /%\{HTTP_/ || $redirect->{'host'}) {
+		# Destination uses variables or matches on a hostname,
+		# so RewriteRule is needed
 		my @rwes = &apache::find_directive("RewriteEngine", $vconf);
 		my @rwcs = &apache::find_directive("RewriteCond", $vconf);
 		my @rwrs = &apache::find_directive("RewriteRule", $vconf);
 		my $flag = $redirect->{'code'} ? "[R=".$redirect->{'code'}."]"
 					       : "[R]";
-		push(@rwcs, "%{HTTPS} ".($proto eq 'http' ? 'off' : 'on'));
+		if ($redirect->{'host'}) {
+			push(@rwcs, "%{HTTP_HOST} ".
+			     ($redirect->{'hostregexp'} ? "" : "=").
+			     $redirect->{'host'});
+			}
 		my $path = $redirect->{'path'};
 		$path .= "(\.\*)\$" if ($redirect->{'regexp'});
 		$path = "^".$path."\$" if ($redirect->{'exact'});
@@ -230,14 +305,15 @@ foreach my $port (@ports) {
 	my ($virt, $vconf, $conf) = &get_apache_virtual($d->{'dom'}, $port);
 	next if (!$virt);
 	my $changed = 0;
-	if ($redirect->{'dir2'}) {
+	if ($redirect->{'dirs'}->[0]->{'name'} =~ /^Rewrite/i) {
 		# Remove RewriteCond and RewriteRule
 		my @rwcs = &apache::find_directive_struct("RewriteCond",$vconf);
 		my @rwrs = &apache::find_directive_struct("RewriteRule",$vconf);
+		my @dirlines = map { $_->{'line'} } @{$redirect->{'dirs'}};
 		my @newrwcs = map { join(" ", @{$_->{'words'}}) }
-		  grep { $_->{'line'} != $redirect->{'dir'}->{'line'} } @rwcs;
+		  grep { &indexof($_->{'line'}, @dirlines) < 0 } @rwcs;
 		my @newrwrs = map { join(" ", @{$_->{'words'}}) }
-		  grep { $_->{'line'} != $redirect->{'dir2'}->{'line'} } @rwrs;
+		  grep { &indexof($_->{'line'}, @dirlines) < 0 } @rwrs;
 		if (@rwcs != @newrwcs || @rwrs != @newrwrs) {
 			&apache::save_directive(
 				"RewriteCond", \@newrwcs, $vconf, $conf);
@@ -260,7 +336,6 @@ foreach my $port (@ports) {
 			}
 		elsif ($redirect->{'exact'}) {
 			# Handle ^ at start and $ at end
-			print STDERR "in only mode for ^$re\$\n";
 			@newaliases = grep { !/^(\d+\s+)?\^\Q$re\E\$\s/ } @aliases;
 			}
 		else {
@@ -329,7 +404,9 @@ return $redir;
 sub remove_wellknown_redirect
 {
 my ($redir) = @_;
-if ($redir->{'path'} eq '^/(?!.well-known)' && !$redir->{'alias'} && $redir->{'regexp'}) {
+if (($redir->{'path'} eq '^/(?!.well-known)' ||
+     $redir->{'path'} eq '^(?!/.well-known)') &&
+    !$redir->{'alias'} && $redir->{'regexp'}) {
 	$redir->{'path'} = '/';
 	$redir->{'regexp'} = 0;
 	}
@@ -347,6 +424,116 @@ return { 'path' => '^/(?!.well-known)(.*)$',
 	 'regexp' => 0,
 	 'http' => 1,
 	 'https' => 0 };
+}
+
+# is_webmail_redirect(&domain, &redirect)
+# Returns 1 if a redirect is for use by admin sub-domain, 2 if for the webmail
+# sub-domain, or 0 otherwise.
+sub is_webmail_redirect
+{
+my ($d, $r) = @_;
+return 0 if (!$r->{'host'});
+return 1 if ($r->{'host'} =~ /^admin\.\Q$d->{'dom'}\E$/);
+return 2 if ($r->{'host'} =~ /^webmail\.\Q$d->{'dom'}\E$/);
+return 0;
+}
+
+# is_www_redirect(&domain, &redirect)
+# Returns 1 if a redirect is from www.domain to domain, 2 if from domain to
+# www.domain, 3 if from any sub-domain to domain. and 0 otherwise
+sub is_www_redirect
+{
+my ($d, $r) = @_;
+return 0 if (!$r);
+return 0 if (!$r->{'host'});
+return 0 if ($r->{'path'} ne '/');
+foreach my $ad ($d, &get_domain_by("alias", $d->{'id'})) {
+	if ($r->{'host'} eq 'www.'.$ad->{'dom'} &&
+	    $r->{'dest'} =~ /^(http|https):\/\/\Q$ad->{'dom'}\E\//) {
+		return 1;
+		}
+	if ($r->{'host'} eq $ad->{'dom'} &&
+	    $r->{'dest'} =~ /^(http|https):\/\/www\.\Q$ad->{'dom'}\E\//) {
+		return 2;
+		}
+	if ($r->{'host'} eq '[a-z0-9_\-]+.'.$ad->{'dom'} &&
+	    $r->{'dest'} =~ /^(http|https):\/\/\Q$ad->{'dom'}\E\//) {
+		return 3;
+		}
+	}
+return 0;
+}
+
+# get_www_redirect(&domain)
+# Returns the objects for a redirect from domain to www.domain, for passing to
+# create_redirect
+sub get_www_redirect
+{
+my ($d) = @_;
+my @rv;
+foreach my $ad ($d, &get_domain_by("alias", $d->{'id'})) {
+	push(@rv, { 'path' => '/',
+		    'host' => $d->{'dom'},
+		    'http' => 1,
+		    'https' => 1,
+		    'regexp' => 1,
+		    'dest' => (&domain_has_ssl($d) ? 'https://' : 'http://').
+		   	      'www.'.$d->{'dom'}.'/$1',
+	          });
+	}
+return @rv;
+}
+
+# get_non_www_redirect(&domain)
+# Returns the objects for a redirect from www.domain to domain, for passing to
+# create_redirect
+sub get_non_www_redirect
+{
+my ($d) = @_;
+my @rv;
+foreach my $ad ($d, &get_domain_by("alias", $d->{'id'})) {
+	push(@rv, { 'path' => '/',
+		    'host' => 'www.'.$ad->{'dom'},
+		    'http' => 1,
+		    'https' => 1,
+		    'regexp' => 1,
+		    'dest' => (&domain_has_ssl($ad) ? 'https://' : 'http://').
+			      $ad->{'dom'}.'/$1',
+		  });
+	}
+return @rv;
+}
+
+# get_non_canonical_redirect(&domain)
+# Returns the objects for a redirect from any sub-domain to domain, for passing
+# to create_redirect
+sub get_non_canonical_redirect
+{
+my ($d) = @_;
+my @rv;
+foreach my $ad ($d, &get_domain_by("alias", $d->{'id'})) {
+	push(@rv, { 'path' => '/',
+		    'host' => '[a-z0-9_\-]+.'.$ad->{'dom'},
+		    'hostregexp' => 1,
+		    'http' => 1,
+		    'https' => 1,
+		    'regexp' => 1,
+		    'dest' => (&domain_has_ssl($ad) ? 'https://' : 'http://').
+			      $ad->{'dom'}.'/$1',
+		  });
+	}
+return @rv;
+}
+
+# get_redirect_by_mode(&domain, mode)
+# Returns the redirect objects based on the same mode number returned by
+# is_www_redirect
+sub get_redirect_by_mode
+{
+my ($d, $mode) = @_;
+return $mode == 1 ? &get_non_www_redirect($d) :
+       $mode == 2 ? &get_www_redirect($d) :
+       $mode == 3 ? &get_non_canonical_redirect($d) : ( );
 }
 
 1;

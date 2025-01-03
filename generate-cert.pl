@@ -112,6 +112,8 @@ $dname || &usage("Missing --domain parameter");
 $self || $csr || &usage("One of the --self or --csr parameters must be given");
 $d = &get_domain_by("dom", $dname);
 $d || &usage("No virtual server named $dname found");
+$d->{'ssl_same'} && &usage("This server shares it's SSL certificate ".
+			   "with another domain");
 
 # Run the before command
 &set_domain_envs($d, "SSL_DOMAIN");
@@ -128,12 +130,13 @@ if ($self) {
 
 	# Generate the self-signed cert, over-writing the existing file
 	&$first_print("Generating new self-signed certificate ..");
-	$d->{'ssl_cert'} ||= &default_certificate_file($d, 'cert');
 	$d->{'ssl_key'} ||= &default_certificate_file($d, 'key');
+	$d->{'ssl_cert'} ||= &default_certificate_file($d, 'cert');
 	my $newfile = !-r $d->{'ssl_cert'};
 	&lock_file($d->{'ssl_cert'});
 	&lock_file($d->{'ssl_key'});
 	&obtain_lock_ssl($d);
+	&lock_domain($d);
 	$err = &generate_self_signed_cert(
 		$d->{'ssl_cert'}, $d->{'ssl_key'}, $size, $days,
 		$subject{'c'},
@@ -159,10 +162,14 @@ if ($self) {
 	&$second_print(".. done");
 
 	# Remove any SSL passphrase on this domain
-	&$first_print("Configuring webserver to use it ..");
+	&$first_print("Configuring server to use it ..");
 	$d->{'ssl_pass'} = undef;
 	&save_domain_passphrase($d);
 	&save_domain($d);
+	&save_website_ssl_file($d, "cert", $d->{'ssl_cert'});
+	&save_website_ssl_file($d, "key", $d->{'ssl_key'});
+	&save_website_ssl_file($d, "ca", undef);
+	&unlock_domain($d);
 	&release_lock_ssl($d);
 	&unlock_file($d->{'ssl_key'});
 	&unlock_file($d->{'ssl_cert'});
@@ -173,9 +180,11 @@ if ($self) {
 	# Remove SSL passphrase on other domains sharing the cert
 	foreach $od (&get_domain_by("ssl_same", $d->{'id'})) {
 		&obtain_lock_ssl($od);
+		&lock_domain($od);
                 $od->{'ssl_pass'} = undef;
                 &save_domain_passphrase($od);
                 &save_domain($od);
+		&unlock_domain($od);
 		&release_lock_ssl($od);
                 }
 	&$second_print(".. done");
@@ -196,6 +205,7 @@ if ($self) {
 else {
 	# Generate the CSR
 	&$first_print("Generating new certificate signing request ..");
+	&lock_domain($d);
 	$d->{'ssl_csr'} ||= &default_certificate_file($d, 'csr');
 	$d->{'ssl_newkey'} ||= &default_certificate_file($d, 'newkey');
 	my $newfile = !-r $d->{'ssl_csr'};
@@ -228,6 +238,7 @@ else {
 
 	# Save the domain
 	&save_domain($d);
+	&unlock_domain($d);
 	&run_post_actions();
 	}
 

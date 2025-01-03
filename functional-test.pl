@@ -20,6 +20,7 @@ $ENV{'PATH'} = "$module_root_directory:$module_root_directory/pro:$ENV{'PATH'}";
 &require_mysql();
 &require_postgres();
 &require_mail();
+&foreign_require("dovecot");
 $mysql::mysql_login ||= 'root';
 
 # Make sure wget doesn't use a cache
@@ -64,8 +65,8 @@ $test_backup_file = "/tmp/$test_domain.tar.gz";
 $test_zip_backup_file = "/tmp/$test_domain.zip";
 $test_tar_backup_file = "/tmp/$test_domain.tar";
 $test_bzip2_backup_file = "/tmp/$test_domain.tar.bz2";
-$test_incremental_backup_file = "/tmp/$test_domain.incremental.tar.gz";
-$test_incremental_backup_file2 = "/tmp/$test_domain.incremental2.tar.gz";
+$test_differential_backup_file = "/tmp/$test_domain.differential.tar.gz";
+$test_differential_backup_file2 = "/tmp/$test_domain.differential2.tar.gz";
 $test_backup_dir = "/tmp/functional-test-backups";
 $test_backup_dir2 = "/tmp/functional-test-backups2";
 $test_email_dir = "/usr/local/webadmin/virtualmin/testmail";
@@ -76,14 +77,18 @@ $supports_fcgid = &indexof("fcgid", &supported_php_modes()) >= 0;
 $supports_fpm = &indexof("fpm", &supported_php_modes()) >= 0;
 $supports_cgi = &indexof("cgi", &supported_php_modes()) >= 0;
 @php_versions = sort { &compare_versions($a->[0], $b->[0]) }
+		  grep { &indexof("fcgid", @{$_->[2]}) >= 0 }
 		     &list_available_php_versions();
 $max_php_version = $php_versions[@php_versions-1]->[0];
 $scriptdb = 'mysql';
+$test_ssh_private_key = "/tmp/functional-test.key";
+$test_ssh_public_key = "/tmp/functional-test.key.pub";
 
 @create_args = ( [ 'limits-from-plan' ],
 		 [ 'no-email' ],
 		 [ 'no-slaves' ],
-	  	 [ 'no-secondaries' ] );
+	  	 [ 'no-secondaries' ],
+		 [ 'default-cert-owner' ], );
 
 @other_webmin_pages = ( 'cert_form', 'edit_spf', 'edit_domain',
 			'edit_domdkim', 'edit_limits', 'edit_mail',
@@ -92,10 +97,12 @@ $scriptdb = 'mysql';
 			'list_databases', 'list_scripts', 'rename_form',
 			'move_form', 'transfer_form', 'clone_form',
 			'newip_form', 'pro/edit_res', 'list_admins',
-			'pro/list_balancers', 'list_redirects',
+			'list_balancers', 'list_redirects',
 			'list_records', 'view_records', 'usage',
 			'reemail', 'pro/maillog', 'disable_domain',
 			'assoc_form', 'pro/edit_html' );
+
+$max_output = 2048;
 
 # Parse command-line args
 $web = 'web';
@@ -160,6 +167,9 @@ while(@ARGV > 0) {
 		$tmplname || &usage("--template must be followed by a ".
 				    "template name or ID");
 		}
+	elsif ($a eq "--max-output") {
+		$max_output = shift(@ARGV);
+		}
 	else {
 		&usage("Unknown parameter $a");
 		}
@@ -174,9 +184,7 @@ if ($tmplname) {
 $webmin_proto = "http";
 if ($miniserv{'ssl'}) {
 	eval "use Net::SSLeay";
-	if (!$@) {
-		$webmin_proto = "https";
-		}
+	$webmin_proto = "https" if (!$@);
 	}
 $webmin_port = $miniserv{'port'};
 $webmin_url = "$webmin_proto://localhost:$webmin_port";
@@ -191,6 +199,11 @@ if (&foreign_installed("usermin")) {
 	&foreign_require("usermin");
 	&usermin::get_usermin_miniserv_config(\%uminiserv);
 	$usermin_port = $uminiserv{'port'};
+	$usermin_proto = "http";
+	if ($uminiserv{'ssl'}) {
+		eval "use Net::SSLeay";
+		$usermin_proto = "https" if (!$@);
+		}
 	}
 
 ($test_domain_user) = &unixuser_name($test_domain);
@@ -211,8 +224,12 @@ $ssl_prefix = &compute_prefix($test_ssl_subdomain, $test_ssl_subdomain_user,
 		 'group' => $test_domain_user,
 		 'template' => &get_init_template() );
 $test_full_user = &userdom_name($test_user, \%test_domain);
+$test_user_extra = $test_user."_extra";
+$test_full_user_extra = &userdom_name($test_user_extra, \%test_domain);
 $test_full_atuser = &userdom_name($test_user, \%test_domain, 6);
 $test_full_user_mysql = &mysql_username($test_full_user);
+$test_full_user_mysql_extra = &mysql_username($test_full_user_extra);
+$test_user_mysql_extra = &mysql_username($test_user_extra);
 $test_full_user_postgres = &postgres_username($test_full_user);
 ($test_target_domain_user) = &unixuser_name($test_target_domain);
 $test_target_domain_db = 'targetdb';
@@ -221,8 +238,8 @@ $test_domain_home = $test_domain{'home'} =
 $test_domain_html = $test_domain_home.'/public_html';
 $test_full_user_home = $test_domain_home.'/homes/'.$test_user;
 $test_domain_db = &database_name(\%test_domain);
-$test_domain_cert = &default_certificate_file(\%test_domain, "cert");
 $test_domain_key = &default_certificate_file(\%test_domain, "key");
+$test_domain_cert = &default_certificate_file(\%test_domain, "cert");
 
 %test_rename_domain = ( 'dom' => $test_rename_domain,
 		        'prefix' => $rename_prefix,
@@ -475,11 +492,13 @@ $domains_tests = [
 		},
 
 		# Check PHP running via CGI
-		{ 'command' => 'echo "<?php system(\'id -a\'); ?>" >~'.
+		{ 'command' => 'echo "<?php system(\'id -a\'); '.
+			       'echo php_sapi_name(),"\\n"; ?>" >~'.
 			       $test_domain_user.'/public_html/test.php',
 		},
 		{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
-		  'grep' => 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+		  'grep' => [ 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+			      'cgi-fcgi' ],
 		},
 		) : ( ),
 
@@ -505,11 +524,13 @@ $domains_tests = [
 		},
 
 		# Check PHP running via fCGId
-		{ 'command' => 'echo "<?php system(\'id -a\'); ?>" >~'.
+		{ 'command' => 'echo "<?php system(\'id -a\'); '.
+			       'echo php_sapi_name(),"\\n"; ?>" >~'.
 			       $test_domain_user.'/public_html/test.php',
 		},
 		{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
-		  'grep' => 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+		  'grep' => [ 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+			      'cgi-fcgi' ],
 		},
 		) : ( ),
 
@@ -535,11 +556,13 @@ $domains_tests = [
 		},
 
 		# Check PHP running via FPM
-		{ 'command' => 'echo "<?php system(\'id -a\'); ?>" >~'.
+		{ 'command' => 'echo "<?php system(\'id -a\'); '.
+			       'echo php_sapi_name(),"\\n"; ?>" >~'.
 			       $test_domain_user.'/public_html/test.php',
 		},
 		{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
-		  'grep' => 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+		  'grep' => [ 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+			      'fpm-fcgi' ],
 		},
 
 		# Switch to an FPM socket file
@@ -548,7 +571,8 @@ $domains_tests = [
 			      [ 'php-fpm-socket' ] ],
 		},
 		{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
-		  'grep' => 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+		  'grep' => [ 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+			      'fpm-fcgi' ],
 		  'sleep' => 1,
 		},
 
@@ -558,7 +582,8 @@ $domains_tests = [
 			      [ 'php-fpm-port' ] ],
 		},
 		{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
-		  'grep' => 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+		  'grep' => [ 'uid=[0-9]+\\('.$test_domain_user.'\\)',
+			      'fpm-fcgi' ],
 		  'sleep' => 1,
 		},
 		) : ( ),
@@ -713,6 +738,17 @@ $domains_tests = [
 	  'grep' => '5.6.7.8',
 	},
 
+	# Modify one of the records
+	{ 'command' => 'modify-dns.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'update-record', 'testing A', 'testing A 5.5.5.5' ] ],
+	},
+
+	# Verify that it worked
+	{ 'command' => 'host -t A testing.'.$test_domain,
+	  'grep' => '5.5.5.5',
+	},
+
 	# Delete the records
 	{ 'command' => 'modify-dns.pl',
 	  'args' => [ [ 'domain', $test_domain ],
@@ -817,9 +853,38 @@ $jail_tests = [
 	  'grep' => "Jail directory:",
 	},
 
-	# Check that the Unix user is chroot'd
+	# Add a mailbox to the domain
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'desc', 'Test user' ],
+		      [ 'quota', 100*1024 ],
+		      [ 'shell', '/bin/sh' ],
+		      [ 'mail-quota', 100*1024 ] ],
+	},
+
+	# Check that the domain owner Unix user is chroot'd
 	{ 'command' => 'su '.$test_domain_user." -c 'ls $home_base' | wc -l",
 	  'grep' => '^1$',
+	},
+
+	# Check that the mailbox Unix user is chroot'd
+	{ 'command' => 'su '.$test_full_user." -c 'ls $home_base' | wc -l",
+	  'grep' => '^1$',
+	},
+
+	# Check the mailbox user's shell
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'multiline' ],
+		      [ 'user' => $test_user ] ],
+	  'grep' => [ 'Shell: /bin/sh' ],
+	},
+
+	# Check shells in /etc/passwd
+	{ 'command' => 'grep ^'.$test_full_user.': /etc/passwd',
+	  'antigrep' => '/bin/sh',
 	},
 
 	$supports_fpm ? (
@@ -838,6 +903,31 @@ $jail_tests = [
 		},
 		) : ( ),
 
+	# Change the mailbox user's shell
+	{ 'command' => 'modify-user.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'user' => $test_user ],
+		      [ 'shell' => '/bin/bash' ] ],
+	},
+
+	# Check that the mailbox Unix user is chroot'd still
+	{ 'command' => 'su '.$test_full_user." -c 'ls $home_base' | wc -l",
+	  'grep' => '^1$',
+	},
+
+	# Check the mailbox user's shell is the new one
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'multiline' ],
+		      [ 'user' => $test_user ] ],
+	  'grep' => [ 'Shell: /bin/bash' ],
+	},
+
+	# Check shells in /etc/passwd again
+	{ 'command' => 'grep ^'.$test_full_user.': /etc/passwd',
+	  'antigrep' => [ '/bin/bash', '/bin/sh' ],
+	},
+
 	# Turn off the chroot
 	{ 'command' => 'modify-domain.pl',
 	  'args' => [ [ 'domain' => $test_domain ],
@@ -854,6 +944,19 @@ $jail_tests = [
 	# Check that the Unix user is not chroot'd
 	{ 'command' => 'su '.$test_domain_user." -c 'ls $home_base' | wc -l",
 	  'antigrep' => '^1$',
+	},
+
+	# Check that the mailbox Unix user is not chroot'd
+	{ 'command' => 'su '.$test_full_user." -c 'ls $home_base' | wc -l",
+	  'antigrep' => '^1$',
+	},
+
+	# Check the user's shell was preserved
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'multiline' ],
+		      [ 'user' => $test_user ] ],
+	  'grep' => [ 'Shell: /bin/bash' ],
 	},
 
 	# Cleanup the domains
@@ -893,6 +996,13 @@ $disable_tests = [
 	# Disable the whole domain
 	{ 'command' => 'disable-domain.pl',
 	  'args' => [ [ 'domain' => $test_domain ] ],
+	},
+
+	# Check that it was disabled
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => 'Disabled: Manually',
 	},
 
 	# Test that DNS lookup fails
@@ -991,6 +1101,42 @@ $disable_tests = [
 	{ 'command' => 'validate-domains.pl',
 	  'args' => [ [ 'domain' => $test_domain ],
 		      [ 'all-features' ] ],
+	},
+
+	# Schedule a disable for a few seconds into the future
+	{ 'command' => 'disable-domain.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'schedule' => 0.0001 ] ],
+	},
+
+	# Check that it shows up in list-domains
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => 'Disable scheduled on',
+	},
+
+	# Wait a bit for the disable time
+	{ 'command' => 'sleep 8',
+	},
+
+	# Run a schedule collection, which should trigger the disable
+	{ 'command' => $module_config_directory."/collectinfo.pl",
+	  'antigrep' => 'Already running',
+	  'tries' => 5,
+	},
+
+	# Check that it was disabled
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => 'Disabled: Manually configured schedule',
+	},
+
+	# Make sure website is gone
+	{ 'command' => $wget_command.'http://'.$test_domain,
+	  'antigrep' => 'Test home page',
+	  'quiet' => 1,
 	},
 
 	# Cleanup the domains
@@ -1134,6 +1280,88 @@ $mailbox_tests = [
 	{ 'command' => 'delete-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ] ],
 	  'cleanup' => 1 },
+	];
+
+# SSH user tests
+$sshuser_tests = [
+	# Create a domain for testing
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ],
+		      @create_args, ],
+        },
+
+	# Generate a keypair for SSH
+	{ 'command' => 'rm -f '.$test_ssh_private_key.' '.$test_ssh_public_key,
+	},
+	{ 'command' => 'ssh-keygen -f '.$test_ssh_private_key.' </dev/null',
+	},
+
+	# Add a user with an SSH key
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'desc', 'Test user' ],
+		      [ 'quota', 100*1024 ],
+		      [ 'shell', '/bin/sh' ],
+		      [ 'ssh-pubkey', $test_ssh_public_key ],
+		      [ 'mail-quota', 100*1024 ] ],
+	},
+
+	# Make sure we can SSH as that user
+	{ 'command' => 'ssh -i '.$test_ssh_private_key.' '.$test_full_user.'@localhost echo OK',
+	  'grep' => 'OK',
+	},
+
+	# Remove the user
+	{ 'command' => 'delete-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user' => $test_user ] ],
+	},
+
+	# Re-create without an SSH key
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'desc', 'Test user' ],
+		      [ 'quota', 100*1024 ],
+		      [ 'shell', '/bin/sh' ],
+		      [ 'mail-quota', 100*1024 ] ],
+	},
+
+	# SSH should now fail
+	{ 'command' => 'ssh -i '.$test_ssh_private_key.' '.$test_full_user.'@localhost echo OK',
+	  'antigrep' => 'OK',
+	  'fail' => 1,
+	},
+
+	# Add an SSH key to the user
+	{ 'command' => 'modify-user.pl',
+          'args' => [ [ 'domain', $test_domain ],
+                      [ 'user', $test_user ],
+		      [ 'ssh-pubkey', $test_ssh_public_key ],
+		    ],
+	},
+
+	# SSH should now work again
+	{ 'command' => 'ssh -i '.$test_ssh_private_key.' '.$test_full_user.'@localhost echo OK',
+	  'grep' => 'OK',
+	},
+
+	# Cleanup the key
+	{ 'command' => 'rm -f '.$test_ssh_private_key.' '.$test_ssh_public_key,
+	  'cleanup' => 1,
+	},
+
+	# Cleanup the domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1,
+	},
 	];
 
 # Alias tests
@@ -1513,6 +1741,13 @@ $script_tests = [
 	  'antigrep' => 'partially complete',
 	},
 
+	# Check that it was registered
+	{ 'command' => 'list-scripts.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'name-only' ] ],
+	  'grep' => 'sugarcrm',
+	},
+
 	# Check that it works
 	{ 'command' => $wget_command.'http://'.$test_domain.'/',
 	  'grep' => 'SugarCRM|modules/Users/login.css',
@@ -1522,6 +1757,13 @@ $script_tests = [
 	{ 'command' => 'delete-script.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'type', 'sugarcrm' ] ],
+	},
+
+	# Check that it's gone
+	{ 'command' => 'list-scripts.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'name-only' ] ],
+	  'antigrep' => 'sugarcrm',
 	},
 
 	# Upgrade PHP version on the domain if possible
@@ -1549,7 +1791,7 @@ $script_tests = [
 
 	# Check that it works
 	{ 'command' => $wget_command.'http://'.$test_domain.'/wordpress/',
-	  'grep' => 'WordPress.*Installation|Just another WordPress site',
+	  'grep' => 'WordPress',
 	},
 
 	# Check script list
@@ -1583,7 +1825,7 @@ $script_tests = [
 
 	# Check that it works with it's own DB
 	{ 'command' => $wget_command.'http://'.$test_domain.'/wordpress/',
-	  'grep' => 'WordPress.*Installation|Just another WordPress site',
+	  'grep' => 'WordPress',
 	},
 
 	# Check script list
@@ -1609,6 +1851,46 @@ $script_tests = [
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'multiline' ] ],
 	  'antigrep' => '^'.$test_domain_db.'_wp',
+	},
+
+	# Install Wordpress
+	{ 'command' => 'install-script.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'wordpress' ],
+		      [ 'path', '/wordpress' ],
+		      [ 'db', 'mysql '.$test_domain_db ],
+		      [ 'version', 'latest' ] ],
+	  'antigrep' => 'partially complete',
+	},
+
+	# Re-register it
+	{ 'command' => 'delete-script.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'wordpress' ],
+		      [ 'deregister' ], ],
+	},
+
+	# Check that it's gone
+	{ 'command' => 'list-scripts.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'name-only' ] ],
+	  'antigrep' => 'wordpress',
+	},
+
+	# Re-detect it
+	{ 'command' => 'detect-scripts.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => [ 'wordpress:', 'Newly detected' ],
+	},
+
+	# Check that it's back
+	{ 'command' => 'list-scripts.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => [ 'Type: wordpress',
+		      'Database: '.$test_domain_db.' ',
+		    ],
 	},
 
 	# Cleanup the domain
@@ -1753,25 +2035,29 @@ foreach my $sname (&list_scripts(1)) {
 	my $tfunc = $script->{'testable_func'};
 	next if (!$tfunc || !defined(&$tfunc));
 	my $tpfunc = $script->{'testpath_func'};
+	my $tipfunc = $script->{'testinstallpath_func'};
 	my $tafunc = $script->{'testargs_func'};
 
 	foreach my $ver (@{$script->{'install_versions'}}) {
 		next if (@testversions && &indexof($ver, @testversions) < 0);
 		my $testable = &$tfunc($ver);
 		next if (!$testable);
-		my $path = defined(&$tpfunc) ? &$tpfunc($ver) : "/";
+		my $ipath = defined(&$tipfunc) ? &$tipfunc($ver) : "/";
+		my $path = defined(&$tpfunc) ? &$tpfunc($ver) :
+			   $ipath ? $ipath : "/";
 		my @args = defined(&$tafunc) ? &$tafunc($ver) : ();
 		push(@$allscript_tests,
 			# Install it
 			{ 'command' => 'install-script.pl',
 			  'args' => [ [ 'domain', $test_domain ],
 				      [ 'type', $script->{'name'} ],
-				      [ 'path', '/' ],
+				      [ 'path', $ipath ],
 				      [ 'db', $scriptdb.' '.$test_domain_db ],
 				      [ 'version', $ver ],
 				      @args,
 				    ],
 			  'continuefail' => 1,
+			  'antigrep' => 'partially complete',
 			});
 
 		if ($testable == 1) {
@@ -1832,6 +2118,19 @@ $database_tests = [
 	{ 'command' => 'mysql -u '.$test_domain_user.' -psmeg '.$test_domain_db.'_extra -e "select version()"',
 	},
 
+	# Check MySQL extra login creation
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user_mysql_extra ],
+		      [ 'pass', 'smeg' ],
+		      [ 'mysql', $test_domain_db ],
+		      [ 'db-only' ] ],
+	},
+
+	# Check MySQL extra login
+	{ 'command' => 'mysql -u '.$test_full_user_mysql_extra.' -psmeg '.$test_domain_db.' -e "select version()"',
+	},
+	
 	# Make sure the MySQL database appears
 	{ 'command' => 'list-databases.pl',
 	  'args' => [ [ 'domain', $test_domain ],
@@ -1844,6 +2143,26 @@ $database_tests = [
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'multiline' ] ],
 	  'grep' => 'Allowed mysql hosts:.*1\\.2\\.3\\.4',
+	},
+
+	# Create a mailbox user with access to the DBs
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'desc', 'Test user' ],
+		      [ 'quota', 100*1024 ],
+		      [ 'mysql', $test_domain_db ],
+		      [ 'mail-quota', 100*1024 ] ],
+	},
+
+	# Verify that mailbox user exists and has DB access
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'user' => $test_user ],
+		      [ 'multiline' ] ],
+	  'grep' => [ 'Databases: '.$test_domain_db.' \(mysql\)' ],
+	  'antigrep' => [ $test_domain_db.'_extra \(mysql\)' ],
 	},
 
 	# Drop the extra MySQL database
@@ -1921,13 +2240,69 @@ $proxy_tests = [
 	# Check the proxy list
 	{ 'command' => 'list-proxies.pl',
 	  'args' => [ [ 'domain', $test_domain ] ],
-	  'grep' => '/google/',
+	  'grep' => [ '/google/', 'http://www.google.com/' ],
+	},
+
+	# Modify the proxy URL
+	{ 'command' => 'modify-proxy.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/google/' ],
+		      [ 'url', 'http://www.bing.com/' ] ],
+	},
+
+	# Test that it works with the new URL
+	{ 'command' => $wget_command.'http://'.$test_domain.'/google/',
+	  'grep' => '<title>Bing',
+	},
+
+	# Check the proxy list for the new URL
+	{ 'command' => 'list-proxies.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'grep' => [ '/google/', 'http://www.bing.com/' ],
 	},
 
 	# Delete the proxy
 	{ 'command' => 'delete-proxy.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'path', '/google/' ] ],
+	},
+
+	# Check that it's gone from the proxy list
+	{ 'command' => 'list-proxies.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'antigrep' => '/google/',
+	},
+
+	# Create a proxy to multiple URLs
+	{ 'command' => 'create-proxy.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/google/' ],
+		      [ 'url', 'http://www.google.com/' ],
+		      [ 'url', 'http://www.google.com.au/' ] ],
+	},
+
+	# Test that it works
+	{ 'command' => $wget_command.'http://'.$test_domain.'/google/',
+	  'grep' => '<title>Google',
+	},
+
+	# Check the proxy list
+	{ 'command' => 'list-proxies.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'grep' => [ '/google/', 'http://www.google.com/',
+		      'http://www.google.com.au/' ],
+	},
+
+	# Delete the proxy
+	{ 'command' => 'delete-proxy.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/google/' ] ],
+	},
+
+	# Check that it's gone from the proxy list
+	{ 'command' => 'list-proxies.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'antigrep' => '/google/',
 	},
 
 	# Cleanup the domain
@@ -2419,6 +2794,49 @@ $aliasdom_tests = [
 	  'grep' => 'Usermin',
 	},
 
+	# Give alias domain it's own DNS records
+	{ 'command' => 'modify-dns.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'alias-dns' ] ],
+	},
+
+	# Add a DNS record to the alias domain
+	{ 'command' => 'modify-dns.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'add-record', 'testing2 A 1.2.3.4' ] ],
+	},
+
+	# Make sure it works, and so does the record copied from the target
+	{ 'command' => 'host -t A testing2.'.$test_domain,
+	  'grep' => '1.2.3.4',
+	},
+	{ 'command' => 'host -t A testing.'.$test_domain,
+	  'grep' => '1.2.3.4',
+	},
+
+	# Add a DNS record to the target domain
+	{ 'command' => 'modify-dns.pl',
+	  'args' => [ [ 'domain', $test_target_domain ],
+		      [ 'add-record', 'testing3 A 1.2.3.4' ] ],
+	},
+
+	# Make sure it's not in the alias
+	{ 'command' => 'host -t A testing3.'.$test_domain,
+	  'antigrep' => '1.2.3.4',
+	  'fail' => 1,
+	},
+
+	# Switch alias domain back to copying DNS records
+	{ 'command' => 'modify-dns.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'no-alias-dns' ] ],
+	},
+
+	# Make sure the record is now in the alias
+	{ 'command' => 'host -t A testing3.'.$test_domain,
+	  'grep' => '1.2.3.4',
+	},
+
 	# Enable aliascopy mode
 	{ 'command' => 'modify-mail.pl',
 	  'args' => [ [ 'domain', $test_domain ],
@@ -2597,6 +3015,152 @@ $aliasdom_tests = [
 	},
 	);
 
+$scheduled_tests = [
+	# Create a parent domain to be backed up
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ 'dns' ], [ $web ], [ 'mail' ],
+		      [ 'mysql' ], [ 'spam' ], [ 'virus' ],
+		      $config{'postgres'} ? ( [ 'postgres' ] ) : ( ),
+		      [ 'webmin' ], [ 'logrotate' ],
+		      [ 'content' => 'Test home page' ],
+		      @create_args, ],
+        },
+
+	# Add a user to the domain being backed up
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'desc', 'Test user' ],
+		      [ 'quota', 777*1024 ],
+		      [ 'mail-quota', 777*1024 ] ],
+	},
+
+	# Add an extra database
+	{ 'command' => 'create-database.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'mysql' ],
+		      [ 'name', $test_domain_db.'_extra' ] ],
+	},
+
+	# Create a scheduled backup for just this domain to a file
+	{ 'command' => 'create-scheduled-backup.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'dest', $test_backup_file ],
+		      [ 'schedule', '* * * * *' ] ],
+	},
+
+	# Wait a minute for it to run
+	{ 'command' => 'sleep 90'
+	},
+
+	# Make sure the file and meta-files exist
+	{ 'command' => 'ls -l '.$test_backup_file },
+	{ 'command' => 'ls -l '.$test_backup_file.'.info' },
+	{ 'command' => 'ls -l '.$test_backup_file.'.dom' },
+
+	# Make sure it was logged
+	{ 'command' => 'list-backup-logs.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'start', -1 ],
+		      [ 'multiline' ] ],
+	  'grep' => [ 'Domains: '.$test_domain,
+		      'Final status: OK',
+		      'Destination: '.$test_backup_file,
+		      'Run from: sched',
+		      'Differential: No' ],
+	},
+
+	# Delete the domain, in preparation for re-creation
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	},
+
+	# Re-create from backup
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'source', $test_backup_file ] ],
+	},
+
+	# Run post-restore tests
+	# Test DNS lookup
+	{ 'command' => 'host -t A '.$test_domain,
+	  'grep' => &get_default_ip(),
+	},
+	{ 'command' => 'host -t A www.'.$test_domain,
+	  'grep' => &get_default_ip(),
+	},
+
+	# Test HTTP get
+	{ 'command' => $wget_command.'http://'.$test_domain,
+	  'grep' => 'Test home page',
+	  'quiet' => 1,
+	},
+
+	# Check FTP login
+	{ 'command' => $wget_command.
+		       'ftp://'.$test_domain_user.':smeg@localhost/',
+	  'antigrep' => 'Login incorrect',
+	},
+
+	# Check Webmin login
+	{ 'command' => $wget_command.'--user-agent=Webmin '.
+		       ($webmin_proto eq "https" ? '--no-check-certificate '
+						 : '').
+		       '--user '.$test_domain_user.' '.
+		       '--password smeg '.
+		       $webmin_proto.'://localhost:'.$webmin_port.'/',
+	},
+
+	# Check MySQL login
+	{ 'command' => 'mysql -u '.$test_domain_user.' -psmeg '.$test_domain_db.' -e "select version()"',
+	},
+	{ 'command' => 'mysql -u '.$test_domain_user.' -psmeg '.$test_domain_db.'_extra -e "select version()"',
+	},
+
+	$config{'postgres'} ?
+		# Check PostgreSQL login
+		&postgresql_login_commands($test_domain_user, 'smeg',
+					   $test_domain_db,
+					   $test_domain_home)
+		: ( ),
+
+	# Make sure the mailbox still exists
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ] ],
+	  'grep' => "^$test_user",
+	},
+
+	# Make sure the mailbox has the same settings
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'multiline' ],
+		      [ 'user' => $test_user ] ],
+	  'grep' => [ 'Password: smeg',
+		      'Email address: '.$test_user.'@'.$test_domain,
+		      'Home quota: 777' ],
+	  'antigrep' => [ 'Home quota expected:' ],
+	},
+
+	# Cleanup the domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1,
+	},
+
+	# Delete the scheduled backup
+	{ 'command' => 'delete-scheduled-backup.pl',
+	  'args' => [ [ 'dest', $test_backup_file ] ],
+	  'cleanup' => 1,
+	  'ignorefail' => 1,
+	},
+	];
+
 $backup_tests = [
 	# Create a parent domain to be backed up
 	{ 'command' => 'create-domain.pl',
@@ -2699,7 +3263,7 @@ $backup_tests = [
 		      'Final status: OK',
 		      'Destination: '.$test_backup_file,
 		      'Run from: api',
-		      'Incremental: No' ],
+		      'Differential: No' ],
 	},
 
 	# Backup to a temp dir
@@ -3564,11 +4128,19 @@ if (!$webmin_user || !$webmin_pass) {
 
 $enc_webminbackup_tests = &convert_to_encrypted($webminbackup_tests);
 
-$s3_backup_prefix = "s3://$config{'s3_akey'}:$config{'s3_skey'}\@virtualmin-test-backup-bucket";
+if ($s3_account = &get_default_s3_account()) {
+	$s3_backup_prefix = "s3://$s3_account->{'access'}:$s3_account->{'secret'}\@virtualmin-test-backup-bucket";
+	}
 $s3backup_tests = [
 	# Create target bucket
 	{ 'command' => 'create-s3-bucket.pl',
 	  'args' => [ [ 'bucket', 'virtualmin-test-backup-bucket' ] ],
+	},
+
+	# Create target bucket in another region
+	{ 'command' => 'create-s3-bucket.pl',
+	  'args' => [ [ 'bucket', 'virtualmin-test-backup-bucket-eu-west-1' ],
+		      [ 'location', 'eu-west-1' ] ],
 	},
 
 	# Create a simple domain to be backed up
@@ -3689,21 +4261,42 @@ $s3backup_tests = [
 	  'sleep' => 5,
 	},
 
+	# Backup to S3 in the other bucket
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$s3_backup_prefix-eu-west-1/$test_domain.tar.gz" ] ],
+	},
+
+	# Restore from S3 in the other bucket
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'all-domains' ],
+		      [ 'all-features' ],
+		      [ 'source', $s3_backup_prefix."-eu-west-1" ] ],
+	},
+
 	# Cleanup the backup domain
 	{ 'command' => 'delete-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ] ],
 	  'cleanup' => 1,
 	},
 
-	# Delete the S3 bucket
+	# Delete the S3 buckets
 	{ 'command' => 'delete-s3-bucket.pl',
 	  'args' => [ [ 'bucket', 'virtualmin-test-backup-bucket' ],
+		      [ 'recursive' ] ],
+	  'cleanup' => 1,
+	},
+	{ 'command' => 'delete-s3-bucket.pl',
+	  'args' => [ [ 'bucket', 'virtualmin-test-backup-bucket-eu-west-1' ],
 		      [ 'recursive' ] ],
 	  'cleanup' => 1,
 	},
 	];
 
 $enc_s3backup_tests = &convert_to_encrypted($s3backup_tests);
+
+$http_s3backup_tests = &convert_to_http_api($s3backup_tests);
 
 $rs_backup_prefix = "rs://$config{'rs_user'}:$config{'rs_key'}\@virtualmin-test-backup-container";
 $rsbackup_tests = [
@@ -4092,7 +4685,7 @@ $azurebackup_tests = [
 		      @create_args, ],
 	},
 
-	# Backup to Dropbox
+	# Backup to Azure
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'all-features' ],
@@ -4104,7 +4697,7 @@ $azurebackup_tests = [
 		      [ 'dest', "$azure_backup_prefix/$test_subdomain.tar.gz" ] ],
 	},
 
-	# Backup to Dropbox again, to test that over-writing works
+	# Backup to Azure again, to test that over-writing works
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'all-features' ],
@@ -4116,21 +4709,21 @@ $azurebackup_tests = [
 		      [ 'dest', "$azure_backup_prefix/$test_subdomain.tar.gz" ] ],
 	},
 
-	# Restore from Dropbox
+	# Restore from Azure
 	{ 'command' => 'restore-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'all-features' ],
 		      [ 'source', "$azure_backup_prefix/$test_domain.tar.gz" ] ],
 	},
 
-	# Restore sub-domain from Dropbox
+	# Restore sub-domain from Azure
 	{ 'command' => 'restore-domain.pl',
 	  'args' => [ [ 'domain', $test_subdomain ],
 		      [ 'all-features' ],
 		      [ 'source', "$azure_backup_prefix/$test_subdomain.tar.gz" ] ],
 	},
 
-	# Backup to Dropbox in home format
+	# Backup to Azure in home format
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'domain', $test_subdomain ],
@@ -4139,7 +4732,7 @@ $azurebackup_tests = [
 		      [ 'dest', $azure_backup_prefix ] ],
 	},
 
-	# Backup to Dropbox in home format again, to test overwriting
+	# Backup to Azure in home format again, to test overwriting
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'domain', $test_subdomain ],
@@ -4148,7 +4741,7 @@ $azurebackup_tests = [
 		      [ 'dest', $azure_backup_prefix ] ],
 	},
 
-	# Restore from Dropbox in home format
+	# Restore from Azure in home format
 	{ 'command' => 'restore-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'domain', $test_subdomain ],
@@ -4156,7 +4749,7 @@ $azurebackup_tests = [
 		      [ 'source', $azure_backup_prefix ] ],
 	},
 
-	# Backup from Dropbox one-by-one
+	# Backup from Azure one-by-one
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'domain', $test_subdomain ],
@@ -4166,14 +4759,14 @@ $azurebackup_tests = [
 		      [ 'dest', $azure_backup_prefix ] ],
 	},
 
-	# Restore from Dropbox, all domains
+	# Restore from Azure, all domains
 	{ 'command' => 'restore-domain.pl',
 	  'args' => [ [ 'all-domains' ],
 		      [ 'all-features' ],
 		      [ 'source', $azure_backup_prefix ] ],
 	},
 
-	# Backup to Dropbox subdirectory in home format
+	# Backup to Azure subdirectory in home format
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'domain', $test_subdomain ],
@@ -4182,7 +4775,7 @@ $azurebackup_tests = [
 		      [ 'dest', $azure_backup_prefix."/subdir" ] ],
 	},
 
-	# Restore from Dropbox subdirectory in home format
+	# Restore from Azure subdirectory in home format
 	{ 'command' => 'restore-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'domain', $test_subdomain ],
@@ -4198,6 +4791,120 @@ $azurebackup_tests = [
 	];
 
 $enc_azurebackup_tests = &convert_to_encrypted($azurebackup_tests);
+
+$drive_backup_prefix = "drive://virtualmin-test-backup-folder";
+$drivebackup_tests = [
+	# Create a simple domain to be backed up
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ 'dns' ], [ $web ], [ 'mail' ],
+		      [ 'logrotate' ],
+		      [ 'content' => 'Test home page' ],
+		      @create_args, ],
+        },
+
+	# Create a sub-server
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'parent', $test_domain ],
+		      [ 'prefix', 'example2' ],
+		      [ 'desc', 'Test sub-domain' ],
+		      [ 'dir' ], [ $web ], [ 'dns' ], [ 'mail' ],
+		      [ 'logrotate' ],
+		      @create_args, ],
+	},
+
+	# Backup to Google Drive
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$drive_backup_prefix/$test_domain.tar.gz" ] ],
+	},
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$drive_backup_prefix/$test_subdomain.tar.gz" ] ],
+	},
+
+	# Backup to Google Drive again, to test that over-writing works
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$drive_backup_prefix/$test_domain.tar.gz" ] ],
+	},
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'dest', "$drive_backup_prefix/$test_subdomain.tar.gz" ] ],
+	},
+
+	# Restore from Google Drive
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ],
+		      [ 'source', "$drive_backup_prefix/$test_domain.tar.gz" ] ],
+	},
+
+	# Restore sub-domain from Google Drive
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'source', "$drive_backup_prefix/$test_subdomain.tar.gz" ] ],
+	},
+
+	# Backup to Google Drive in home format
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'newformat' ],
+		      [ 'dest', $drive_backup_prefix ] ],
+	},
+
+	# Backup to Google Drive in home format again, to test overwriting
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'newformat' ],
+		      [ 'dest', $drive_backup_prefix ] ],
+	},
+
+	# Restore from Google Drive in home format
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'source', $drive_backup_prefix ] ],
+	},
+
+	# Backup from Google Drive one-by-one
+	{ 'command' => 'backup-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'domain', $test_subdomain ],
+		      [ 'all-features' ],
+		      [ 'onebyone' ],
+		      [ 'newformat' ],
+		      [ 'dest', $drive_backup_prefix ] ],
+	},
+
+	# Restore from Google Drive, all domains
+	{ 'command' => 'restore-domain.pl',
+	  'args' => [ [ 'all-domains' ],
+		      [ 'all-features' ],
+		      [ 'source', $drive_backup_prefix ] ],
+	},
+
+	# Cleanup the backup domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1,
+	},
+	];
+
+$enc_drivebackup_tests = &convert_to_encrypted($drivebackup_tests);
 
 $bb_backup_prefix = "bb://virtualmin-test-backup-bucket";
 $bbbackup_tests = [
@@ -4526,7 +5233,7 @@ $splitbackup_tests = [
 
 $enc_splitbackup_tests = &convert_to_encrypted($splitbackup_tests);
 
-$incremental_tests = [
+$differential_tests = [
 	# Create a test domain
 	{ 'command' => 'create-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
@@ -4567,40 +5274,40 @@ $incremental_tests = [
 		      [ 'content' => 'New website content' ] ],
 	},
 
-	# Create an incremental backup
+	# Create an differential backup
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'all-features' ],
-		      [ 'incremental' ],
-		      [ 'dest', $test_incremental_backup_file ] ],
+		      [ 'differential' ],
+		      [ 'dest', $test_differential_backup_file ] ],
 	},
 
-	# Make sure the incremental is smaller than the full
+	# Make sure the differential is smaller than the full
 	{ 'command' =>
 		"full=`du -k $test_backup_file | cut -f 1` ; ".
-		"incr=`du -k $test_incremental_backup_file | cut -f 1` ; ".
+		"incr=`du -k $test_differential_backup_file | cut -f 1` ; ".
 		"test \$incr -lt \$full"
 	},
 
-	# Create another incremental backup
+	# Create another differential backup
 	{ 'command' => 'backup-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'all-features' ],
-		      [ 'incremental' ],
-		      [ 'dest', $test_incremental_backup_file2 ] ],
+		      [ 'differential' ],
+		      [ 'dest', $test_differential_backup_file2 ] ],
 	},
 
-	# Make sure the second incremental is smaller than the full
+	# Make sure the second differential is smaller than the full
 	{ 'command' =>
 		"full=`du -k $test_backup_file | cut -f 1` ; ".
-		"incr=`du -k $test_incremental_backup_file2 | cut -f 1` ; ".
+		"incr=`du -k $test_differential_backup_file2 | cut -f 1` ; ".
 		"test \$incr -lt \$full"
 	},
 
-	# Make sure the two incrementals are the same
+	# Make sure the two differentials are the same
 	{ 'command' =>
-		"incr=`du -k $test_incremental_backup_file | cut -f 1` ; ".
-		"incr2=`du -k $test_incremental_backup_file2 | cut -f 1` ; ".
+		"incr=`du -k $test_differential_backup_file | cut -f 1` ; ".
+		"incr2=`du -k $test_differential_backup_file2 | cut -f 1` ; ".
 		"test \$incr -eq \$incr2"
 	},
 
@@ -4616,11 +5323,11 @@ $incremental_tests = [
 		      [ 'source', $test_backup_file ] ],
 	},
 
-	# Restore the incremental
+	# Restore the differential
 	{ 'command' => 'restore-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'all-features' ],
-		      [ 'source', $test_incremental_backup_file ] ],
+		      [ 'source', $test_differential_backup_file ] ],
 	},
 
 	# Verify that the latest files were restored
@@ -4638,7 +5345,7 @@ $incremental_tests = [
 	},
 	];
 
-$enc_incremental_tests = &convert_to_encrypted($incremental_tests);
+$enc_differential_tests = &convert_to_encrypted($differential_tests);
 
 $purge_tests = [
 	# Create a test domain to backup
@@ -5487,7 +6194,7 @@ $webmin_tests = [
 	# List users in the domain
 	{ 'command' => $webmin_wget_command.
                        "${webmin_proto}://localhost:${webmin_port}/virtual-server/list_users.cgi?dom=\$DOMAIN_ID",
-	  'grep' => [ '<body', '</body>', 'Mail and FTP Users',
+	  'grep' => [ '<body', '</body>', 'Edit Users',
 		      '<b>'.$test_domain_user.'</b>' ],
 	},
 
@@ -5622,16 +6329,16 @@ $webmin_tests = [
 	# Verify that list of scripts works
 	{ 'command' => $webmin_wget_command.
                        "${webmin_proto}://localhost:${webmin_port}/virtual-server/list_scripts.cgi?dom=\$DOMAIN_ID",
-	  'grep' => [ '<body', '</body>', 'Install Scripts',
-		      'phpMyAdmin', 'Installed Scripts', 'Available Scripts' ],
+	  'grep' => [ '<body', '</body>', 'Manage Web Apps',
+		      'phpMyAdmin', 'Installed Web Apps','Available Web Apps' ],
 	},
 
 	# Install a script via the web UI
 	{ 'command' => $webmin_wget_command.
                        "${webmin_proto}://localhost:${webmin_port}/virtual-server/script_install.cgi?dom=\$DOMAIN_ID\\&script=roundcube\\&version=1.3.17\\&dir_def=0\\&dir=roundcube\\&passmode=\\&db=mysql_${test_domain_db}",
-	  'grep' => [ '<body', '</body>', 'Install Script', 
+	  'grep' => [ '<body', '</body>', 'Install Web App', 
 		      'Now installing RoundCube' ],
-	  'antigrep' => [ 'Failed to install script' ],
+	  'antigrep' => [ 'Failed to install' ],
 	},
 
 	# Make sure it worked
@@ -5783,6 +6490,12 @@ $ssl_tests = [
 		      @create_args, ],
 	},
 
+	# Make sure TLSA records are enabled
+	{ 'command' => 'modify-dns.pl',
+          'args' => [ [ 'domain', $test_domain ],
+		      [ 'enable-tlsa' ] ],
+	},
+
 	# Test DNS lookup
 	{ 'command' => 'host -t A '.$test_domain,
 	  'antigrep' => &get_default_ip(),
@@ -5865,6 +6578,20 @@ $ssl_tests = [
 		      '/domains/'.$test_ssl2_subdomain.'/',
 		      'SSL cert file: '.$test_domain_home.
                       '/domains/'.$test_ssl2_subdomain.'/' ],
+	},
+
+	# Check for TLSA records
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'TLSA' ],
+		      [ 'multiline' ] ],
+	  'grep' => [ '^_443._tcp.www.'.$test_domain,
+		      '^_443._tcp.'.$test_domain,
+		      $webmin_proto eq 'https' ?
+			( '^_'.$webmin_port.'._tcp.'.$test_domain ) : ( ),
+		      $usermin_proto eq 'https' ?
+			( '^_'.$usermin_port.'._tcp.'.$test_domain ) : ( ),
+		    ],
 	},
 
 	# Re-link SSL on the second domain
@@ -6138,6 +6865,76 @@ $ssl_tests = [
 	  'grep' => [ 'O=Test SSL domain', 'CN=(\\*\\.)?'.$test_domain ],
 	},
 
+	# Move the cert and key files to a custom location
+	{ 'command' => 'modify-web.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'ssl-cert', $test_domain_home.'/ssl.cert' ],
+		      [ 'ssl-key', $test_domain_home.'/ssl.key' ] ],
+	},
+
+	# Make sure it worked
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => [ 'SSL cert file: '.$test_domain_home.'/ssl.cert',
+		      'SSL key file: '.$test_domain_home.'/ssl.key' ],
+	},
+
+	# Also check that HTTPS still works
+	{ 'command' => 'openssl s_client -host '.$test_domain.
+		       ' -servername '.$test_domain.
+		       ' -port 443 </dev/null',
+	  'grep' => [ 'O=Test SSL domain', 'CN=(\\*\\.)?'.$test_domain ],
+	},
+
+	# And re-run validation
+	{ 'command' => 'validate-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'all-features' ] ],
+	},
+
+	# Move back to default paths
+	{ 'command' => 'modify-web.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'default-ssl-paths' ] ],
+	},
+
+	# Make sure it worked too
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'antigrep' => [ 'SSL cert file: '.$test_domain_home.'/ssl.cert',
+		          'SSL key file: '.$test_domain_home.'/ssl.key' ],
+	},
+
+	# Check for TLSA records again after all these changes
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'TLSA' ],
+		      [ 'multiline' ] ],
+	  'grep' => [ '^_443._tcp.www.'.$test_domain,
+		      '^_443._tcp.'.$test_domain,
+		      $webmin_proto eq 'https' ?
+			( '^_'.$webmin_port.'._tcp.'.$test_domain ) : ( ),
+		      $usermin_proto eq 'https' ?
+			( '^_'.$usermin_port.'._tcp.'.$test_domain ) : ( ),
+		    ],
+	},
+
+	# Turn off TLSA
+	{ 'command' => 'modify-dns.pl',
+          'args' => [ [ 'domain', $test_domain ],
+		      [ 'disable-tlsa' ] ],
+	},
+
+	# Make sure TLSA records are gone
+	{ 'command' => 'get-dns.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'TLSA' ],
+		      [ 'multiline' ] ],
+	  'antigrep' => [ 'TLSA' ],
+	},
+
 	# Cleanup the domains
 	{ 'command' => 'delete-domain.pl',
 	  'args' => [ [ 'domain', $test_ssl_subdomain ] ],
@@ -6203,6 +7000,11 @@ $sslserv_tests = [
 		      'SSL cert used by: webmin \\('.$test_domain.'\\)',
 		      'SSL cert used by: usermin \\('.$test_domain.'\\)',
 		    ],
+	},
+
+	# Check that cert is in the Dovecot config for the IP
+	{ 'command' => 'cat '.&dovecot::get_config_file(),
+	  'grep' => [ 'local $PRIVATE_IP', ],
 	},
 
 	# Validate that Webmin cert works
@@ -6289,6 +7091,18 @@ $sslserv_tests = [
 		      'SSL cert used by: usermin \\('.$test_domain.'\\)',
 		    ],
 	  'antigrep' => [ 'SSL cert used by: postfix' ],
+	},
+
+	# Check that cert is in the Dovecot config, but by hostname
+	{ 'command' => 'cat '.&dovecot::get_config_file(),
+	  'grep' => [ 'local_name '.$test_domain,
+		      'local_name \\*\\.'.$test_domain,
+		    ],
+	},
+
+	# Check that cert is not in the Dovecot config for the IP anymore
+	{ 'command' => 'cat '.&dovecot::get_config_file(),
+	  'antigrep' => [ 'local $PRIVATE_IP', ],
 	},
 
 	# Validate that Webmin cert still works with SNI
@@ -6380,6 +7194,13 @@ $sslserv_tests = [
 		      [ 'service', 'usermin' ],
 		      [ 'service', 'dovecot' ],
 		      [ 'service', 'postfix' ] ],
+	},
+
+	# Check that cert is no longer in the Dovecot config
+	{ 'command' => 'cat '.&dovecot::get_config_file(),
+	  'antigrep' => [ 'local_name '.$test_domain,
+		          'local_name \\*\\.'.$test_domain,
+		        ],
 	},
 
 	# Re-check that per-domain cert is no longer being used
@@ -7381,6 +8202,17 @@ $web_tests = [
 	  'grep' => 'load average',
 	},
 
+	# Test with CGI scripts off
+	{ 'command' => 'modify-web.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'disable-cgi' ] ],
+	},
+
+	{ 'command' => $wget_command.
+		       'http://'.$test_domain.'/cgi-bin/test.cgi',
+	  'fail' => 1,
+	},
+
 	# Test in fcgiwrap mode
 	&supports_fcgiwrap() ? (
 		{ 'command' => 'modify-web.pl',
@@ -7392,10 +8224,13 @@ $web_tests = [
 			       'http://'.$test_domain.'/cgi-bin/test.cgi',
 		  'grep' => 'load average',
 		},
+	) : ( ),
 
+	# Test in suexec mode
+	&supports_fcgiwrap() ? (
 		{ 'command' => 'modify-web.pl',
 		  'args' => [ [ 'domain' => $test_domain ],
-			      [ 'enable-fcgiwrap' ] ],
+			      [ 'enable-suexec' ] ],
 		},
 
 		{ 'command' => $wget_command.
@@ -7809,12 +8644,12 @@ if (!$webmin_user || !$webmin_pass) {
 $test_bw_domain = 'bw'.time().$test_domain;
 $test_bw_domain_user = 'bw'.time().$test_domain_user;
 $bw_tests = [
-	# Create a domain for bandwidth loggin
+	# Create a domain for bandwidth logging
 	{ 'command' => 'create-domain.pl',
 	  'args' => [ [ 'domain', $test_bw_domain ],
 		      [ 'user', $test_bw_domain_user ],
 		      [ 'prefix', $prefix ],
-		      [ 'desc', 'Test rename domain' ],
+		      [ 'desc', 'Test domain' ],
 		      [ 'pass', 'smeg' ],
 		      [ 'dir' ], [ 'unix' ], [ $web ], [ 'dns' ], [ 'mail' ],
 		      [ 'logrotate' ],
@@ -7979,6 +8814,86 @@ $bw_tests = [
 	  'args' => [ [ 'domain', $test_bw_domain ] ],
 	  'grep' => [ 'mail:2[0-9]{6}',
 		      'ftp:2[0-9]{6}' ],
+	},
+
+	# Get rid of the domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_bw_domain ] ],
+	  'cleanup' => 1
+        },
+	];
+
+$datestr = &make_date(time(), 1);
+$lastlogin_tests = [
+	# Create domain for logins
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_bw_domain ],
+		      [ 'user', $test_bw_domain_user ],
+		      [ 'prefix', $prefix ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ $web ], [ 'dns' ], [ 'mail' ],
+		      [ 'logrotate' ],
+		      [ 'content' => 'Test bandwidth page' ],
+		      @create_args, ],
+	},
+
+	# Create a 1M test file
+	{ 'command' => '(cat '.$ok_email_file.' ; head -c250000 /dev/zero | od -c -v) >/tmp/random.txt',
+	},
+
+	# Send email with SMTP authentication
+	{ 'command' => 'test-smtp.pl',
+	  'args' => [ [ 'from', 'nobody@webmin.com' ],
+		      [ 'to', $test_bw_domain_user.'@'.$test_bw_domain ],
+		      [ 'user', $test_bw_domain_user ],
+                      [ 'pass', 'smeg' ],
+		      [ 'data', '/tmp/random.txt' ] ],
+	},
+
+	# Check IMAP for admin mailbox
+	{ 'command' => 'test-imap.pl',
+	  'args' => [ [ 'user', $test_bw_domain_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'server', &get_system_hostname() ] ],
+	},
+
+	# Check POP3 for admin mailbox
+	{ 'command' => 'test-pop3.pl',
+	  'args' => [ [ 'user', $test_bw_domain_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'server', &get_system_hostname() ] ],
+	},
+
+	# Send email to the domain user
+	{ 'command' => 'test-smtp.pl',
+	  'args' => [ [ 'from', 'nobody@webmin.com' ],
+		      [ 'to', $test_bw_domain_user.'@'.$test_bw_domain ],
+		      [ 'data', '/tmp/random.txt' ] ],
+	},
+
+	# Do a status collection run
+	{ 'command' => $module_config_directory."/collectinfo.pl",
+	  'antigrep' => 'Already running',
+	  'sleep' => 5,
+	  'tries' => 5,
+	},
+
+	# Check for various recent logins
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain' => $test_bw_domain ],
+		      [ 'include-owner' ],
+		      [ 'multiline' ] ],
+	  'grep' => 'Last logins: imap '.$datestr.' \d+:\d+, '.
+		    'pop3 '.$datestr.' \d+:\d+, '.
+		    'smtp '.$datestr.' \d+:\d+',
+	},
+
+	# Check that the most recent login for the domain was collected
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain' => $test_bw_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => 'Last login: '.$datestr.' \d+:\d+',
 	},
 
 	# Get rid of the domain
@@ -8298,8 +9213,8 @@ $redirect_tests = [
 	  'args' => [ [ 'domain', $test_domain ],
 		      [ 'desc', 'Test redirect domain' ],
 		      [ 'pass', 'smeg' ],
-		      [ 'dir' ], [ 'unix' ], [ $web ], [ 'dns' ],
-		      [ 'logrotate' ],
+		      [ 'dir' ], [ 'unix' ], [ $web ], [ $ssl ],
+		      [ 'dns' ], [ 'mail' ], [ 'logrotate' ],
 		      [ 'content' => 'Non-redirected web page' ],
 		      @create_args, ],
 	},
@@ -8418,6 +9333,224 @@ $redirect_tests = [
 	  'fail' => 1,
 	},
 
+	# Create a redirect from www.domain to just the domain
+	{ 'command' => 'create-redirect.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/' ],
+		      [ 'host', 'www.'.$test_domain ],
+		      [ 'redirect', 'http://'.$test_domain ] ],
+	},
+
+	# Make sure the redirect appears
+	{ 'command' => 'list-redirects.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => [ '^/$', 'Destination: http://'.$test_domain,
+		      'Limit to hostname: www.'.$test_domain,
+		      'Regexp hostname: No',
+		      'Type: Redirect', 'Match sub-paths: No' ],
+	},
+
+	# Check that it works
+	{ 'command' => $wget_command.'http://www.'.$test_domain,
+	  'grep' => 'http://'.$test_domain,
+	},
+
+	# Check that it works for SSL
+	{ 'command' => $wget_command.'https://www.'.$test_domain,
+	  'grep' => 'http://'.$test_domain,
+	},
+
+	# Check that there is no redirect for another domain
+	{ 'command' => $wget_command.'http://mail.'.$test_domain,
+	  'antigrep' => 'http://'.$test_domain,
+	},
+
+	# Delete the redirect
+	{ 'command' => 'delete-redirect.pl',
+          'args' => [ [ 'domain', $test_domain ],
+                      [ 'path', '/' ],
+		      [ 'host', 'www.'.$test_domain ] ],
+	},
+
+	# Check that it no longer works
+	{ 'command' => $wget_command.'http://www.'.$test_domain,
+	  'antigrep' => 'http://'.$test_domain,
+	},
+
+	# Create a redirect using a regexp
+	{ 'command' => 'create-redirect.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/' ],
+		      [ 'host-regexp', '"(ftp|www).'.$test_domain.'"' ],
+		      [ 'redirect', 'http://'.$test_domain ] ],
+	},
+
+	# Make sure the redirect appears
+	{ 'command' => 'list-redirects.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'multiline' ] ],
+	  'grep' => [ '^/$', 'Destination: http://'.$test_domain,
+		      'Limit to hostname: \(ftp\|www\).'.$test_domain,
+		      'Regexp hostname: Yes',
+		      'Type: Redirect', 'Match sub-paths: No' ],
+	},
+
+	# Check that it works
+	{ 'command' => $wget_command.'http://www.'.$test_domain,
+	  'grep' => 'http://'.$test_domain,
+	},
+
+	# Check that there is no redirect for another domain
+	{ 'command' => $wget_command.'http://mail.'.$test_domain,
+	  'antigrep' => 'http://'.$test_domain,
+	},
+
+	# Delete the redirect
+	{ 'command' => 'delete-redirect.pl',
+          'args' => [ [ 'domain', $test_domain ],
+                      [ 'path', '/' ],
+		      [ 'host', '"(ftp|www).'.$test_domain.'"' ] ],
+	},
+
+	# Create an HTTP-only redirect
+	{ 'command' => 'create-redirect.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/' ],
+		      [ 'host', 'www.'.$test_domain ],
+		      [ 'http' ],
+		      [ 'redirect', 'http://'.$test_domain ] ],
+	},
+
+	# Check that it works
+	{ 'command' => $wget_command.'http://www.'.$test_domain,
+	  'grep' => 'http://'.$test_domain,
+	},
+
+	# Check that it doesn't work for SSL
+	{ 'command' => $wget_command.'https://www.'.$test_domain,
+	  'antigrep' => 'http://'.$test_domain,
+	},
+
+	# Delete the redirect
+	{ 'command' => 'delete-redirect.pl',
+          'args' => [ [ 'domain', $test_domain ],
+                      [ 'path', '/' ],
+		      [ 'host', 'www.'.$test_domain ] ],
+	},
+
+	# Check that it no longer works
+	{ 'command' => $wget_command.'http://www.'.$test_domain,
+	  'antigrep' => 'http://'.$test_domain,
+	},
+
+	# Create an HTTPS-only redirect
+	{ 'command' => 'create-redirect.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/' ],
+		      [ 'host', 'www.'.$test_domain ],
+		      [ 'https' ],
+		      [ 'redirect', 'http://'.$test_domain ] ],
+	},
+
+	# Check that it works
+	{ 'command' => $wget_command.'https://www.'.$test_domain,
+	  'grep' => 'http://'.$test_domain,
+	},
+
+	# Check that it doesn't work for SSL
+	{ 'command' => $wget_command.'http://www.'.$test_domain,
+	  'antigrep' => 'http://'.$test_domain,
+	},
+
+	# Delete the redirect
+	{ 'command' => 'delete-redirect.pl',
+          'args' => [ [ 'domain', $test_domain ],
+                      [ 'path', '/' ],
+		      [ 'host', 'www.'.$test_domain ] ],
+	},
+
+	# Check that it no longer works
+	{ 'command' => $wget_command.'https://www.'.$test_domain,
+	  'antigrep' => 'http://'.$test_domain,
+	},
+
+	# Create a redirect that excludes well-known
+	{ 'command' => 'create-redirect.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', '/' ],
+		      [ 'redirect', 'http://www.google.com' ],
+		      [ 'fix-wellknown' ] ],
+	},
+
+	# Test wget to redirect to google
+	{ 'command' => $wget_command.'http://'.$test_domain.'/',
+	  'grep' => 'Feeling Lucky',
+	},
+
+	# Test wget doesn't redirect .well-known
+	{ 'command' => $wget_command.'http://'.$test_domain.'/.well-known/',
+	  'antigrep' => 'Feeling Lucky',
+	  'fail' => 1,
+	},
+
+	# Make sure the redirect appears
+	{ 'command' => 'list-redirects.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'host', '' ],
+		      [ 'multiline' ],
+		      [ 'fix-wellknown' ] ],
+	  'grep' => [ '^/$', ],
+	},
+	{ 'command' => 'list-redirects.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'host', '' ],
+		      [ 'multiline' ] ],
+	  'grep' => [ '^'.quotemeta('^/(?!.well-known)').'$', ],
+	},
+
+	# Enable webmail and admin redirects
+	{ 'command' => 'modify-web.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'webmail' ] ],
+	},
+
+	# Make sure they shows up
+	{ 'command' => 'list-redirects.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'host', 'webmail.'.$test_domain ],
+		      [ 'fix-wellknown' ],
+		      [ 'multiline' ] ],
+	  'grep' => [ '^/$',
+		      'Limit to hostname: webmail.'.$test_domain,
+		      'Destination: '.$usermin_proto.'://'.$test_domain.':'.$usermin_port ],
+	},
+	{ 'command' => 'list-redirects.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'host', 'admin.'.$test_domain ],
+		      [ 'fix-wellknown' ],
+		      [ 'multiline' ] ],
+	  'grep' => [ '^/$',
+		      'Limit to hostname: admin.'.$test_domain,
+		      'Destination: '.$webmin_proto.'://'.$test_domain.':'.$webmin_port ],
+	},
+
+	# Test HTTP and HTTPS get to webmail alias
+	{ 'command' => $wget_command.'http://webmail.'.$test_domain,
+	  'grep' => 'Usermin',
+	},
+	{ 'command' => $wget_command.'https://webmail.'.$test_domain,
+	  'grep' => 'Usermin',
+	},
+
+	# Test HTTP and HTTPS get to admin alias
+	{ 'command' => $wget_command.'http://admin.'.$test_domain,
+	  'grep' => 'Webmin',
+	},
+	{ 'command' => $wget_command.'https://admin.'.$test_domain,
+	  'grep' => 'Webmin',
+	},
+
 	# Get rid of the domain
 	{ 'command' => 'delete-domain.pl',
 	  'args' => [ [ 'domain', $test_domain ] ],
@@ -8484,7 +9617,7 @@ $admin_tests = [
 		       "${webmin_proto}://localhost:${webmin_port}".
 		       "/virtual-server/list_users.cgi\\?dom=".
 		       "`virtualmin list-domains.pl --domain $test_domain --id-only`",
-	  'grep' => [ $test_domain, 'Mail and FTP Users' ],
+	  'grep' => [ $test_domain, 'Edit Users' ],
 	},
 
 	# Take away access to aliases and users
@@ -8509,7 +9642,7 @@ $admin_tests = [
 		       "${webmin_proto}://localhost:${webmin_port}".
 		       "/virtual-server/list_users.cgi\\?dom=".
 		       "`virtualmin list-domains.pl --domain $test_domain --id-only`",
-	  'antigrep' => 'Mail and FTP Users',
+	  'antigrep' => 'Edit Users',
 	  'grep' => 'You are not allowed to edit users in this domain',
 	},
 
@@ -9560,11 +10693,13 @@ $s3_tests = [
 	  'cleanup' => 1,
 	},
 	];
-if (!$config{'s3_akey'} || !$config{'s3_skey'}) {
+if (!$s3_account) {
 	$s3_tests = [ { 'command' => 'echo No default S3 access or secret key defined on this system' } ];
 	}
 else {
 	$s3_eu_tests = &convert_to_location($s3_tests, "eu-west-1");
+	$s3_http_tests = &convert_to_http_api($s3_tests);
+	$s3_eu_http_tests = &convert_to_http_api($s3_eu_tests);
 	}
 
 $rs_tests = [
@@ -10350,6 +11485,83 @@ $htpasswd_tests = [
         },
 	];
 
+$htpasswd_tests_extra = [
+	# Create a domain with a website
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ $web ], [ 'dns' ],
+		      [ 'logrotate' ],
+		      [ 'content' => 'Test web page' ],
+		      @create_args, ],
+	},
+
+	# Test wget without protection
+	{ 'command' => $wget_command.' http://'.$test_domain,
+	  'grep' => 'Test web page',
+	},
+
+	# Setup protected directory
+	{ 'command' => 'virtualmin create-protected-directory',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Protection test' ],
+		      [ 'path', $test_domain_html ] ],
+	  'grep' => 'Added protection for '.$test_domain_html,
+	},
+
+	# Check the directory was created
+	{ 'command' => 'virtualmin list-protected-directories',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'dir-only' ] ],
+	  'grep' => $test_domain_html,
+	},
+
+	# Test wget with protection, which should now fail
+	{ 'command' => $wget_command.' http://'.$test_domain,
+	  'fail' => 1,
+	},
+
+	# Create webserver extra user
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user_extra ],
+		      [ 'pass', 'smeg' ],
+		      [ 'webserver-dir', $test_domain_html ],
+		      [ 'webserver-only' ] ],
+	},
+
+	# Check the user was created
+	{ 'command' => 'virtualmin list-protected-users',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'path', $test_domain_html ],
+		      [ 'name-only' ] ],
+	  'grep' => $test_user_extra,
+	},
+
+	# Test wget as the new user
+	{ 'command' => $wget_command.' http://'.&urlize($test_full_user_extra).':smeg@'.$test_domain,
+	  'grep' => 'Test web page',
+	},
+
+	# Delete extra user
+	{ 'command' => 'virtualmin delete-user',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user_extra ] ],
+	},
+
+	# Test wget as the user, which should fail now
+	{ 'command' => $wget_command.' http://'.&urlize($test_full_user_extra).':smeg@'.$test_domain,
+	  'fail' => 1,
+	},
+
+	# Get rid of the domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1
+        },
+	];
+
 $reset_tests = [
 	# Create a domain with all the features
 	{ 'command' => 'create-domain.pl',
@@ -10447,6 +11659,14 @@ $reset_tests = [
 		      [ 'multiline' ] ],
 	  'grep' => [ '/foo$',
 		      'PHP version: '.$max_php_version ],
+	},
+
+	# Check PHP execution
+	{ 'command' => 'echo "<?php phpinfo(); ?>" >~'.
+		       $test_domain_user.'/public_html/test.php',
+	},
+	{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
+	  'grep' => 'PHP Version',
 	},
 
 	# Add a DNS record that will be lost
@@ -10554,6 +11774,37 @@ $reset_tests = [
 	{ 'command' => 'validate-domains.pl',
 	  'args' => [ [ 'domain' => $test_domain ],
 		      [ 'all-features' ] ],
+	},
+
+	# Switch PHP mode to FPM
+	{ 'command' => 'modify-web.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'mode', 'fpm' ] ],
+	},
+
+	# Reset the website feature again
+	{ 'command' => 'reset-feature.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'web' ] ],
+	},
+
+	# Validate to ensure that the config is now OK
+	{ 'command' => 'validate-domains.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'feature', 'web' ],
+		      [ 'feature', 'ssl' ], ],
+	},
+
+	# Check that the PHP mode is correct
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'multiline' ],
+		      [ 'domain', $test_domain ] ],
+	  'grep' => [ 'PHP execution mode: fpm' ],
+	},
+
+	# Check PHP execution again
+	{ 'command' => $wget_command.'http://'.$test_domain.'/test.php',
+	  'grep' => 'PHP Version',
 	},
 
 	# Cleanup the domain
@@ -10818,6 +12069,293 @@ $parallel_backup_tests = [
 	  'cleanup' => 1 },
 	];
 
+$transfer_tests = [
+	# Create a parent domain to be transferred
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ 'dns' ], [ $web ], [ 'mail' ],
+		      [ 'mysql' ], [ 'spam' ], [ 'virus' ],
+		      $config{'postgres'} ? ( [ 'postgres' ] ) : ( ),
+		      [ 'webmin' ], [ 'logrotate' ],
+		      [ 'content' => 'Test home page' ],
+		      @create_args, ],
+        },
+
+	# Add a user to the domain being backed up
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'desc', 'Test user' ],
+		      [ 'quota', 777*1024 ],
+		      [ 'mail-quota', 777*1024 ] ],
+	},
+
+	# Add an extra database
+	{ 'command' => 'create-database.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'mysql' ],
+		      [ 'name', $test_domain_db.'_extra' ] ],
+	},
+
+	# Add an allowed database host
+	{ 'command' => 'modify-database-hosts.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'mysql' ],
+		      [ 'add-host', '1.2.3.4' ] ],
+	},
+
+	# Create a sub-server to be included
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_subdomain ],
+		      [ 'parent', $test_domain ],
+		      [ 'prefix', 'example2' ],
+		      [ 'desc', 'Test sub-domain' ],
+		      [ 'dir' ], [ $web ], [ 'logrotate' ], [ 'dns' ],
+		      [ 'mail' ],
+		      [ 'content' => 'Test home page' ],
+		      @create_args, ],
+	},
+
+	# Create an alias domain to be included, with a dir
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_parallel_domain1 ],
+		      [ 'alias', $test_domain ],
+		      [ 'desc', 'Test alias domain with dir' ],
+		      [ 'dir' ], [ $web ], [ 'dns' ], [ 'mail' ],
+		      @create_args, ],
+	},
+
+	# Create an alias domain to be included, without a dir
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_parallel_domain2 ],
+		      [ 'alias', $test_domain ],
+		      [ 'desc', 'Test alias domain without dir' ],
+		      [ $web ], [ 'dns' ],
+		      @create_args, ],
+	},
+
+	# Test that everything works initially
+	@post_restore_tests,
+
+	# Transfer locally
+	{ 'command' => 'transfer-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'host', '127.0.0.1' ],
+		      [ 'webmin' ],
+		      [ 'pass', $webmin_pass ],
+		      [ 'overwrite' ] ],
+	},
+
+	# Test that everything still works
+	@post_restore_tests,
+
+	# Transfer locally
+	{ 'command' => 'transfer-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'host', '127.0.0.1' ],
+		      [ 'webmin' ],
+		      [ 'pass', $webmin_pass ],
+		      [ 'overwrite' ],
+		      [ 'delete' ] ],
+	},
+
+	# Test that everything still works
+	@post_restore_tests,
+
+	# Cleanup the domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1 },
+	];
+if (!$webmin_pass) {
+	$transfer_tests = [ { 'command' => 'echo Missing user or password ; false' } ];
+	}
+
+$ftp_tests = [
+	# Create a domain with SSL, FTP and a private IP
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test FTP domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ $web ], [ 'dns' ], [ $ssl ],
+		      [ 'logrotate' ], [ 'ftp' ],
+		      [ 'allocate-ip' ],
+		      [ 'content' => 'Test FTP home page' ],
+		      @create_args, ],
+        },
+
+	# Copy the domain's SSL cert to proftpd
+	{ 'command' => 'install-service-cert.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'add-domain' ],
+		      [ 'service', 'proftpd' ] ],
+	},
+
+	# Check that anonymous FTP to it works
+	{ 'command' => $wget_command.
+		       'ftp://'.$test_domain.'/',
+	  'antigrep' => 'Login incorrect',
+	},
+
+	# Put a file in the anonymous FTP directory
+	{ 'command' => 'echo "bar" >~'.
+		       $test_domain_user.'/ftp/foo.txt',
+	},
+
+	# Try to fetch it
+	{ 'command' => $wget_command.
+		       'ftp://'.$test_domain.'/foo.txt',
+	  'grep' => 'bar',
+	},
+
+	# Test that encrypted FTP works and serves the right cert
+	{ 'command' => $curl_command.' --ftp-ssl --insecure -v '.
+		       'ftp://'.$test_domain.'/foo.txt',
+	  'grep' => [ 'bar', 'O=Test FTP domain', 'CN=(\\*\\.)?'.$test_domain ],
+	},
+
+	# Disable the domain
+	{ 'command' => 'disable-domain.pl',
+	  'args' => [ [ 'domain' => $test_domain ],
+		      [ 'feature' => 'ftp' ] ],
+	},
+
+	# FTP should fail now
+	{ 'command' => $wget_command.
+		       'ftp://'.$test_domain.'/',
+	  'grep' => 'Login incorrect',
+	  'fail' => 1,
+	},
+
+	# Re-enable the domain
+	{ 'command' => 'enable-domain.pl',
+	  'args' => [ [ 'domain' => $test_domain ] ],
+	},
+
+	# FTP should work again
+	{ 'command' => $wget_command.
+		       'ftp://'.$test_domain.'/',
+	  'antigrep' => 'Login incorrect',
+	},
+
+	# Cleanup the domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1 },
+	];
+
+$xml_tests = [
+	# Create a domain to run API commands on
+	{ 'command' => 'create-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'desc', 'Test domain' ],
+		      [ 'pass', 'smeg' ],
+		      [ 'dir' ], [ 'unix' ], [ 'dns' ], [ $web ], [ 'mail' ],
+		      [ 'mysql' ],
+		      [ 'content' => 'Test home page' ],
+		      @create_args, ],
+        },
+
+	# Add a user to the domain to list
+	{ 'command' => 'create-user.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'user', $test_user ],
+		      [ 'pass', 'smeg' ],
+		      [ 'desc', 'Test user' ],
+		      [ 'quota', 777*1024 ],
+		      [ 'mail-quota', 777*1024 ] ],
+	},
+
+	# Add an extra database to list
+	{ 'command' => 'create-database.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'type', 'mysql' ],
+		      [ 'name', $test_domain_db.'_extra' ] ],
+	},
+
+	# Add a test alias
+	{ 'command' => 'create-alias.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'from', $test_alias ],
+		      [ 'to', 'nobody@webmin.com' ],
+		      [ 'to', 'nobody@virtualmin.com' ] ],
+	},
+
+	# List the domain in XML mode
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'xml' ] ],
+	  'grep' => [ '<data name="'.$test_domain.'">',
+		      '<username>'.$test_domain_user.'</username>',
+		      '<features>unix dir dns mail '.$web.' logrotate mysql</features>',
+		    ],
+	},
+
+	# List the domain in JSON mode
+	{ 'command' => 'list-domains.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+		      [ 'json' ] ],
+	  'grep' => [ '"name" : "'.$test_domain.'"',
+		      '"username"\\s+:\\s+\\[\\s+"'.$test_domain_user.'"\\s+\]',
+		      '"features"\\s+:\\s+\\[\\s+"unix dir dns mail '.$web.' logrotate mysql"\\s+\]',
+		    ],
+	  'grepall' => 1,
+	},
+
+	# List the users in XML mode
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+                      [ 'xml' ] ],
+	  'grep' => [ '<data name="'.$test_full_user.'">',
+		      '<domain>'.$test_domain.'</domain>',
+		      '<real_name>Test user</real_name>',
+		      '<user>'.$test_user.'</user>',
+		      '<home_byte_quota>'.(777*1024*&quota_bsize("home")).
+			'</home_byte_quota>',
+		    ],
+	},
+
+	# List the users in JSON mode
+	{ 'command' => 'list-users.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+                      [ 'json' ] ],
+	  'grep' => [ '"name" : "'.$test_full_user.'"',
+		      '"domain"\\s+:\\s+\\[\\s+"'.$test_domain.'"\\s+\]',
+		      '"real_name"\\s+:\\s+\\[\\s+"Test user"\\s+\]',
+		      '"user"\\s+:\\s+\\[\\s+"'.$test_user.'"\\s+\]',
+		      '"home_byte_quota"\\s+:\\s+\\[\\s+"'.(777*1024*&quota_bsize("home")).'"\\s+\]',
+		    ],
+	  'grepall' => 1,
+	},
+
+	# List the aliases in XML mode
+	{ 'command' => 'list-aliases.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+                      [ 'xml' ] ],
+	  'grep' => [ '<data name="'.$test_alias.'@'.$test_domain.'">',
+		      '<to>nobody@webmin.com</to>',
+		      '<to>nobody@virtualmin.com</to>',
+		    ],
+	},
+
+	# List the aliases in JSON
+	{ 'command' => 'list-aliases.pl',
+	  'args' => [ [ 'domain', $test_domain ],
+                      [ 'json' ] ],
+	  'grep' => [ '"name"\\s+:\\s+"'.$test_alias.'@'.$test_domain.'"',
+		      '"to"\\s+:\\s+\\[\\s+"nobody@webmin.com",\\s+"nobody@virtualmin.com"\\s+\\]',
+		    ],
+	  'grepall' => 1,
+	},
+
+	# Cleanup the domain
+	{ 'command' => 'delete-domain.pl',
+	  'args' => [ [ 'domain', $test_domain ] ],
+	  'cleanup' => 1 },
+	];
 
 $alltests = { '_config' => $_config_tests,
 	      'domains' => $domains_tests,
@@ -10825,6 +12363,7 @@ $alltests = { '_config' => $_config_tests,
 	      'disable' => $disable_tests,
 	      'web' => $web_tests,
 	      'mailbox' => $mailbox_tests,
+	      'sshuser' => $sshuser_tests,
 	      'alias' => $alias_tests,
 	      'atalias' => $atalias_tests,
 	      'aliasdom' => $aliasdom_tests,
@@ -10851,12 +12390,15 @@ $alltests = { '_config' => $_config_tests,
 	      'enc_remotebackup' => $enc_remotebackup_tests,
 	      's3backup' => $s3backup_tests,
 	      'enc_s3backup' => $enc_s3backup_tests,
+	      'http_s3backup' => $http_s3backup_tests,
 	      'gcsbackup' => $gcsbackup_tests,
 	      'enc_gcsbackup' => $enc_gcsbackup_tests,
 	      'dropboxbackup' => $dropboxbackup_tests,
 	      'enc_dropboxbackup' => $enc_dropboxbackup_tests,
 	      'azurebackup' => $azurebackup_tests,
 	      'enc_azurebackup' => $enc_azurebackup_tests,
+	      'drivebackup' => $drivebackup_tests,
+	      'enc_drivebackup' => $enc_drivebackup_tests,
 	      'bbbackup' => $bbbackup_tests,
 	      'enc_bbbackup' => $enc_bbbackup_tests,
 	      'rsbackup' => $rsbackup_tests,
@@ -10867,8 +12409,8 @@ $alltests = { '_config' => $_config_tests,
 	      'enc_webminbackup' => $enc_webminbackup_tests,
 	      'ipbackup' => $ipbackup_tests,
 	      'purge' => $purge_tests,
-	      'incremental' => $incremental_tests,
-	      'enc_incremental' => $enc_incremental_tests,
+	      'differential' => $differential_tests,
+	      'enc_differential' => $enc_differential_tests,
               'mail' => $mail_tests,
               'atmail' => $atmail_tests,
               'aliasmail' => $aliasmail_tests,
@@ -10887,6 +12429,7 @@ $alltests = { '_config' => $_config_tests,
 	      'webrename' => $webrename_tests,
 	      'rename' => $rename_tests,
 	      'bw' => $bw_tests,
+	      'lastlogin' => $lastlogin_tests,
 	      'quota' => $quota_tests,
 	      'overlap' => $overlap_tests,
 	      'redirect' => $redirect_tests,
@@ -10895,6 +12438,8 @@ $alltests = { '_config' => $_config_tests,
 	      'clonesub' => $clonesub_tests,
 	      's3' => $s3_tests,
 	      's3_eu' => $s3_eu_tests,
+	      's3_http' => $s3_http_tests,
+	      's3_eu_http' => $s3_eu_http_tests,
 	      'exclude' => $exclude_tests,
 	      'rs' => $rs_tests,
 	      'jail' => $jail_tests,
@@ -10904,10 +12449,15 @@ $alltests = { '_config' => $_config_tests,
 	      'googledns' => $googledns_tests,
 	      'route53' => $route53_tests,
 	      'htpasswd' => $htpasswd_tests,
+	      'htpasswd_extra' => $htpasswd_tests_extra,
 	      'reset' => $reset_tests,
 	      'compression' => $compression_tests,
 	      'allscript' => $allscript_tests,
 	      'parallel_backup' => $parallel_backup_tests,
+	      'transfer' => $transfer_tests,
+	      'ftp' => $ftp_tests,
+	      'scheduled' => $scheduled_tests,
+	      'xml' => $xml_tests,
 	    };
 if (!$virtualmin_pro) {
 	# Some tests don't work on GPL
@@ -10948,7 +12498,7 @@ TESTS: foreach $tt (@tests) {
 
 	# Cleanup backups first
 	&unlink_file($test_backup_file);
-	&unlink_file($test_incremental_backup_file);
+	&unlink_file($test_differential_backup_file);
 	&unlink_file($test_backup_dir);
 	system("mkdir -p $test_backup_dir");
 	&unlink_file($test_backup_dir2);
@@ -11088,17 +12638,19 @@ sub run_test_command
 {
 local $cmd = $t->{'command'};
 foreach my $a (@{$t->{'args'}}) {
-	if (defined($a->[1])) {
-		if ($a->[1] =~ /\s/) {
-			$cmd .= " --".$a->[0]." '".$a->[1]."'";
+	my ($flag, @vals) = @$a;
+	$cmd .= " --".$flag;
+	foreach my $v (@vals) {
+		if ($v =~ /\s/ || $v eq '') {
+			$cmd .= " '".$v."'";
 			}
 		else {
-			$cmd .= " --".$a->[0]." ".$a->[1];
+			$cmd .= " ".$v;
 			}
 		}
-	else {
-		$cmd .= " --".$a->[0];
-		}
+	}
+foreach my $e (keys %{$t->{'envs'}}) {
+	$cmd = $e."=".quotemeta($t->{'envs'}->{$e})." ".$cmd;
 	}
 if ($cmd =~ /^wget/) {
 	# Wget needs to write to current dir sometimes
@@ -11116,9 +12668,16 @@ if ($gconfig{'os_type'} !~ /-linux$/ && &has_command("bash")) {
 local $to = $t->{'timeout'} || $timeout;
 local ($out, $timed_out) = &backquote_with_timeout(
 				"($cmd) 2>&1 </dev/null", $to);
+local @lout = split(/\r?\n/, $out);
+local $shortout = $out;
+if (length($shortout) > $max_output) {
+	$shortout = substr($shortout, 0, $max_output);
+	$shortout .= "\n" if ($shortout !~ /\n$/);
+	$shortout .= "(Plus ".(length($out) - $max_output)." more bytes...)\n";
+	}
 if (!$t->{'ignorefail'}) {
 	if ($? && !$t->{'fail'} || !$? && $t->{'fail'}) {
-		print $out if ($output || !$t->{'quiet'});
+		print $shortout if ($output || !$t->{'quiet'});
 		if ($t->{'fail'}) {
 			print "    .. failed to fail\n";
 			}
@@ -11137,13 +12696,18 @@ if ($t->{'grep'}) {
 	foreach my $grep (@greps) {
 		$grep = &substitute_template($grep, \%saved_vars);
 		local $match = 0;
-		foreach my $l (split(/\r?\n/, $out)) {
-			if ($l =~ /$grep/) {
-				$match = 1;
+		if ($t->{'grepall'}) {
+			$match = ($out =~ /$grep/);
+			}
+		else {
+			foreach my $l (split(/\r?\n/, $out)) {
+				if ($l =~ /$grep/) {
+					$match = 1;
+					}
 				}
 			}
 		if (!$match) {
-			print $out if ($output || !$t->{'quiet'});
+			print $shortout if ($output || !$t->{'quiet'});
 			print "    .. no match on $grep\n";
 			return 0;
 			}
@@ -11162,13 +12726,13 @@ if ($t->{'antigrep'}) {
 				}
 			}
 		if ($match) {
-			print $out if ($output || !$t->{'quiet'});
+			print $shortout if ($output || !$t->{'quiet'});
 			print "    .. unexpected match on $grep\n";
 			return 0;
 			}
 		}
 	}
-print $out if ($output);
+print $shortout if ($output);
 if ($t->{'save'}) {
 	# Save output to variable
 	$out =~ s/^\s*//;
@@ -11194,6 +12758,7 @@ print "                           [--test type]*\n";
 print "                           [--skip-test type]*\n";
 print "                           [--no-cleanup | --skip-cleanup]\n";
 print "                           [--output]\n";
+print "                           [--max-output bytes]\n";
 print "                           [--migrate $mig]\n";
 print "                           [--user webmin-login --pass password]\n";
 print "                           [--script name]*\n";
@@ -11281,7 +12846,7 @@ foreach my $t (@$tests) {
 	my $nt = { %$t };
 	my @na;
 	foreach my $a (@{$t->{'args'}}) {
-		push(@na, [ $a->[0], $a->[1] ]);
+		push(@na, [ @$a ]);
 		}
 	$nt->{'args'} = \@na;
 	if ($nt->{'command'} eq 'create-s3-bucket.pl') {
@@ -11292,6 +12857,20 @@ foreach my $t (@$tests) {
 			$a->[1] .= "-".lc($location);
 			}
 		}
+	push(@$rv, $nt);
+	}
+return $rv;
+}
+
+# convert_to_http_api(&tests)
+# Convert S3 tests to run with an environment var set to use HTTP calls
+sub convert_to_http_api
+{
+my ($tests) = @_;
+my $rv = [ ];
+foreach my $t (@$tests) {
+        my $nt = { %$t };
+	$nt->{'envs'}->{'NO_AWS_CMD'} = 1;
 	push(@$rv, $nt);
 	}
 return $rv;

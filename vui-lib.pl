@@ -49,7 +49,7 @@ return &ui_radio_table($name, $mode,
 			    ('hourly', 'daily', 'weekly', 'monthly', 'yearly')
 		      ]) ] ) : ( ),
 	   [ 2, $text{'cron_complex'},
-		   &ui_textbox($name."_complex", $complex, 40, 0, undef,
+		   &ui_textbox($name."_complex", $complex, 30, 0, undef,
 				  "readonly=true")." ".$button ],
 	 ]).&ui_hidden($name."_hidden", $hidden);
 }
@@ -248,15 +248,51 @@ $nbsps = "&nbsp;&nbsp;" if ($nbsps);
 	return "<div style='white-space: nowrap;'>$nbsps$html$nbsps</div>";
 }
 
+=head2 vui_ui_block(html)
+
+Returns passed HTML as block element
+
+=cut
+sub vui_ui_block
+{
+my ($html) = @_;
+return "<div class='vui_ui_block'>$html</div>";
+}
+
 =head2 vui_ui_input_noauto_attrs()
 
-Returns attributes preventing browser
-to autofill input fields
+Returns attributes preventing browser to autofill input fields
 
 =cut
 sub vui_ui_input_noauto_attrs
 {
 return "autocomplete='new-password' autocorrect='off' spellcheck='false'";
+}
+
+=head2 vui_noauto_textbox(name, value, size, [disabled?], [maxlength], [tags])
+
+Like ui_textbox, but with autocompletion disabled
+
+=cut
+sub vui_noauto_textbox
+{
+my ($name, $value, $size, $dis, $max, $tags) = @_;
+$tags ||= "";
+$tags .= " ".&vui_ui_input_noauto_attrs();
+return &ui_textbox($name, $value, $size, $dis, $max, $tags);
+}
+
+=head2 vui_noauto_password(name, value, size, [disabled?], [maxlength], [tags])
+
+Like ui_password, but with autocompletion disabled
+
+=cut
+sub vui_noauto_password
+{
+my ($name, $value, $size, $dis, $max, $tags) = @_;
+$tags ||= "";
+$tags .= " ".&vui_ui_input_noauto_attrs();
+return &ui_password($name, $value, $size, $dis, $max, $tags);
 }
 
 =head2 vui_edit_link_icon()
@@ -276,6 +312,54 @@ $unisymb_class =~ tr/[0-9]//cd;
 return &ui_link($link,
   "<span style='$styles'>$unisymb</span>",
   "vui_edit_link_icon i$unisymb_class");
+}
+
+=head2 vui_inline_label()
+
+Returns a text label as a inline element
+
+=cut
+sub vui_inline_label
+{
+my ($textid, $upper, $class) = @_;
+my $styles = "font-size: 10px;";
+   $styles .= "font-weight: bold;";
+   $styles .= "background-color: #bdbdbd;";
+   $styles .= "border-radius: 50px;";
+   $styles .= "color: #fff;";
+   $styles .= "line-height: inherit;";
+   $styles .= "margin: 0 5px 0 10px;";
+   $styles .= "padding: 1px 5px;";
+   $styles .= "vertical-align: inherit;";
+my $styles_cnt .= "display:contents;";
+my $text = $text{$textid};
+$text = uc($text) if ($upper);
+$class = " $class" if ($class);
+return "<span class='vui_inline_label$class' style='$styles_cnt'>".
+       "<span data-$textid style='$styles'>$text</span></span>";
+}
+
+=head2 vui_hidden()
+
+Given content returns it as a hidden container
+
+=cut
+sub vui_hidden
+{
+my ($content) = @_;
+return "<div class='vui_hidden' style='display: none'>$content</div>";
+}
+
+=head2 vui_note(text)
+
+Returns a note as a small font size text
+
+=cut
+sub vui_note
+{
+my ($text) = @_;
+return "<font style='font-size:92%;opacity:0.66'>&nbsp;&nbsp;ⓘ&nbsp;&nbsp;".
+	"$text</font>";
 }
 
 1;

@@ -7,6 +7,11 @@ sub module_install
 {
 &foreign_require("cron");
 local $need_restart;
+&lock_file($module_config_file);
+
+# Update last post-install time
+$config{'lastpost'} = time();
+&save_module_config();
 
 # Convert all existing cron jobs to WebminCron, except existing backups
 foreach my $script (@all_cron_commands) {
@@ -25,7 +30,6 @@ if (!@oldplans) {
 # detected IP for DNS records, and cache it.
 if (!$config{'first_version'} && !$config{'dns_ip'}) {
 	$config{'dns_ip'} = '*';
-	&get_external_ip_address();
 	&save_module_config();
 	}
 
@@ -150,30 +154,12 @@ if ($config{'virus'}) {
 $config{'old_defip'} ||= &get_default_ip();
 $config{'old_defip6'} ||= &get_default_ip6();
 
-# Check if we have enough memory to preload
-local $lowmem;
-&foreign_require("proc");
-if (defined(&proc::get_memory_info)) {
-	local ($real) = &proc::get_memory_info();
-	local $arch = &backquote_command("uname -m 2>/dev/null");
-	local $megs = $arch =~ /x86_64/ ? 512 : 384;
-	if ($real*1024 <= $megs*1024*1024) {
-		# Less that 384 M (or 512 M with 64-bit) .. don't preload
-		$lowmem = 1;
-		}
-	}
-if (&running_in_zone() || &running_in_vserver()) {
-	# Assume that zones and vservers don't have a lot of memory
-	$lowmem = 1;
-	}
-
 # Decide whether to preload, and then do it
-if ($config{'preload_mode'} eq '') {
-	$config{'preload_mode'} = !$virtualmin_pro ? 0 :
-				  $lowmem ? 0 : 2;
-	}
 if ($gconfig{'no_virtualmin_preload'}) {
 	$config{'preload_mode'} = 0;
+	}
+elsif ($config{'preload_mode'} eq '') {
+	$config{'preload_mode'} = 2;
 	}
 &save_module_config();
 &update_miniserv_preloads($config{'preload_mode'});
@@ -294,28 +280,45 @@ foreach my $d (&list_domains()) {
 	}
 &release_lock_unix();
 
-# Fix old PHP memory limit default
-if ($config{'php_vars'} =~ /^memory_limit=32M/) {
-	$config{'php_vars'} = "+".$config{'php_vars'};
-	&save_module_config();
-	}
-
-# If the default template uses a PHP mode that isn't supported, change it
-my ($tmpl) = &list_templates();
+# If the default template uses a PHP or CGI mode that isn't supported, change it
 my $mmap = &php_mode_numbers_map();
 my @supp = &supported_php_modes();
-my %cannums = map { $mmap->{$_}, 1 } @supp;
-if (!$cannums{int($tmpl->{'web_php_suexec'})} && @supp) {
-	# Default mode cannot be used .. change to first that can
-	my @goodsupp = grep { $_ ne 'none' } @supp;
-	@goodsupp = @supp if (!@goodsupp);
-	$tmpl->{'web_php_suexec'} = $mmap->{$goodsupp[0]};
-	&save_template($tmpl);
+my @cgimodes = &has_cgi_support();
+foreach my $tmpl (grep { $_->{'standard'} } &list_templates()) {
+	my %cannums = map { $mmap->{$_}, 1 } @supp;
+	if ($tmpl->{'web_php_suexec'} ne '' &&
+	    !$cannums{int($tmpl->{'web_php_suexec'})} && @supp) {
+		# Default PHP mode cannot be used .. change to first that can
+		my @goodsupp = grep { $_ ne 'none' } @supp;
+		@goodsupp = @supp if (!@goodsupp);
+		$tmpl->{'web_php_suexec'} = $mmap->{$goodsupp[0]};
+		&save_template($tmpl);
+		}
+	if (@cgimodes) {
+		if (!$tmpl->{'web_cgimode'}) {
+			# No CGI mode set at all, so use the first one
+			$tmpl->{'web_cgimode'} = $cgimodes[0];
+			&save_template($tmpl);
+			}
+		elsif ($tmpl->{'web_cgimode'} ne 'none' &&
+		       &indexof($tmpl->{'web_cgimode'}, @cgimodes) < 0) {
+			# Default CGI mode cannot be used
+			$tmpl->{'web_cgimode'} = $cgimodes[0];
+			&save_template($tmpl);
+			}
+		}
+	elsif (!$tmpl->{'web_cgimode'}) {
+		# If no CGI nodes are available and no mode was set,
+		# explicitly disable CGIs
+		$tmpl->{'web_cgimode'} = 'none';
+		&save_template($tmpl);
+		}
 	}
 
 # Cache current PHP modes and error log files
 foreach my $d (grep { &domain_has_website($_) && !$_->{'alias'} }
 		    &list_domains()) {
+	&lock_domain($d);
 	if (!$d->{'php_mode'}) {
 		$d->{'php_mode'} = &get_domain_php_mode($d);
 		&save_domain($d);
@@ -324,13 +327,16 @@ foreach my $d (grep { &domain_has_website($_) && !$_->{'alias'} }
 		$d->{'php_error_log'} = &get_domain_php_error_log($d) || "";
 		&save_domain($d);
 		}
+	&unlock_domain($d);
 	}
 foreach my $d (grep { $_->{'alias'} } &list_domains()) {
+	&lock_domain($d);
 	my $dd = &get_domain($d->{'alias'});
 	if ($dd && $dd->{'php_mode'}) {
 		$d->{'php_mode'} = $dd->{'php_mode'};
 		&save_domain($d);
 		}
+	&unlock_domain($d);
 	}
 
 # Enable checking for latest scripts
@@ -343,9 +349,7 @@ if ($config{'scriptlatest_enabled'} eq '') {
 # Prevent an un-needed module config check
 if (!$cerr) {
 	$config{'last_check'} = time()+1;
-	&lock_file($module_config_file);
 	&save_module_config();
-	&unlock_file($module_config_file);
 	&write_file("$module_config_directory/last-config", \%config);
 	}
 
@@ -369,74 +373,75 @@ foreach my $m ("mysql", "postgresql", "ldap-client", "ldap-server",
 		}
 	}
 
-# Always update outdated (lower than v3.0)
+# Always update outdated (lower than v3.3)
 # Virtualmin default default page
 my $readdir = sub {
     my ($dir) = @_;
     my @hdirs;
     return @hdirs if (!-d $dir);
     opendir(my $udir, $dir);
-    @hdirs = map {&simplify_path("$dir/$_")}
-      grep {$_ ne '.' && $_ ne '..'} readdir($udir);
+    @hdirs = map { &simplify_path("$dir/$_") }
+	         grep {$_ ne '.' && $_ ne '..'} readdir($udir);
     closedir($udir);
     return @hdirs;
     };
 foreach my $d (@doms) {
 	my $dpubdir = $d->{'public_html_path'};
-	if (-d $dpubdir) {
-		my @dpubifiles = &$readdir($dpubdir);
-		@dpubifiles = grep (/^$dpubdir\/(index\.html|disabled_by_virtualmin\.html)$/, @dpubifiles);
-		foreach my $dpubifile (@dpubifiles) {
-			my $dpubifilelines = &read_file_lines($dpubifile, 1);
-			my $lims           = 256;
-			my $efix;
-			my $line;
-			foreach my $l (@{$dpubifilelines}) {
-				# If the file is larger than 256 lines, skip the rest
-				last if ($line++ > $lims);
+	next if (!-d $dpubdir);
+	my @dpubifiles = &$readdir($dpubdir);
+	@dpubifiles = grep { /^$dpubdir\/(index\.html|disabled_by_virtualmin\.html)$/ } @dpubifiles;
+	foreach my $dpubifile (@dpubifiles) {
+		my $dpubifilelines = &read_file_lines($dpubifile, 1);
+		my $lims           = 256;
+		my $efix;
+		my $line;
+		foreach my $l (@{$dpubifilelines}) {
+			# If the file is larger than 256 lines, skip the rest
+			last if ($line++ > $lims);
 
-				# Get beginning of the string for speed and run
-				# extra check to make sure we have a needed file
-				$l = substr($l, 0, $lims);
+			# Get beginning of the string for speed and run
+			# extra check to make sure we have a needed file
+			$l = substr($l, 0, $lims);
 
-				# Test to make sure that given file is Virtualmin website default page
-				$efix++ if (!$efix && $l =~ /iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/);
-				if ($efix == 1 &&
-					$l =~ /\*\s(Virtualmin\sLanding|Website\sDefault\sPage|Virtualmin\s+Default\s+Page)\sv([\d+\.]+)$/) {
-					my $tmplver = $2;
-					$efix++ if ($tmplver && &compare_version_numbers($tmplver, '<=', '3.0'));
-					}
-				$efix++ if ($efix == 2 && $l =~ /\*\sCopyright\s+[\d]{4}\sVirtualmin,\sInc\.$/);
-				$efix++ if ($efix == 3 && $l =~ /\*\sLicensed\sunder\sMIT$/);
+			# Test to make sure that given file is Virtualmin website default page
+			$efix++ if (!$efix && $l =~ /iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/);
+			if ($efix == 1 &&
+				$l =~ /\*\s(Virtualmin\sLanding|Website\sDefault\sPage|Virtualmin\s+Default\s+Page)\sv([\d+\.]+)$/) {
+				my $tmplver = $2;
+				$efix++ if ($tmplver && &compare_version_numbers($tmplver, '<=', '3.2'));
 				}
+			$efix++ if ($efix == 2 && $l =~ /\*\sCopyright\s+[\d]{4}\sVirtualmin(?:,\s+Inc\.)?$/);
+			$efix++ if ($efix == 3 && $l =~ /\*\sLicensed\sunder\sMIT$/);
+			}
 
-			# After existing file is read and verified to be old
-			# Virtualmin default page replace it with new one
-			if ($efix == 4) {
-				my $domtmplfile = "$default_content_dir/index.html";
-				if (-r $domtmplfile) {
-					my $domtmplfilecontent = &read_file_contents($domtmplfile);
-					my %hashtmp            = %$d;
-					my %domtmp             = %$d;
+		# After existing file is read and verified to be old
+		# Virtualmin default page replace it with new one
+		if ($efix == 4) {
+			my $domtmplfile = "$default_content_dir/index.html";
+			next if (!-r $domtmplfile);
+			my $cont = &read_file_contents($domtmplfile);
+			my %hashtmp = %$d;
+			my %domtmp = %$d;
 
-					# Preserve page type
-					$domtmp{'disabled_time'} = $dpubifile =~ /index\.html/ ? 0 : 1;
+			# Preserve page type
+			$domtmp{'disabled_time'} =
+				$dpubifile =~ /index\.html/ ? 0 : 1;
 
-					# Substitute and replace
-					%hashtmp            = &populate_default_index_page(\%domtmp, %hashtmp);
-					$domtmplfilecontent = &replace_default_index_page(\%domtmp, $domtmplfilecontent);
-					$domtmplfilecontent = &substitute_virtualmin_template($domtmplfilecontent, \%hashtmp);
-					my $fh;
-					&open_tempfile_as_domain_user($d, $fh, ">$dpubifile", 1);
-					&print_tempfile($fh, $domtmplfilecontent);
-					&close_tempfile_as_domain_user($d, $fh);
-					&set_permissions_as_domain_user($d, 0644, $dpubifile);
-					}
-				}
+			# Substitute and replace
+			%hashtmp = &populate_default_index_page(
+					\%domtmp, %hashtmp);
+			$cont = &replace_default_index_page(
+					\%domtmp, $cont);
+			$cont = &substitute_virtualmin_template(
+					$cont, \%hashtmp);
+			my $fh;
+			&open_tempfile_as_domain_user($d, $fh, ">$dpubifile",1);
+			&print_tempfile($fh, $cont);
+			&close_tempfile_as_domain_user($d, $fh);
+			&set_permissions_as_domain_user($d, 0644, $dpubifile);
 			}
 		}
 	}
-
 
 # Create API helper script /usr/bin/virtualmin
 &create_virtualmin_api_helper_command();
@@ -483,21 +488,48 @@ if (!&check_ratelimit() && &is_ratelimit_enabled()) {
 		}
 	}
 
-# Cache the DKIM status
 if (!&check_dkim()) {
+	# Cache the DKIM status
 	my $dkim = &get_dkim_config();
 	$config{'dkim_enabled'} = $dkim && $dkim->{'enabled'} ? 1 : 0;
-	&lock_file($module_config_file);
+
+	if ($dkim) {
+		# Replace the list of excluded DKIM domains with a new field
+		foreach my $e (@{$dkim->{'exclude'}}) {
+			my $d = &get_domain_by("dom", $e);
+			if ($d) {
+				&lock_domain($d);
+				$d->{'dkim_enabled'} = 0;
+				&save_domain($d);
+				&unlock_domain($d);
+				}
+			}
+		delete($config{'dkim_exclude'});
+
+		# Replace the list of extra DKIM domains with a new field, as
+		# long as they are Virtualmin domains
+		my @newextra;
+		foreach my $e (@{$dkim->{'extra'}}) {
+			my $d = &get_domain_by("dom", $e);
+			if ($d) {
+				&lock_domain($d);
+				$d->{'dkim_enabled'} = 1;
+				&save_domain($d);
+				&unlock_domain($d);
+				}
+			else {
+				push(@newextra, $e);
+				}
+			}
+		$config{'dkim_extra'} = join(' ', @newextra);
+		}
 	&save_module_config();
-	&unlock_file($module_config_file);
 	}
 
 # If there are no domains yet, enable shared logrotate
 if (!@doms && !$config{'logrotate_shared'}) {
 	$config{'logrotate_shared'} = 'yes';
-	&lock_file($module_config_file);
 	&save_module_config();
-	&unlock_file($module_config_file);
 	}
 
 # Lock down transfer hosts file
@@ -523,6 +555,27 @@ if (&has_home_quotas()) {
 		&update_user_quota_cache($d, \@users, 0);
 		}
 	}
+
+# Try to determine the maximum MariaDB/MySQL username size
+if ($config{'mysql_user_size_auto'} != 1) {
+	&require_mysql();
+	eval {
+		local $main::error_must_die = 1;
+		my @str = &mysql::table_structure($mysql::master_db, "user");
+		my ($ufield) = grep { lc($_->{'field'}) eq 'user' } @str;
+		if ($ufield && $ufield->{'type'} =~ /\((\d+)\)/) {
+			$config{'mysql_user_size'} = $1;
+			}
+		};
+	$config{'mysql_user_size_auto'} = 1;
+	&save_module_config();
+	}
+
+# Create S3 account entries from scheduled backups
+&create_s3_accounts_from_backups();
+
+# Unlock config now we're done with it
+&unlock_file($module_config_file);
 
 # Run any needed actions, like server restarts
 &run_post_actions_silently();

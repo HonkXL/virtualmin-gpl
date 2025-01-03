@@ -6,7 +6,7 @@ Lists mail aliases in a simple format for some domain
 
 This program is similar to C<list-aliases>, and takes all the same
 command-line parameters. However, it simplifies the display of aliases using
-autoreponders to show the reply content, instead of just the path to the
+autoresponders to show the reply content, instead of just the path to the
 autoreply file.
 
 =cut
@@ -28,6 +28,7 @@ if (!$module_name) {
 	}
 
 # Parse command-line args
+&parse_common_cli_flags(\@ARGV);
 while(@ARGV > 0) {
 	local $a = shift(@ARGV);
 	if ($a eq "--domain") {
@@ -39,14 +40,8 @@ while(@ARGV > 0) {
 	elsif ($a eq "--all-domains") {
 		$all = 1;
 		}
-	elsif ($a eq "--multiline") {
-		$multi = 1;
-		}
 	elsif ($a eq "--plugins") {
 		$plugins = 1;
-		}
-	elsif ($a eq "--help") {
-		&usage();
 		}
 	else {
 		&usage("Unknown parameter $a");
@@ -64,7 +59,7 @@ else {
 
 foreach $d (@doms) {
 	@aliases = &list_domain_aliases($d, !$plugins);
-	if ($multi) {
+	if ($multiline) {
 		# Show each destination on a separate line
 		foreach $a (@aliases) {
 			$simple = &get_simple_alias($d, $a);
@@ -135,7 +130,7 @@ print "$_[0]\n\n" if ($_[0]);
 print "Lists the simple mail aliases in some virtual server.\n";
 print "\n";
 print "virtualmin list-simple-aliases --all-domains | --domain name | --user username\n";
-print "                              [--multiline]\n";
+print "                              [--multiline | --json | --xml]\n";
 print "                              [--plugins]\n";
 exit(1);
 }
